@@ -395,21 +395,12 @@ export default function SmartWorkspaceNameField({
 
   const rows = useMemo<RowEntry[]>(() => {
     const trimmed = value.trim()
-    // Why: source results (githubItems / branches / linearIssues) are driven
-    // by debouncedQuery, so they're stale until the user pauses typing for
-    // SEARCH_DEBOUNCE_MS. If we leave stale rows in the list, cmdk's built-in
-    // Enter handler picks the highlighted (wrong) source row when the user
-    // types fast and hits Enter. Suppress source rows while stale, so the
-    // popover shows only the typed-text row (use-name in Smart, create-branch
-    // in Branches), and Enter naturally commits the typed text.
-    const stale = trimmed.length > 0 && debouncedQuery.trim() !== trimmed
     // Why: on the Branches tab the generic "Use … as workspace name" row
     // reads as off-topic — the user is picking/creating a branch. Swap it
     // for a branch-creation row that's pinned above existing-branch results
     // (suppressed when an existing branch matches exactly so we don't offer
     // to "create" something that already exists).
-    const branchExactMatch =
-      !stale && mode === 'branches' && trimmed.length > 0 && branches.includes(trimmed)
+    const branchExactMatch = mode === 'branches' && trimmed.length > 0 && branches.includes(trimmed)
     // Why: the "Use … as workspace name" row only makes sense in Smart
     // mode, where the user might be typing a free-form name. On dedicated
     // source tabs (GitHub/Linear/Branches) it's off-topic — the user is
@@ -429,7 +420,7 @@ export default function SmartWorkspaceNameField({
     if (mode === 'text') {
       return nextRows
     }
-    if (!stale && (mode === 'smart' || mode === 'github')) {
+    if (mode === 'smart' || mode === 'github') {
       nextRows.push(
         ...githubItems.map((item) => ({
           kind: 'github' as const,
@@ -442,17 +433,15 @@ export default function SmartWorkspaceNameField({
       if (createBranchRow) {
         nextRows.push(createBranchRow)
       }
-      if (!stale) {
-        nextRows.push(
-          ...branches.map((refName) => ({
-            kind: 'branch' as const,
-            value: `branch-${refName}`,
-            refName
-          }))
-        )
-      }
+      nextRows.push(
+        ...branches.map((refName) => ({
+          kind: 'branch' as const,
+          value: `branch-${refName}`,
+          refName
+        }))
+      )
     }
-    if (!stale && (mode === 'smart' || mode === 'linear')) {
+    if (mode === 'smart' || mode === 'linear') {
       nextRows.push(
         ...linearIssues.map((issue) => ({
           kind: 'linear' as const,
@@ -462,15 +451,37 @@ export default function SmartWorkspaceNameField({
       )
     }
     return nextRows.slice(0, RESULT_LIMIT + 1)
-  }, [branches, debouncedQuery, githubItems, linearIssues, mode, value])
+  }, [branches, githubItems, linearIssues, mode, value])
+
+  // Why: source rows (GitHub/branches/Linear) are driven by debouncedQuery,
+  // so they're stale until the user pauses typing for SEARCH_DEBOUNCE_MS.
+  // We don't want to filter them out (causes flicker as results appear and
+  // disappear with each keystroke), but we do need to prevent cmdk's Enter
+  // handler from auto-selecting a stale source row. Two cases:
+  //   - Smart/Branches: a typed-text row (use-name / create-branch) exists
+  //     and is pinned at the top — force the highlight onto it so Enter
+  //     commits the typed text instead of a stale issue/PR/branch.
+  //   - GitHub/Linear: no typed-text fallback row, so clear the highlight
+  //     entirely; the input's Enter handler falls through to onPlainEnter.
+  const isQueryStale = value.trim().length > 0 && debouncedQuery.trim() !== value.trim()
 
   useEffect(() => {
-    if (rows.length > 0) {
-      setCommandValue((current) =>
-        rows.some((row) => row.value === current) ? current : rows[0].value
-      )
+    if (rows.length === 0) {
+      return
     }
-  }, [rows])
+    if (isQueryStale) {
+      const typedTextRow = rows.find(
+        (row) => row.kind === 'use-name' || row.kind === 'create-branch'
+      )
+      // No typed-text fallback in this mode (GitHub/Linear): clear the
+      // highlight so cmdk doesn't auto-select a stale source on Enter.
+      setCommandValue(typedTextRow ? typedTextRow.value : '')
+      return
+    }
+    setCommandValue((current) =>
+      rows.some((row) => row.value === current) ? current : rows[0].value
+    )
+  }, [isQueryStale, rows])
 
   const loading = githubLoading || branchesLoading || linearLoading
   const ActiveInputIcon = mode === 'text' ? CaseSensitive : loading ? LoaderCircle : Search
@@ -718,8 +729,13 @@ export default function SmartWorkspaceNameField({
                           if (row) {
                             event.preventDefault()
                             handleSelect(row)
+                            return
                           }
-                          return
+                          // No highlighted row (e.g., stale results in
+                          // GitHub/Linear modes where the highlight was
+                          // cleared to avoid auto-selecting a stale source).
+                          // Fall through to onPlainEnter so the keypress
+                          // doesn't feel inert.
                         }
                         onPlainEnter?.()
                       }
