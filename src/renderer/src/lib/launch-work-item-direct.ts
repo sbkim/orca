@@ -1,7 +1,7 @@
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import { AGENT_CATALOG } from '@/lib/agent-catalog'
-import { waitForAgentReady } from '@/lib/agent-ready-wait'
+import { pasteDraftWhenAgentReady } from '@/lib/agent-paste-draft'
 import { buildAgentStartupPlan } from '@/lib/tui-agent-startup'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
 import {
@@ -30,13 +30,9 @@ export type LaunchableWorkItem = {
   linearIdentifier?: string
 }
 
-// Why: bracketed paste markers let modern TUIs treat the inserted text as a
-// single atomic paste — Claude Code / Codex / Gemini put it in their input
-// buffer as a draft instead of echoing character-by-character. Intentionally
-// omit a trailing '\r' so the draft never auto-submits; the user gets to
-// review and send the prompt themselves.
-const BRACKETED_PASTE_BEGIN = '\x1b[200~'
-const BRACKETED_PASTE_END = '\x1b[201~'
+// Why: bracketed paste markers and ready-wait grace timing live in
+// agent-paste-draft.ts so the new-workspace and "Use" flows share one
+// definition of "type into the agent's input as a non-submitted draft".
 
 export type LaunchWorkItemDirectArgs = {
   item: LaunchableWorkItem
@@ -105,31 +101,16 @@ async function pasteWorkItemDraftWhenAgentReady(args: {
   content: string
 }): Promise<void> {
   const { primaryTabId, startupPlan, content } = args
-  const readyResult = await waitForAgentReady(primaryTabId, startupPlan.expectedProcess, {
-    timeoutMs: 5000
+  await pasteDraftWhenAgentReady({
+    tabId: primaryTabId,
+    expectedProcess: startupPlan.expectedProcess,
+    content,
+    timeoutMs: 5000,
+    onTimeout: () =>
+      toast.message(
+        'Agent took too long to start. The workspace is ready — paste the issue URL when the agent is idle.'
+      )
   })
-  if (!readyResult.ready) {
-    toast.message(
-      'Agent took too long to start. The workspace is ready — paste the issue URL when the agent is idle.'
-    )
-    return
-  }
-
-  const finalState = useAppStore.getState()
-  const ptyId = finalState.ptyIdsByTabId[primaryTabId]?.[0]
-  if (!ptyId) {
-    return
-  }
-
-  // Why: TUIs must enable bracketed paste mode (\x1b[?2004h) before they can
-  // interpret our paste markers. `title-idle` means the TUI has fully rendered
-  // its input box and enabled paste mode; weaker signals (`foreground-match`,
-  // `child-process`) only confirm the binary is running — the TUI's input
-  // setup may still be in-flight, especially on slow shell environments.
-  const graceMs = readyResult.reason === 'title-idle' ? 150 : 600
-  await new Promise((resolve) => window.setTimeout(resolve, graceMs))
-
-  window.api.pty.write(ptyId, `${BRACKETED_PASTE_BEGIN}${content}${BRACKETED_PASTE_END}`)
 }
 
 /**
