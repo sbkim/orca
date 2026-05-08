@@ -51,6 +51,11 @@ export function MacPermissionsHint({
     }
     return repo.connectionId ?? null
   })
+  // Why: when the right sidebar is closed, App.tsx renders a floating
+  // `Toggle right sidebar` button at `absolute top-0 right-0 z-10` that
+  // overlays this hint's right edge. Reserve enough right padding to keep
+  // the dismiss button clear of that hit zone.
+  const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
   const isLocalWorktree = connectionId === null
   const isTerminalView =
     activeView === 'terminal' && activeTabType === 'terminal' && activeWorktreeId !== null
@@ -63,7 +68,9 @@ export function MacPermissionsHint({
     <div
       role="status"
       aria-label="macOS permissions hint"
-      className="flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground"
+      className={`flex shrink-0 items-center gap-2 border-b border-border bg-muted/40 py-1.5 pl-3 text-xs text-muted-foreground ${
+        rightSidebarOpen ? 'pr-3' : 'pr-12'
+      }`}
     >
       <span className="flex-1 truncate">Need macOS device permissions for CLIs?</span>
       <button
