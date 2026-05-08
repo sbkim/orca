@@ -1096,6 +1096,12 @@
    percentages would not give equal contrast. Override lives in `.dark`. */
 .orca-diff-comment-card {
   position: relative;
+  /* Why: Monaco's view-lines overlay (data-mprt=8) is positioned absolutely on
+     top of view-zone DOM. Without an explicit z-index here, clicks on
+     interior controls (Cancel/Save in edit mode, the textarea, etc.) hit the
+     overlay first and never reach our buttons. Lifting the whole card creates
+     a stacking context that keeps every nested control clickable. */
+  z-index: 1;
   border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
   border-left: 3px solid color-mix(in srgb, var(--foreground) 55%, transparent);
   border-radius: 6px;
@@ -1266,6 +1272,36 @@
 
 .orca-diff-comment-popover-footer {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 6px;
+}
+
+/* Why: surface the keyboard shortcuts next to Cancel/Save so users know Enter
+   submits and Escape cancels without trial and error. mr:auto pushes the hint
+   to the left so the action buttons stay right-aligned. */
+.orca-diff-comment-shortcut-hint {
+  margin-right: auto;
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  user-select: none;
+}
+
+.orca-diff-comment-shortcut-hint kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--foreground) 22%, transparent);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--foreground) 6%, transparent);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted-foreground);
 }
