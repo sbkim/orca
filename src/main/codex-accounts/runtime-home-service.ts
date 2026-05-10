@@ -176,12 +176,20 @@ export class CodexRuntimeHomeService {
     // shared runtime home after the user switches accounts. Never persist
     // that write into the newly active managed account unless the auth claims
     // still match the account Orca believes is selected.
+    let hasPositiveMatch = false
     if (
       activeAccount.email &&
       identity.email &&
       this.normalizeField(activeAccount.email) !== identity.email
     ) {
       return false
+    }
+    if (
+      activeAccount.email &&
+      identity.email &&
+      this.normalizeField(activeAccount.email) === identity.email
+    ) {
+      hasPositiveMatch = true
     }
 
     if (
@@ -191,6 +199,13 @@ export class CodexRuntimeHomeService {
     ) {
       return false
     }
+    if (
+      activeAccount.providerAccountId &&
+      identity.providerAccountId &&
+      this.normalizeField(activeAccount.providerAccountId) === identity.providerAccountId
+    ) {
+      hasPositiveMatch = true
+    }
 
     if (
       activeAccount.workspaceAccountId &&
@@ -199,8 +214,15 @@ export class CodexRuntimeHomeService {
     ) {
       return false
     }
+    if (
+      activeAccount.workspaceAccountId &&
+      identity.workspaceAccountId &&
+      this.normalizeField(activeAccount.workspaceAccountId) === identity.workspaceAccountId
+    ) {
+      hasPositiveMatch = true
+    }
 
-    return Boolean(identity.email || identity.providerAccountId || identity.workspaceAccountId)
+    return hasPositiveMatch
   }
 
   private readIdentityFromAuthContents(contents: string): CodexAuthIdentity | null {
