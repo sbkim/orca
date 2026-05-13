@@ -8,6 +8,7 @@ import {
   BellDot,
   ExternalLink,
   MessageSquareText,
+  MoreVertical,
   Search,
   TerminalSquare
 } from 'lucide-react'
@@ -21,6 +22,12 @@ import type { RetainedAgentEntry } from '@/store/slices/agent-status'
 import { getRepoMapFromState, getWorktreeMapFromState } from '@/store/selectors'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Toggle } from '@/components/ui/toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -946,6 +953,16 @@ export default function ActivityPrototypePage(): React.JSX.Element {
     activateAndRevealWorktree(thread.worktree.id)
   }
 
+  const hasUnreadThreads = allThreads.some((thread) => thread.unread)
+
+  const markAllThreadsRead = (): void => {
+    const unreadKeys = allThreads.filter((t) => t.unread).map((t) => t.paneKey)
+    if (unreadKeys.length === 0) {
+      return
+    }
+    storeData.acknowledgeAgents(unreadKeys)
+  }
+
   // Why (page padding): drop top + horizontal padding so the page extends to
   // the window's left and right edges (matching how sidebars abut the chrome
   // elsewhere). The titlebar (ActivityTitlebarControls) already provides the
@@ -959,12 +976,7 @@ export default function ActivityPrototypePage(): React.JSX.Element {
           className="relative flex min-h-0 shrink-0 flex-col border-r border-border"
           style={{ width: threadListWidth }}
         >
-          <div className="shrink-0 border-b border-border px-2 pt-1.5 pb-2">
-            <div className="mb-2 flex items-center gap-2">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-                Agents
-              </div>
-            </div>
+          <div className="shrink-0 border-b border-border px-2 pt-2 pb-2">
             <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
                 <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -995,6 +1007,37 @@ export default function ActivityPrototypePage(): React.JSX.Element {
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Show unread threads only</TooltipContent>
               </Tooltip>
+              {/* Why (overflow menu): "Mark all read" is a low-frequency,
+                  destructive-feeling action — parking it behind a `…` keeps
+                  the toolbar focused on the high-frequency Filter + unread
+                  toggle while still giving the action a stable home next to
+                  the list it acts on (rather than the titlebar). */}
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="size-8 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                        aria-label="Thread list options"
+                      >
+                        <MoreVertical className="size-3.5" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">More options</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="end" sideOffset={6}>
+                  <DropdownMenuItem
+                    onSelect={() => markAllThreadsRead()}
+                    disabled={!hasUnreadThreads}
+                  >
+                    Mark all read
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-auto scrollbar-sleek">
