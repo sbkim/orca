@@ -174,6 +174,7 @@ function Settings(): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
   const updateSettings = useAppStore((s) => s.updateSettings)
   const fetchSettings = useAppStore((s) => s.fetchSettings)
+  const fetchKeybindings = useAppStore((s) => s.fetchKeybindings)
   const closeSettingsPage = useAppStore((s) => s.closeSettingsPage)
   const repos = useAppStore((s) => s.repos)
   const updateRepo = useAppStore((s) => s.updateRepo)
@@ -233,7 +234,8 @@ function Settings(): React.JSX.Element {
 
   useEffect(() => {
     fetchSettings()
-  }, [fetchSettings])
+    fetchKeybindings()
+  }, [fetchKeybindings, fetchSettings])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent): void => {

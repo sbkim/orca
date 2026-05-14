@@ -59,6 +59,7 @@ describe('browserManager', () => {
     webContentsFromIdMock.mockReset()
     browserManager.unregisterAll()
     browserManager.setDictationShortcutForwardingPredicate(null)
+    browserManager.setSettingsResolver(() => ({}))
   })
 
   afterEach(() => {
@@ -1055,6 +1056,15 @@ describe('browserManager', () => {
       },
       {
         type: 'keyDown',
+        code: 'Tab',
+        key: 'Tab',
+        meta: false,
+        control: true,
+        alt: false,
+        shift: false
+      },
+      {
+        type: 'keyDown',
         code: 'KeyP',
         key: 'p',
         meta: isDarwin,
@@ -1102,10 +1112,117 @@ describe('browserManager', () => {
     expect(rendererSendMock).toHaveBeenNthCalledWith(3, 'ui:closeActiveTab')
     expect(rendererSendMock).toHaveBeenNthCalledWith(4, 'ui:switchTab', 1)
     expect(rendererSendMock).toHaveBeenNthCalledWith(5, 'ui:switchTerminalTab', 1)
-    expect(rendererSendMock).toHaveBeenNthCalledWith(6, 'ui:openQuickOpen')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(7, 'ui:focusBrowserAddressBar')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(8, 'ui:reloadBrowserPage')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(9, 'ui:hardReloadBrowserPage')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(6, 'ui:switchRecentTab')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(7, 'ui:openQuickOpen')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(8, 'ui:focusBrowserAddressBar')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(9, 'ui:reloadBrowserPage')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(10, 'ui:hardReloadBrowserPage')
+  })
+
+  it('uses customized keybindings when forwarding browser guest shortcuts', () => {
+    const isDarwin = process.platform === 'darwin'
+    const primary = { meta: isDarwin, control: !isDarwin }
+    const rendererSendMock = vi.fn()
+    const guest = {
+      id: 407,
+      isDestroyed: vi.fn(() => false),
+      getType: vi.fn(() => 'webview'),
+      setBackgroundThrottling: guestSetBackgroundThrottlingMock,
+      setWindowOpenHandler: guestSetWindowOpenHandlerMock,
+      on: guestOnMock,
+      off: guestOffMock,
+      openDevTools: guestOpenDevToolsMock
+    }
+
+    webContentsFromIdMock.mockImplementation((id: number) => {
+      if (id === guest.id) {
+        return guest
+      }
+      if (id === rendererWebContentsId) {
+        return { isDestroyed: vi.fn(() => false), send: rendererSendMock }
+      }
+      return null
+    })
+    browserManager.setSettingsResolver(() => ({
+      keybindings: {
+        'tab.newBrowser': ['Mod+Alt+B'],
+        'worktree.quickOpen': ['Mod+Shift+O']
+      }
+    }))
+
+    browserManager.attachGuestPolicies(guest as never)
+    browserManager.registerGuest({
+      browserPageId: 'browser-1',
+      webContentsId: guest.id,
+      rendererWebContentsId
+    })
+
+    const beforeInputHandler = guestOnMock.mock.calls
+      .filter(([event]) => event === 'before-input-event')
+      .at(-1)?.[1] as
+      | ((event: { preventDefault: () => void }, input: Record<string, unknown>) => void)
+      | undefined
+
+    expect(beforeInputHandler).toBeTypeOf('function')
+
+    const defaultBrowserPreventDefault = vi.fn()
+    beforeInputHandler?.(
+      { preventDefault: defaultBrowserPreventDefault },
+      {
+        type: 'keyDown',
+        code: 'KeyB',
+        key: 'b',
+        ...primary,
+        alt: false,
+        shift: true
+      }
+    )
+    expect(defaultBrowserPreventDefault).not.toHaveBeenCalled()
+
+    const customBrowserPreventDefault = vi.fn()
+    beforeInputHandler?.(
+      { preventDefault: customBrowserPreventDefault },
+      {
+        type: 'keyDown',
+        code: 'KeyB',
+        key: 'b',
+        ...primary,
+        alt: true,
+        shift: false
+      }
+    )
+    expect(customBrowserPreventDefault).toHaveBeenCalledTimes(1)
+
+    const defaultQuickOpenPreventDefault = vi.fn()
+    beforeInputHandler?.(
+      { preventDefault: defaultQuickOpenPreventDefault },
+      {
+        type: 'keyDown',
+        code: 'KeyP',
+        key: 'p',
+        ...primary,
+        alt: false,
+        shift: false
+      }
+    )
+    expect(defaultQuickOpenPreventDefault).not.toHaveBeenCalled()
+
+    const customQuickOpenPreventDefault = vi.fn()
+    beforeInputHandler?.(
+      { preventDefault: customQuickOpenPreventDefault },
+      {
+        type: 'keyDown',
+        code: 'KeyO',
+        key: 'o',
+        ...primary,
+        alt: false,
+        shift: true
+      }
+    )
+    expect(customQuickOpenPreventDefault).toHaveBeenCalledTimes(1)
+
+    expect(rendererSendMock).toHaveBeenNthCalledWith(1, 'ui:newBrowserTab')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(2, 'ui:openQuickOpen')
   })
 
   it('cleans up prior guest listeners before re-registering the same tab', () => {

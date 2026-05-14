@@ -9,9 +9,10 @@ import {
   type WindowShortcutAction,
   type WindowShortcutInput
 } from './window-shortcut-policy'
+import type { KeybindingOverrides } from './keybindings'
 
 describe('resolveWindowShortcutAction', () => {
-  it('keeps ctrl/cmd+r and readline control chords out of the main-process allowlist', () => {
+  it('keeps ctrl/cmd+r and terminal readline control chords out of the allowlist', () => {
     const macCases: WindowShortcutInput[] = [
       { code: 'KeyR', key: 'r', meta: true, control: false, alt: false, shift: false },
       { code: 'KeyR', key: 'r', meta: false, control: true, alt: false, shift: false },
@@ -32,6 +33,15 @@ describe('resolveWindowShortcutAction', () => {
     for (const input of nonMacCases) {
       expect(resolveWindowShortcutAction(input, 'linux')).toBeNull()
     }
+
+    expect(
+      resolveWindowShortcutAction(
+        { code: 'KeyE', key: 'e', meta: false, control: true, alt: false, shift: false },
+        'linux',
+        undefined,
+        'terminal'
+      )
+    ).toBeNull()
 
     expect(
       resolveWindowShortcutAction(
@@ -96,6 +106,64 @@ describe('resolveWindowShortcutAction', () => {
     ).toBeNull()
   })
 
+  it('applies custom keybinding overrides to dictation and main-process shortcuts', () => {
+    expect(
+      resolveWindowShortcutAction(
+        { code: 'KeyE', key: 'e', meta: false, control: true, alt: false, shift: false },
+        'linux',
+        { 'voice.dictation': [] }
+      )
+    ).toBeNull()
+
+    expect(
+      resolveWindowShortcutAction(
+        { code: 'KeyY', key: 'y', meta: false, control: true, alt: false, shift: true },
+        'linux',
+        { 'voice.dictation': ['Mod+Shift+Y'] }
+      )
+    ).toEqual({ type: 'dictationKeyDown' })
+  })
+
+  it('applies custom keybinding overrides to main-process shortcuts', () => {
+    const overrides: KeybindingOverrides = {
+      'worktree.quickOpen': ['Mod+Shift+O'],
+      'view.tasks': ['Mod+Alt+K']
+    }
+
+    expect(
+      resolveWindowShortcutAction(
+        { code: 'KeyP', key: 'p', meta: false, control: true, alt: false, shift: false },
+        'linux',
+        overrides
+      )
+    ).toBeNull()
+    expect(
+      resolveWindowShortcutAction(
+        { code: 'KeyO', key: 'o', meta: false, control: true, alt: false, shift: true },
+        'linux',
+        overrides
+      )
+    ).toEqual({ type: 'openQuickOpen' })
+    expect(
+      resolveWindowShortcutAction(
+        { code: 'KeyK', key: 'k', meta: false, control: true, alt: true, shift: false },
+        'linux',
+        overrides
+      )
+    ).toEqual({ type: 'openTasks' })
+  })
+
+  it('resolves the MRU tab quick-toggle chord, including terminal focus', () => {
+    expect(
+      resolveWindowShortcutAction(
+        { code: 'Tab', key: 'Tab', meta: false, control: true, alt: false, shift: false },
+        'linux',
+        undefined,
+        'terminal'
+      )
+    ).toEqual({ type: 'switchRecentTab' })
+  })
+
   it('accepts all supported zoom key variants', () => {
     const zoomInCases: WindowShortcutInput[] = [
       { key: '=', meta: true, control: false, alt: false, shift: false },
@@ -111,8 +179,8 @@ describe('resolveWindowShortcutAction', () => {
 
     const zoomOutCases: WindowShortcutInput[] = [
       { key: '-', meta: false, control: true, alt: false, shift: false },
-      { key: '_', meta: false, control: true, alt: false, shift: true },
       { key: 'Minus', meta: false, control: true, alt: false, shift: false },
+      { key: 'Subtract', meta: false, control: true, alt: false, shift: false },
       { code: 'NumpadSubtract', key: '', meta: false, control: true, alt: false, shift: false }
     ]
     for (const input of zoomOutCases) {
@@ -128,6 +196,14 @@ describe('resolveWindowShortcutAction', () => {
         'linux'
       )
     ).toEqual({ type: 'zoom', direction: 'reset' })
+
+    // Why: Ctrl+Shift+_ is PowerShell undo on Windows; zoom-out must not steal it.
+    expect(
+      resolveWindowShortcutAction(
+        { key: '_', meta: false, control: true, alt: false, shift: true },
+        'win32'
+      )
+    ).toBeNull()
   })
 
   it('resolves the worktree-history chord despite carrying Alt', () => {

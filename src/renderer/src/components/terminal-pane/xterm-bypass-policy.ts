@@ -70,8 +70,9 @@ export function shouldBypassXtermKeydown(
     )
   }
 
-  // Windows/Linux: standard clipboard bindings bubble; Ctrl+C only bubbles
-  // with a selection (otherwise it's SIGINT and must reach the shell).
+  // Windows/Linux: standard terminal clipboard bindings bubble; Ctrl+C only
+  // bubbles with a selection (otherwise it's SIGINT and must reach the shell).
+  // Bare Ctrl+V is readline quote-insert, so it must not become paste.
   const onlyCtrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
   const ctrlShiftOnly = event.ctrlKey && event.shiftKey && !event.metaKey && !event.altKey
   const onlyShift = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey
@@ -82,7 +83,7 @@ export function shouldBypassXtermKeydown(
   if (event.code === 'KeyC' && onlyCtrl && hasSelection) {
     return true
   }
-  if (event.code === 'KeyV' && (onlyCtrl || ctrlShiftOnly)) {
+  if (event.code === 'KeyV' && ctrlShiftOnly) {
     return true
   }
   if (event.code === 'Insert' && onlyShift) {

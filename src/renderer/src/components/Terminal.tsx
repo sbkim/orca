@@ -42,6 +42,7 @@ import {
   destroyWorkspaceWebviews
 } from '../store/slices/browser-webview-cleanup'
 import {
+  handleSwitchRecentTab,
   handleSwitchTab,
   handleSwitchTabAcrossAllTypes,
   handleSwitchTerminalTab
@@ -62,6 +63,7 @@ import {
   useActivityTerminalPortals,
   type ActivityTerminalPortalTarget
 } from './activity/activity-terminal-portal'
+import { keybindingMatchesAction, type KeybindingContext } from '../../../shared/keybindings'
 
 const EditorPanel = lazy(() => import('./editor/EditorPanel'))
 
@@ -71,6 +73,12 @@ const EditorPanel = lazy(() => import('./editor/EditorPanel'))
 // feel responsive on a deliberate follow-up click; long enough to absorb the
 // trailing edge of a physical double-click (~150 ms on most hardware).
 const CLOSE_DIALOG_DEBOUNCE_MS = 200
+
+function getKeybindingContext(target: EventTarget | null): KeybindingContext {
+  return target instanceof HTMLElement && target.classList.contains('xterm-helper-textarea')
+    ? 'terminal'
+    : 'app'
+}
 
 function Terminal(): React.JSX.Element | null {
   const allWorktrees = useAllWorktrees()
@@ -91,6 +99,7 @@ function Terminal(): React.JSX.Element | null {
   const activeFileId = useAppStore((s) => s.activeFileId)
   const activeBrowserTabId = useAppStore((s) => s.activeBrowserTabId)
   const activeTabType = useAppStore((s) => s.activeTabType)
+  const keybindings = useAppStore((s) => s.keybindings)
   const setActiveTabType = useAppStore((s) => s.setActiveTabType)
   const setActiveFile = useAppStore((s) => s.setActiveFile)
   const openFile = useAppStore((s) => s.openFile)
@@ -908,13 +917,22 @@ function Terminal(): React.JSX.Element | null {
     }
 
     const isMac = navigator.userAgent.includes('Mac')
+    const shortcutPlatform: NodeJS.Platform = isMac
+      ? 'darwin'
+      : navigator.userAgent.includes('Windows')
+        ? 'win32'
+        : 'linux'
     const onKeyDown = (e: KeyboardEvent): void => {
+      const context = getKeybindingContext(e.target)
       const mod = isMac ? e.metaKey : e.ctrlKey
       // Why: Cmd/Ctrl+T always opens a new terminal, regardless of which
       // surface is active. Browser-tab creation has its own shortcut
       // (Cmd/Ctrl+Shift+B) so users have a predictable way to spawn a
       // terminal from anywhere in the central pane.
-      if (mod && e.key === 't' && !e.shiftKey && !e.repeat) {
+      if (
+        !e.repeat &&
+        keybindingMatchesAction('tab.newTerminal', e, shortcutPlatform, keybindings, { context })
+      ) {
         e.preventDefault()
         handleNewTab()
         return
@@ -922,7 +940,10 @@ function Terminal(): React.JSX.Element | null {
 
       // Cmd/Ctrl+Shift+T — reopen closed browser tab when browser is active,
       // otherwise reopen the most recently closed editor tab (VS Code–style).
-      if (mod && e.shiftKey && e.key.toLowerCase() === 't' && !e.repeat) {
+      if (
+        !e.repeat &&
+        keybindingMatchesAction('tab.reopenClosed', e, shortcutPlatform, keybindings, { context })
+      ) {
         e.preventDefault()
         const state = useAppStore.getState()
         if (state.activeTabType === 'browser') {
@@ -937,7 +958,10 @@ function Terminal(): React.JSX.Element | null {
       }
 
       // Cmd/Ctrl+Shift+B - new browser tab
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'b' && !e.repeat) {
+      if (
+        !e.repeat &&
+        keybindingMatchesAction('tab.newBrowser', e, shortcutPlatform, keybindings, { context })
+      ) {
         e.preventDefault()
         handleNewBrowserTab()
         return
@@ -963,7 +987,10 @@ function Terminal(): React.JSX.Element | null {
       }
 
       // Cmd/Ctrl+Shift+M - new markdown file
-      if (mod && e.shiftKey && e.key.toLowerCase() === 'm' && !e.repeat) {
+      if (
+        !e.repeat &&
+        keybindingMatchesAction('tab.newMarkdown', e, shortcutPlatform, keybindings, { context })
+      ) {
         e.preventDefault()
         void handleNewFile()
         return
@@ -974,7 +1001,10 @@ function Terminal(): React.JSX.Element | null {
       // in keyboard-handlers.ts so it can close individual split panes and
       // show a confirmation dialog. We still preventDefault here so Electron
       // doesn't close the window as its default Cmd+W action.
-      if (mod && e.key === 'w' && !e.shiftKey && !e.repeat) {
+      if (
+        !e.repeat &&
+        keybindingMatchesAction('tab.close', e, shortcutPlatform, keybindings, { context })
+      ) {
         e.preventDefault()
         const state = useAppStore.getState()
         if (state.activeTabType === 'editor' && state.activeFileId) {
@@ -992,6 +1022,20 @@ function Terminal(): React.JSX.Element | null {
         return
       }
 
+      // Ctrl+Tab - quick-toggle to the previously focused tab in this group.
+      if (
+        !e.repeat &&
+        keybindingMatchesAction('tab.previousRecent', e, shortcutPlatform, keybindings, {
+          context
+        })
+      ) {
+        e.preventDefault()
+        e.stopPropagation()
+        e.stopImmediatePropagation()
+        handleSwitchRecentTab()
+        return
+      }
+
       // Cmd/Ctrl+Shift+] and Cmd/Ctrl+Shift+[ - switch tabs (scoped to the
       // active tab type). Cmd/Ctrl+Alt+] and Cmd/Ctrl+Alt+[ cycles across
       // every tab type as an escape hatch from the type-scoped default, and
@@ -1000,12 +1044,33 @@ function Terminal(): React.JSX.Element | null {
       // as the key value (the shifted character), not '['. Option+[ also
       // composes to dead-key / punctuation on many layouts, so matching on
       // event.key would miss the chord entirely on non-US layouts.
-      if (
-        mod &&
-        (e.code === 'BracketRight' || e.code === 'BracketLeft') &&
-        !e.repeat &&
-        (e.shiftKey || e.altKey)
-      ) {
+      const switchSameTypeDirection = keybindingMatchesAction(
+        'tab.nextSameType',
+        e,
+        shortcutPlatform,
+        keybindings,
+        { context }
+      )
+        ? 1
+        : keybindingMatchesAction('tab.previousSameType', e, shortcutPlatform, keybindings, {
+              context
+            })
+          ? -1
+          : null
+      const switchAllTypesDirection = keybindingMatchesAction(
+        'tab.nextAllTypes',
+        e,
+        shortcutPlatform,
+        keybindings,
+        { context }
+      )
+        ? 1
+        : keybindingMatchesAction('tab.previousAllTypes', e, shortcutPlatform, keybindings, {
+              context
+            })
+          ? -1
+          : null
+      if (!e.repeat && (switchSameTypeDirection !== null || switchAllTypesDirection !== null)) {
         // Why: delegate to the shared handler used by the IPC shortcut path
         // so both code paths share one implementation. Always consume the
         // chord — even when the switch is a no-op (e.g. single tab), we own
@@ -1014,10 +1079,10 @@ function Terminal(): React.JSX.Element | null {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
-        if (e.altKey) {
-          handleSwitchTabAcrossAllTypes(e.code === 'BracketRight' ? 1 : -1)
+        if (switchAllTypesDirection !== null) {
+          handleSwitchTabAcrossAllTypes(switchAllTypesDirection)
         } else {
-          handleSwitchTab(e.code === 'BracketRight' ? 1 : -1)
+          handleSwitchTab(switchSameTypeDirection ?? 1)
         }
       }
 
@@ -1028,14 +1093,20 @@ function Terminal(): React.JSX.Element | null {
       // for focused terminal / editor consumers and matches the unshifted
       // predicate in browser-guest-ui.ts and the chord advertised in
       // ShortcutsPane.
-      if (
-        e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        (e.code === 'PageDown' || e.code === 'PageUp') &&
-        !e.repeat
-      ) {
+      const terminalTabDirection = keybindingMatchesAction(
+        'tab.nextTerminal',
+        e,
+        shortcutPlatform,
+        keybindings,
+        { context }
+      )
+        ? 1
+        : keybindingMatchesAction('tab.previousTerminal', e, shortcutPlatform, keybindings, {
+              context
+            })
+          ? -1
+          : null
+      if (!e.repeat && terminalTabDirection !== null) {
         // Why: always consume the chord before xterm's textarea listener
         // sees it, regardless of whether we actually switched tabs. xterm
         // translates plain Ctrl+PageUp/PageDown into \e[5~ / \e[6~ escape
@@ -1050,7 +1121,7 @@ function Terminal(): React.JSX.Element | null {
         e.preventDefault()
         e.stopPropagation()
         e.stopImmediatePropagation()
-        handleSwitchTerminalTab(e.code === 'PageDown' ? 1 : -1)
+        handleSwitchTerminalTab(terminalTabDirection)
       }
     }
     window.addEventListener('keydown', onKeyDown, { capture: true })
@@ -1063,7 +1134,8 @@ function Terminal(): React.JSX.Element | null {
     handleCloseTab,
     handleCloseBrowserTab,
     closeBrowserTab,
-    handleCloseFile
+    handleCloseFile,
+    keybindings
   ])
 
   // Warn on window close if there are unsaved editor files

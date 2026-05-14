@@ -28,6 +28,7 @@ import { setTrustedBrowserRendererWebContentsId, setAgentBrowserBridgeRef } from
 import { registerSessionHandlers } from './session'
 import { registerSettingsHandlers } from './settings'
 import { registerAutomationHandlers } from './automations'
+import { registerKeybindingHandlers } from './keybindings'
 import { registerTelemetryHandlers } from './telemetry'
 import { registerBrowserHandlers } from './browser'
 import { browserSessionRegistry } from '../browser/browser-session-registry'
@@ -50,6 +51,7 @@ import type { RateLimitService } from '../rate-limits/service'
 import type { CodexAccountService } from '../codex-accounts/service'
 import type { ClaudeAccountService } from '../claude-accounts/service'
 import type { AutomationService } from '../automations/service'
+import type { KeybindingService } from '../keybindings/keybinding-service'
 
 let registered = false
 
@@ -63,7 +65,8 @@ export function registerCoreHandlers(
   claudeAccounts: ClaudeAccountService,
   rateLimits: RateLimitService,
   mainWindowWebContentsId: number | null = null,
-  automations?: AutomationService
+  automations?: AutomationService,
+  keybindings?: KeybindingService
 ): void {
   // Why: on macOS the app can stay alive after all windows close, then
   // openMainWindow() is called again on 'activate'. ipcMain.handle() throws
@@ -102,6 +105,9 @@ export function registerCoreHandlers(
   registerSettingsHandlers(store)
   if (automations) {
     registerAutomationHandlers(store, automations)
+  }
+  if (keybindings) {
+    registerKeybindingHandlers(keybindings)
   }
   registerTelemetryHandlers(store)
   registerBrowserHandlers()

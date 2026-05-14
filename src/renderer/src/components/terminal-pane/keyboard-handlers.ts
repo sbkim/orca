@@ -1,8 +1,12 @@
+/* eslint-disable max-lines -- Why: this hook coordinates terminal keyboard
+ * routing, pane actions, search state, and shell escape fallbacks against one
+ * xterm instance; splitting it would obscure event ordering. */
 import { useEffect } from 'react'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { PtyTransport } from './pty-transport'
 import { resolveTerminalShortcutAction } from './terminal-shortcut-policy'
 import type { MacOptionAsAlt } from './terminal-shortcut-policy'
+import type { KeybindingOverrides } from '../../../../shared/keybindings'
 import { resolveSplitCwd, type PaneCwdMap } from './resolve-split-cwd'
 import { keyboardEventBelongsToScope } from './terminal-keyboard-scope'
 
@@ -83,6 +87,7 @@ type KeyboardHandlersDeps = {
   searchOpenRef: React.RefObject<boolean>
   searchStateRef: React.RefObject<SearchState>
   macOptionAsAltRef: React.RefObject<MacOptionAsAlt>
+  keybindings?: KeybindingOverrides
 }
 
 export function useTerminalKeyboardShortcuts({
@@ -102,7 +107,8 @@ export function useTerminalKeyboardShortcuts({
   onRequestClosePane,
   searchOpenRef,
   searchStateRef,
-  macOptionAsAltRef
+  macOptionAsAltRef,
+  keybindings
 }: KeyboardHandlersDeps): void {
   useEffect(() => {
     if (!isActive) {
@@ -170,7 +176,8 @@ export function useTerminalKeyboardShortcuts({
         e,
         isMac,
         macOptionAsAltRef.current,
-        optionKeyLocation
+        optionKeyLocation,
+        keybindings
       )
       if (!action) {
         return
@@ -355,6 +362,7 @@ export function useTerminalKeyboardShortcuts({
     onRequestClosePane,
     searchOpenRef,
     searchStateRef,
-    macOptionAsAltRef
+    macOptionAsAltRef,
+    keybindings
   ])
 }

@@ -5,6 +5,7 @@ import type { WorkspaceSource } from './telemetry-events'
 import type { GitHubProjectSettings } from './github-project-types'
 import type { VoiceSettings } from './speech-types'
 import type { GitLabProjectSettings } from './gitlab-types'
+import type { KeybindingOverrides } from './keybindings'
 
 // Re-exported for backward compat with renderer call sites that import
 // `WorkspaceCreateTelemetrySource` from '../../../shared/types'.
@@ -1270,6 +1271,9 @@ export type GlobalSettings = {
   /** Where the Floating Terminal toggle is shown. Defaults to the floating
    *  button for discoverability. */
   floatingTerminalTriggerLocation: FloatingTerminalTriggerLocation
+  /** Legacy pre-file-backed keyboard shortcut overrides. New writes go to
+   *  ~/.orca/keybindings.json; main migrates this once when present. */
+  keybindings?: KeybindingOverrides
   diffDefaultView: 'inline' | 'side-by-side'
   notifications: NotificationSettings
   /** When true, a countdown timer is shown after a Claude agent becomes idle,

@@ -68,6 +68,7 @@ describe('browserManager grab operations', () => {
     guestIsDestroyedMock.mockReturnValue(false)
     guestExecuteJavaScriptMock.mockResolvedValue(true)
     browserManager.unregisterAll()
+    browserManager.setSettingsResolver(() => ({}))
 
     guest = makeGuest(101)
     webContentsFromIdMock.mockImplementation((id: number) => {
@@ -227,8 +228,8 @@ describe('browserManager grab operations', () => {
         { preventDefault } as never,
         {
           type: 'keyDown',
-          meta: true,
-          control: true,
+          meta: process.platform === 'darwin',
+          control: process.platform !== 'darwin',
           shift: true,
           alt: false,
           code: 'KeyB',

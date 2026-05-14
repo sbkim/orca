@@ -210,6 +210,7 @@ import type {
   NotesPanelOpenState,
   NotesPanelStateArgs
 } from '../shared/notes-types'
+import type { KeybindingActionId, KeybindingFileSnapshot } from '../shared/keybindings'
 
 export type BrowserApi = {
   registerGuest: (args: {
@@ -908,6 +909,17 @@ export type PreloadApi = {
      *  state without round-tripping through settings:get. */
     onChanged: (callback: (updates: Partial<GlobalSettings>) => void) => () => void
   }
+  keybindings: {
+    get: () => Promise<KeybindingFileSnapshot>
+    setAction: (args: {
+      actionId: KeybindingActionId
+      bindings: string[] | null
+    }) => Promise<KeybindingFileSnapshot>
+    reload: () => Promise<KeybindingFileSnapshot>
+    openFile: () => Promise<KeybindingFileSnapshot>
+    revealFile: () => Promise<KeybindingFileSnapshot>
+    onChanged: (callback: (snapshot: KeybindingFileSnapshot) => void) => () => void
+  }
   codexAccounts: {
     list: () => Promise<CodexRateLimitAccountsState>
     add: () => Promise<CodexRateLimitAccountsState>
@@ -1222,6 +1234,7 @@ export type PreloadApi = {
     onToggleFloatingTerminal: (callback: () => void) => () => void
     onOpenQuickOpen: (callback: () => void) => () => void
     onOpenNewWorkspace: (callback: () => void) => () => void
+    onOpenTasks: (callback: () => void) => () => void
     onJumpToWorktreeIndex: (callback: (index: number) => void) => () => void
     onWorktreeHistoryNavigate: (callback: (direction: 'back' | 'forward') => void) => () => void
     onNewBrowserTab: (callback: () => void) => () => void
@@ -1250,6 +1263,7 @@ export type PreloadApi = {
     onCloseActiveTab: (callback: () => void) => () => void
     onSwitchTab: (callback: (direction: 1 | -1) => void) => () => void
     onSwitchTabAcrossAllTypes: (callback: (direction: 1 | -1) => void) => () => void
+    onSwitchRecentTab: (callback: () => void) => () => void
     onSwitchTerminalTab: (callback: (direction: 1 | -1) => void) => () => void
     onToggleStatusBar: (callback: () => void) => () => void
     onDictationKeyDown: (callback: () => void) => () => void
@@ -1337,6 +1351,7 @@ export type PreloadApi = {
     setZoomLevel: (level: number) => void
     syncTrafficLights: (zoomFactor: number) => void
     setMarkdownEditorFocused: (focused: boolean) => void
+    setTerminalKeyboardFocused: (focused: boolean) => void
     onRichMarkdownContextCommand: (
       callback: (payload: RichMarkdownContextMenuCommandPayload) => void
     ) => () => void

@@ -89,6 +89,7 @@ import type {
   AutomationRun,
   AutomationUpdateInput
 } from '../shared/automations-types'
+import type { KeybindingActionId, KeybindingFileSnapshot } from '../shared/keybindings'
 import {
   ORCA_EDITOR_SAVE_DIRTY_FILES_EVENT,
   type EditorSaveDirtyFilesDetail
@@ -993,6 +994,25 @@ const api = {
     }
   },
 
+  keybindings: {
+    get: (): Promise<KeybindingFileSnapshot> => ipcRenderer.invoke('keybindings:get'),
+    setAction: (args: {
+      actionId: KeybindingActionId
+      bindings: string[] | null
+    }): Promise<KeybindingFileSnapshot> => ipcRenderer.invoke('keybindings:setAction', args),
+    reload: (): Promise<KeybindingFileSnapshot> => ipcRenderer.invoke('keybindings:reload'),
+    openFile: (): Promise<KeybindingFileSnapshot> => ipcRenderer.invoke('keybindings:openFile'),
+    revealFile: (): Promise<KeybindingFileSnapshot> => ipcRenderer.invoke('keybindings:revealFile'),
+    onChanged: (callback: (snapshot: KeybindingFileSnapshot) => void): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        snapshot: KeybindingFileSnapshot
+      ): void => callback(snapshot)
+      ipcRenderer.on('keybindings:changed', listener)
+      return () => ipcRenderer.removeListener('keybindings:changed', listener)
+    }
+  },
+
   codexAccounts: {
     list: (): Promise<unknown> => ipcRenderer.invoke('codexAccounts:list'),
     add: (): Promise<unknown> => ipcRenderer.invoke('codexAccounts:add'),
@@ -1832,6 +1852,11 @@ const api = {
       ipcRenderer.on('ui:openNewWorkspace', listener)
       return () => ipcRenderer.removeListener('ui:openNewWorkspace', listener)
     },
+    onOpenTasks: (callback: () => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent) => callback()
+      ipcRenderer.on('ui:openTasks', listener)
+      return () => ipcRenderer.removeListener('ui:openTasks', listener)
+    },
     onJumpToWorktreeIndex: (callback: (index: number) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, index: number) => callback(index)
       ipcRenderer.on('ui:jumpToWorktreeIndex', listener)
@@ -1937,6 +1962,11 @@ const api = {
       const listener = (_event: Electron.IpcRendererEvent, direction: 1 | -1) => callback(direction)
       ipcRenderer.on('ui:switchTabAcrossAllTypes', listener)
       return () => ipcRenderer.removeListener('ui:switchTabAcrossAllTypes', listener)
+    },
+    onSwitchRecentTab: (callback: () => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent) => callback()
+      ipcRenderer.on('ui:switchRecentTab', listener)
+      return () => ipcRenderer.removeListener('ui:switchRecentTab', listener)
     },
     onSwitchTerminalTab: (callback: (direction: 1 | -1) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, direction: 1 | -1) => callback(direction)
@@ -2156,6 +2186,9 @@ const api = {
     // while the markdown editor owns focus, letting TipTap apply bold instead.
     setMarkdownEditorFocused: (focused: boolean): void => {
       ipcRenderer.send('ui:setMarkdownEditorFocused', focused)
+    },
+    setTerminalKeyboardFocused: (focused: boolean): void => {
+      ipcRenderer.send('ui:setTerminalKeyboardFocused', focused)
     },
     onRichMarkdownContextCommand: (
       callback: (payload: RichMarkdownContextMenuCommandPayload) => void

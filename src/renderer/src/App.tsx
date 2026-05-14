@@ -84,9 +84,18 @@ import {
   canGoForwardWorktreeHistory
 } from '@/store/slices/worktree-nav-history'
 import type { OnboardingState } from '../../shared/types'
+import { keybindingMatchesAction, type KeybindingContext } from '../../shared/keybindings'
+import { isGitRepoKind } from '../../shared/repo-kind'
 
 const isMac = navigator.userAgent.includes('Mac')
 const isWindows = !isMac && navigator.userAgent.includes('Windows')
+const shortcutPlatform: NodeJS.Platform = isMac ? 'darwin' : isWindows ? 'win32' : 'linux'
+
+function getKeybindingContext(target: EventTarget | null): KeybindingContext {
+  return target instanceof HTMLElement && target.classList.contains('xterm-helper-textarea')
+    ? 'terminal'
+    : 'app'
+}
 
 // Why: 'hidden' titleBarStyle on Windows removes the native OS title bar,
 // so we render our own minimize/maximize/close buttons.  These SVG icons match
@@ -185,6 +194,7 @@ function App(): React.JSX.Element {
       fetchRepos: s.fetchRepos,
       fetchAllWorktrees: s.fetchAllWorktrees,
       fetchSettings: s.fetchSettings,
+      fetchKeybindings: s.fetchKeybindings,
       initGitHubCache: s.initGitHubCache,
       refreshAllGitHub: s.refreshAllGitHub,
       hydrateWorkspaceSession: s.hydrateWorkspaceSession,
@@ -217,6 +227,7 @@ function App(): React.JSX.Element {
   const expandedPaneByTabId = useAppStore((s) => s.expandedPaneByTabId)
   const canExpandPaneByTabId = useAppStore((s) => s.canExpandPaneByTabId)
   const workspaceSessionReady = useAppStore((s) => s.workspaceSessionReady)
+  const keybindings = useAppStore((s) => s.keybindings)
   const floatingTerminalEnabled = useAppStore((s) => s.settings?.floatingTerminalEnabled === true)
   const floatingTerminalTriggerLocation = useAppStore(
     (s) => s.settings?.floatingTerminalTriggerLocation ?? 'floating-button'
@@ -379,6 +390,7 @@ function App(): React.JSX.Element {
         // hydration has access to user preferences. Without this, settings
         // would still be null at hydration time.
         await actions.fetchSettings()
+        await actions.fetchKeybindings()
         if (!cancelled) {
           actions.hydrateWorkspaceSession(session)
           actions.hydrateTabsSession(session)
@@ -841,8 +853,7 @@ function App(): React.JSX.Element {
       if (e.defaultPrevented) {
         return
       }
-      // Accept Cmd on macOS, Ctrl on other platforms
-      const mod = isMac ? e.metaKey : e.ctrlKey
+      const context = getKeybindingContext(e.target)
 
       // Note: some app-level shortcuts are also intercepted via
       // before-input-event in createMainWindow.ts so they still work when a
@@ -863,10 +874,12 @@ function App(): React.JSX.Element {
       // `mod && !alt` branch below since this is the one renderer-side shortcut
       // that intentionally requires Alt.
       if (
-        e.altKey &&
-        !e.shiftKey &&
-        (isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) &&
-        (e.code === 'ArrowLeft' || e.code === 'ArrowRight')
+        keybindingMatchesAction('worktree.history.back', e, shortcutPlatform, keybindings, {
+          context
+        }) ||
+        keybindingMatchesAction('worktree.history.forward', e, shortcutPlatform, keybindings, {
+          context
+        })
       ) {
         // Why: Back/Forward traverse mixed worktree + Tasks visits, so the
         // shortcut is active wherever the titlebar button cluster is (terminal
@@ -876,7 +889,11 @@ function App(): React.JSX.Element {
         }
         e.preventDefault()
         const store = useAppStore.getState()
-        if (e.code === 'ArrowLeft') {
+        if (
+          keybindingMatchesAction('worktree.history.back', e, shortcutPlatform, keybindings, {
+            context
+          })
+        ) {
           store.goBackWorktree()
         } else {
           store.goForwardWorktree()
@@ -884,12 +901,12 @@ function App(): React.JSX.Element {
         return
       }
 
-      if (!mod) {
-        return
-      }
-
       // Cmd/Ctrl+B — toggle left sidebar
-      if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'b') {
+      if (
+        keybindingMatchesAction('sidebar.left.toggle', e, shortcutPlatform, keybindings, {
+          context
+        })
+      ) {
         e.preventDefault()
         actions.toggleSidebar()
         return
@@ -903,19 +920,46 @@ function App(): React.JSX.Element {
 
       // Why: full-page navigation surfaces should not reveal the right sidebar;
       // they are designed as distraction-free content areas.
+      if (
+        keybindingMatchesAction('view.tasks', e, shortcutPlatform, keybindings, { context }) &&
+        activeView !== 'settings'
+      ) {
+        const store = useAppStore.getState()
+        if (store.repos.some((repo) => isGitRepoKind(repo))) {
+          e.preventDefault()
+          store.openTaskPage()
+        }
+        return
+      }
+
       if (activeView === 'tasks' || activeView === 'activity' || activeView === 'automations') {
         return
       }
 
       // Cmd/Ctrl+L — toggle right sidebar
-      if (!e.altKey && !e.shiftKey && e.key.toLowerCase() === 'l') {
+      if (
+        keybindingMatchesAction('sidebar.right.toggle', e, shortcutPlatform, keybindings, {
+          context
+        })
+      ) {
         e.preventDefault()
         actions.toggleRightSidebar()
         return
       }
 
+      if (context === 'terminal') {
+        return
+      }
+
       // Cmd/Ctrl+Shift+E — toggle right sidebar / explorer tab
-      if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'e') {
+      if (
+        keybindingMatchesAction('tab.newBrowser', e, shortcutPlatform, keybindings, { context }) ===
+          false &&
+        e.shiftKey &&
+        (isMac ? e.metaKey : e.ctrlKey) &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'e'
+      ) {
         e.preventDefault()
         actions.setRightSidebarTab('explorer')
         actions.setRightSidebarOpen(true)
@@ -923,7 +967,12 @@ function App(): React.JSX.Element {
       }
 
       // Cmd/Ctrl+Shift+F — toggle right sidebar / search tab
-      if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+      if (
+        e.shiftKey &&
+        (isMac ? e.metaKey : e.ctrlKey) &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'f'
+      ) {
         e.preventDefault()
         actions.setRightSidebarTab('search')
         actions.setRightSidebarOpen(true)
@@ -935,7 +984,12 @@ function App(): React.JSX.Element {
       // in that context (handled by keyboard-handlers.ts). Both listeners share
       // the window capture phase and registration order can vary with React
       // effect re-runs, so a DOM check is the reliable coordination mechanism.
-      if (e.shiftKey && !e.altKey && e.key.toLowerCase() === 'g') {
+      if (
+        e.shiftKey &&
+        (isMac ? e.metaKey : e.ctrlKey) &&
+        !e.altKey &&
+        e.key.toLowerCase() === 'g'
+      ) {
         if (document.querySelector('[data-terminal-search-root]')) {
           return
         }
@@ -948,7 +1002,7 @@ function App(): React.JSX.Element {
       // Cmd+Shift+I — toggle right sidebar / ports tab (macOS only).
       // Why: Ctrl+Shift+I is the built-in DevTools accelerator on Windows/Linux;
       // intercepting it would break an essential developer tool.
-      if (isMac && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
+      if (isMac && e.metaKey && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'i') {
         e.preventDefault()
         actions.setRightSidebarTab('ports')
         actions.setRightSidebarOpen(true)
@@ -957,7 +1011,7 @@ function App(): React.JSX.Element {
 
     window.addEventListener('keydown', onKeyDown, { capture: true })
     return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
-  }, [activeView, activeWorktreeId, actions])
+  }, [activeView, activeWorktreeId, actions, keybindings])
 
   useLayoutEffect(() => {
     const controls = titlebarLeftControlsRef.current

@@ -16,6 +16,7 @@ import { zoomLevelToPercent, ZOOM_MIN, ZOOM_MAX } from '@/components/settings/Se
 import { dispatchZoomLevelChanged } from '@/lib/zoom-events'
 import { resolveZoomTarget } from './resolve-zoom-target'
 import {
+  handleSwitchRecentTab,
   handleSwitchTab,
   handleSwitchTabAcrossAllTypes,
   handleSwitchTerminalTab
@@ -135,6 +136,14 @@ export function useIpcEvents(): void {
       })
     )
 
+    if (window.api.keybindings) {
+      unsubs.push(
+        window.api.keybindings.onChanged((snapshot) => {
+          useAppStore.getState().setKeybindingSnapshot(snapshot)
+        })
+      )
+    }
+
     unsubs.push(
       window.api.ui.onToggleLeftSidebar(() => {
         useAppStore.getState().toggleSidebar()
@@ -186,6 +195,16 @@ export function useIpcEvents(): void {
           return
         }
         store.openModal('new-workspace-composer', { telemetrySource: 'shortcut' })
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onOpenTasks(() => {
+        const store = useAppStore.getState()
+        if (store.activeView === 'settings' || !store.repos.some((repo) => isGitRepoKind(repo))) {
+          return
+        }
+        store.openTaskPage()
       })
     )
 
@@ -794,6 +813,7 @@ export function useIpcEvents(): void {
 
     unsubs.push(window.api.ui.onSwitchTab(handleSwitchTab))
     unsubs.push(window.api.ui.onSwitchTabAcrossAllTypes(handleSwitchTabAcrossAllTypes))
+    unsubs.push(window.api.ui.onSwitchRecentTab(handleSwitchRecentTab))
     unsubs.push(window.api.ui.onSwitchTerminalTab(handleSwitchTerminalTab))
 
     // Hydrate initial rate limit state then subscribe to push updates

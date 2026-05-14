@@ -141,9 +141,9 @@ describe('shouldBypassXtermKeydown — Windows/Linux', () => {
     )
   })
 
-  it('bubbles Ctrl+V and Ctrl+Shift+V for paste', () => {
+  it('keeps bare Ctrl+V for readline quote-insert and bubbles Ctrl+Shift+V for paste', () => {
     expect(shouldBypassXtermKeydown(event({ key: 'v', code: 'KeyV', ctrlKey: true }), noSel)).toBe(
-      true
+      false
     )
     expect(
       shouldBypassXtermKeydown(
