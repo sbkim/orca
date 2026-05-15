@@ -163,6 +163,37 @@ describe('createHostedReview', () => {
     })
     expect(createGitHubPullRequestMock).toHaveBeenCalledOnce()
   })
+
+  it('returns the existing review instead of creating a duplicate', async () => {
+    getHostedReviewForBranchMock.mockResolvedValue({
+      provider: 'github',
+      number: 31,
+      title: 'Existing feature',
+      state: 'open',
+      url: 'https://github.com/acme/orca/pull/31',
+      status: 'pending',
+      updatedAt: '2026-05-15T00:00:00.000Z',
+      mergeable: 'UNKNOWN'
+    })
+
+    await expect(
+      createHostedReview('/repo', {
+        provider: 'github',
+        base: 'main',
+        head: 'feature',
+        title: 'Feature'
+      })
+    ).resolves.toEqual({
+      ok: false,
+      code: 'already_exists',
+      error: 'A pull request already exists for this branch.',
+      existingReview: {
+        number: 31,
+        url: 'https://github.com/acme/orca/pull/31'
+      }
+    })
+    expect(createGitHubPullRequestMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('getHostedReviewCreationEligibility', () => {
@@ -202,5 +233,89 @@ describe('getHostedReviewCreationEligibility', () => {
       blockedReason: 'default_branch',
       defaultBaseRef: 'origin/main'
     })
+  })
+
+  it('blocks dirty tracked GitHub branches before PR creation', async () => {
+    await expect(
+      getHostedReviewCreationEligibility({
+        repoPath: '/repo',
+        branch: 'feature/create-pr',
+        base: 'main',
+        hasUncommittedChanges: true,
+        hasUpstream: true,
+        ahead: 0,
+        behind: 0
+      })
+    ).resolves.toMatchObject({
+      provider: 'github',
+      canCreate: false,
+      blockedReason: 'dirty',
+      nextAction: 'commit',
+      head: 'feature/create-pr'
+    })
+  })
+
+  it('enables creation for clean, in-sync, authenticated GitHub feature branches', async () => {
+    await expect(
+      getHostedReviewCreationEligibility({
+        repoPath: '/repo',
+        branch: 'refs/heads/feature/create-pr',
+        base: 'origin/main',
+        hasUncommittedChanges: false,
+        hasUpstream: true,
+        ahead: 0,
+        behind: 0
+      })
+    ).resolves.toMatchObject({
+      provider: 'github',
+      canCreate: true,
+      blockedReason: null,
+      nextAction: null,
+      defaultBaseRef: 'origin/main',
+      head: 'feature/create-pr',
+      title: 'Feature title',
+      body: 'Feature title'
+    })
+  })
+
+  it('offers push as the next action for authenticated branches with local-only commits', async () => {
+    await expect(
+      getHostedReviewCreationEligibility({
+        repoPath: '/repo',
+        branch: 'feature/create-pr',
+        base: 'main',
+        hasUncommittedChanges: false,
+        hasUpstream: true,
+        ahead: 2,
+        behind: 0
+      })
+    ).resolves.toMatchObject({
+      canCreate: false,
+      blockedReason: 'needs_push',
+      nextAction: 'push'
+    })
+  })
+
+  it('blocks unsupported providers before GitHub authentication checks', async () => {
+    getProjectSlugMock.mockResolvedValue({ host: 'gitlab.com', path: 'acme/orca' })
+    getRepoSlugMock.mockResolvedValue(null)
+
+    await expect(
+      getHostedReviewCreationEligibility({
+        repoPath: '/repo',
+        branch: 'feature/gitlab',
+        base: 'main',
+        hasUncommittedChanges: false,
+        hasUpstream: true,
+        ahead: 0,
+        behind: 0
+      })
+    ).resolves.toMatchObject({
+      provider: 'gitlab',
+      canCreate: false,
+      blockedReason: 'unsupported_provider',
+      nextAction: null
+    })
+    expect(ghExecFileAsyncMock).not.toHaveBeenCalled()
   })
 })
