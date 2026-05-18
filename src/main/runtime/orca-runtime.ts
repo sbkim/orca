@@ -230,6 +230,7 @@ import { DEFAULT_REPO_BADGE_COLOR, getDefaultVoiceSettings } from '../../shared/
 import { listRepoWorktrees } from '../repo-worktrees'
 import { createWorktreeSymlinks } from '../ipc/worktree-symlinks'
 import {
+  createRemoteWorktree,
   configureCreatedWorktreePushTarget,
   prepareWorktreePushTarget
 } from '../ipc/worktree-remote'
@@ -5204,10 +5205,7 @@ export class OrcaRuntimeService {
       throw new Error('Folder mode does not support creating worktrees.')
     }
     if (repo.connectionId) {
-      // Why: SSH-backed worktree creation still relies on the desktop SSH
-      // flow, which can prime relay roots and enforce its remote constraints.
-      // Runtime RPC must not fall through to local git against server paths.
-      throw new Error('SSH-backed worktree creation is not supported through runtime RPC yet.')
+      return await this.createManagedRemoteWorktree(repo, args)
     }
     const lineageInput =
       args.lineage || args.comment ? { ...args.lineage, comment: args.comment } : undefined
@@ -5546,6 +5544,84 @@ export class OrcaRuntimeService {
       ...(setup ? { setup } : {}),
       ...(warning ? { warning } : {})
     }
+  }
+
+  private async createManagedRemoteWorktree(
+    repo: Repo,
+    args: {
+      name: string
+      baseBranch?: string
+      branchNameOverride?: string
+      linkedIssue?: number | null
+      linkedPR?: number | null
+      linkedLinearIssue?: string
+      comment?: string
+      displayName?: string
+      workspaceStatus?: string
+      sparseCheckout?: { directories: string[]; presetId?: string }
+      pushTarget?: GitPushTarget
+      setupDecision?: 'run' | 'skip' | 'inherit'
+      createdWithAgent?: TuiAgent
+      startup?: WorktreeStartupLaunch
+    }
+  ): Promise<CreateWorktreeResult> {
+    if (!this.store) {
+      throw new Error('runtime_unavailable')
+    }
+
+    // Why: runtime/mobile callers do not own a renderer BrowserWindow, but the
+    // SSH create helper only uses it for progress and change notifications.
+    // Runtime emits those through RuntimeNotifier after the create succeeds.
+    const headlessWindow = {
+      isDestroyed: () => false,
+      webContents: { send: () => undefined }
+    } as unknown as BrowserWindow
+
+    const result = await createRemoteWorktree(
+      {
+        repoId: repo.id,
+        name: args.name,
+        ...(args.displayName ? { displayName: args.displayName } : {}),
+        ...(args.baseBranch ? { baseBranch: args.baseBranch } : {}),
+        ...(args.branchNameOverride ? { branchNameOverride: args.branchNameOverride } : {}),
+        ...(args.setupDecision ? { setupDecision: args.setupDecision } : {}),
+        ...(args.sparseCheckout ? { sparseCheckout: args.sparseCheckout } : {}),
+        ...(args.linkedIssue != null ? { linkedIssue: args.linkedIssue } : {}),
+        ...(args.linkedPR != null ? { linkedPR: args.linkedPR } : {}),
+        ...(args.linkedLinearIssue ? { linkedLinearIssue: args.linkedLinearIssue } : {}),
+        ...(args.pushTarget ? { pushTarget: args.pushTarget } : {}),
+        ...(args.workspaceStatus ? { workspaceStatus: args.workspaceStatus as never } : {}),
+        ...(args.createdWithAgent ? { createdWithAgent: args.createdWithAgent } : {})
+      },
+      repo,
+      this.store as unknown as Store,
+      headlessWindow
+    )
+
+    if (args.comment !== undefined) {
+      this.store.setWorktreeMeta(result.worktree.id, { comment: args.comment })
+      result.worktree.comment = args.comment
+    }
+
+    this.invalidateResolvedWorktreeCache()
+    this.notifier?.worktreesChanged(repo.id)
+
+    if (args.startup && this.ptyController?.spawn) {
+      try {
+        await this.createTerminal(`path:${result.worktree.path}`, {
+          command: args.startup.command,
+          env: args.startup.env
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        return {
+          ...result,
+          warning: `Failed to create the startup terminal for ${result.worktree.path}: ${message}`
+        }
+      }
+    }
+
+    return result
   }
 
   /**
