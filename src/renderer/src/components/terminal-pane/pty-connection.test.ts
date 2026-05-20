@@ -1005,7 +1005,6 @@ describe('connectPanePty', () => {
 
     expect(mockStoreState.recordContinuingActivationCue).toHaveBeenCalledWith({
       kind: 'agent_ready_for_review',
-      worktreeId: 'wt-1',
       tabId: 'tab-1'
     })
     expect(deps.markWorktreeUnread).not.toHaveBeenCalled()

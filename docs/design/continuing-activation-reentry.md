@@ -15,7 +15,7 @@ Included candidates:
 - `agent_needs_input`: an agent is waiting for input or permission. Backed by live explicit agent status when available, with terminal-title permission status as a fallback.
 - `agent_ready_for_review`: an agent reached an idle/done state and the user has not reviewed it. Backed by explicit done status when available and by a local-only cue recorded from Orca's existing working-to-idle agent transition.
 
-The local cue stores only `kind`, `worktreeId`, `tabId`, and timestamps in the existing workspace session. It does not store prompt text, command output, paths, repo names, branch names, file names, or terminal titles. `worktreeId` remains local session state; telemetry never includes it.
+The local cue stores only `kind`, `tabId`, and timestamps in the existing workspace session. It does not store prompt text, command output, paths, repo names, branch names, file names, worktree ids, or terminal titles. Telemetry never includes target ids.
 
 ## Deferred candidates
 

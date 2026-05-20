@@ -167,7 +167,6 @@ describe('getContinuingActivationCandidates', () => {
     const cue: ContinuingActivationCue = {
       id: 'agent_ready_for_review:tab-1',
       kind: 'agent_ready_for_review',
-      worktreeId: 'wt-1',
       tabId: 'tab-1',
       createdAt: 1_000
     }
@@ -178,6 +177,25 @@ describe('getContinuingActivationCandidates', () => {
       continuingActivationCues: { [cue.id]: { ...cue, dismissedAt: 1_050 } }
     })
     expect(getTopContinuingActivationCandidate(dismissed, 1_100)).toBeNull()
+  })
+
+  it('derives cue targets from the tab index instead of persisted worktree ids', () => {
+    const cue: ContinuingActivationCue = {
+      id: 'agent_ready_for_review:tab-1',
+      kind: 'agent_ready_for_review',
+      tabId: 'tab-1',
+      createdAt: 1_000
+    }
+    const candidate = getTopContinuingActivationCandidate(
+      makeState({ continuingActivationCues: { [cue.id]: cue } }),
+      1_100
+    )
+
+    expect(candidate).toMatchObject({
+      source: 'agent_completion_cue',
+      worktreeId: 'wt-1',
+      tabId: 'tab-1'
+    })
   })
 
   it('does not resurface acknowledged retained done rows', () => {

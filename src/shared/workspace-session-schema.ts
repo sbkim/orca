@@ -188,7 +188,6 @@ const continuingActivationCueSchema = z
   .object({
     id: z.string(),
     kind: z.literal('agent_ready_for_review'),
-    worktreeId: z.string(),
     tabId: z.string(),
     createdAt: z.number(),
     dismissedAt: z.number().optional()

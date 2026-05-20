@@ -265,7 +265,6 @@ export function connectPanePty(
       // existing completion signal, never the terminal title or output.
       useAppStore.getState().recordContinuingActivationCue({
         kind: 'agent_ready_for_review',
-        worktreeId: deps.worktreeId,
         tabId: deps.tabId
       })
     }

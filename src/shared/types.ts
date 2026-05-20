@@ -405,7 +405,7 @@ export type WorkspaceSessionState = {
   remoteSessionIdsByTabId?: Record<string, string>
   /** Local-only activation cues recorded from reliable app-owned state.
    *  These drive next-action re-entry without storing prompts, paths, titles,
-   *  branch names, file names, or command output. */
+   *  branch names, file names, worktree ids, or command output. */
   continuingActivationCues?: Record<string, ContinuingActivationCue>
 }
 
@@ -414,7 +414,6 @@ export type ContinuingActivationCueKind = 'agent_ready_for_review'
 export type ContinuingActivationCue = {
   id: string
   kind: ContinuingActivationCueKind
-  worktreeId: string
   tabId: string
   createdAt: number
   dismissedAt?: number

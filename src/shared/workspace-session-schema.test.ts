@@ -50,7 +50,6 @@ describe('parseWorkspaceSession', () => {
         'agent_ready_for_review:tab1': {
           id: 'agent_ready_for_review:tab1',
           kind: 'agent_ready_for_review',
-          worktreeId: 'repo1::/path/wt1',
           tabId: 'tab1',
           createdAt: 1_700_000_000_100
         }
@@ -70,11 +69,30 @@ describe('parseWorkspaceSession', () => {
         'agent_ready_for_review:tab1': {
           id: 'agent_ready_for_review:tab1',
           kind: 'agent_ready_for_review',
-          worktreeId: 'wt1',
           tabId: 'tab1',
           createdAt: 1_700_000_000_100,
           title: 'permission needed in /Users/alice/private',
           path: '/Users/alice/private'
+        }
+      }
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('rejects path-bearing worktree ids inside continuing activation cues', () => {
+    const result = parseWorkspaceSession({
+      activeRepoId: null,
+      activeWorktreeId: null,
+      activeTabId: null,
+      tabsByWorktree: {},
+      terminalLayoutsByTabId: {},
+      continuingActivationCues: {
+        'agent_ready_for_review:tab1': {
+          id: 'agent_ready_for_review:tab1',
+          kind: 'agent_ready_for_review',
+          worktreeId: 'repo1::/Users/alice/private',
+          tabId: 'tab1',
+          createdAt: 1_700_000_000_100
         }
       }
     })

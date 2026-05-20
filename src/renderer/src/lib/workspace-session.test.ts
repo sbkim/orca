@@ -147,7 +147,6 @@ describe('buildWorkspaceSessionPayload', () => {
           'agent_ready_for_review:tab-1': {
             id: 'agent_ready_for_review:tab-1',
             kind: 'agent_ready_for_review',
-            worktreeId: 'wt-1',
             tabId: 'tab-1',
             createdAt: 1_700_000_000_000
           }
@@ -159,7 +158,6 @@ describe('buildWorkspaceSessionPayload', () => {
       'agent_ready_for_review:tab-1': {
         id: 'agent_ready_for_review:tab-1',
         kind: 'agent_ready_for_review',
-        worktreeId: 'wt-1',
         tabId: 'tab-1',
         createdAt: 1_700_000_000_000
       }

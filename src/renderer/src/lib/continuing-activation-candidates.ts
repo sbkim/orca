@@ -5,6 +5,10 @@ import {
 import type { ContinuingActivationCue, TerminalTab, Worktree } from '../../../shared/types'
 import { detectAgentStatusFromTitle, isExplicitAgentStatusFresh } from './agent-status'
 import type { RetainedAgentEntry } from '@/store/slices/agent-status'
+import {
+  buildTerminalTitlePaneCandidateId,
+  buildTerminalTitleTabCandidateId
+} from './continuing-activation-candidate-ids'
 
 export type ContinuingActivationCandidateKind = 'agent_needs_input' | 'agent_ready_for_review'
 
@@ -203,7 +207,7 @@ export function getContinuingActivationCandidates(
             continue
           }
           addCandidate({
-            id: `agent_needs_input:terminal_title:${tab.id}:${paneId}`,
+            id: buildTerminalTitlePaneCandidateId({ tabId: tab.id, paneId }),
             kind: 'agent_needs_input',
             source: 'terminal_title',
             worktreeId,
@@ -217,7 +221,7 @@ export function getContinuingActivationCandidates(
       }
       if (detectAgentStatusFromTitle(tab.title) === 'permission') {
         addCandidate({
-          id: `agent_needs_input:terminal_title:${tab.id}:tab`,
+          id: buildTerminalTitleTabCandidateId({ tabId: tab.id }),
           kind: 'agent_needs_input',
           source: 'terminal_title',
           worktreeId,
@@ -233,11 +237,15 @@ export function getContinuingActivationCandidates(
     if (cue.dismissedAt) {
       continue
     }
+    const target = tabIndex.get(cue.tabId)
+    if (!target) {
+      continue
+    }
     addCandidate({
       id: `agent_ready_for_review:${cue.id}:${cue.createdAt}`,
       kind: 'agent_ready_for_review',
       source: 'agent_completion_cue',
-      worktreeId: cue.worktreeId,
+      worktreeId: target.worktreeId,
       tabId: cue.tabId,
       cueId: cue.id,
       rank: 75,

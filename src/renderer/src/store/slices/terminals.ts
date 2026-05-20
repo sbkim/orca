@@ -24,6 +24,10 @@ import {
   ensurePtyDispatcher,
   unregisterPtyDataHandlers
 } from '@/components/terminal-pane/pty-transport'
+import {
+  buildTerminalTitlePaneCandidateId,
+  buildTerminalTitleTabCandidateId
+} from '@/lib/continuing-activation-candidate-ids'
 
 function getNextTerminalOrdinal(tabs: TerminalTab[]): number {
   const usedOrdinals = new Set<number>()
@@ -49,6 +53,18 @@ function getFallbackTabTitle(tab: TerminalTab, index?: number): string {
     tab.title ||
     `Terminal ${(index ?? 0) + 1}`
   )
+}
+
+function clearContinuingActivationDismissal(
+  dismissedIds: Record<string, true>,
+  candidateId: string
+): Record<string, true> {
+  if (!(candidateId in dismissedIds)) {
+    return dismissedIds
+  }
+  const next = { ...dismissedIds }
+  delete next[candidateId]
+  return next
 }
 
 export type TerminalSlice = {
@@ -650,6 +666,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // worktrees on every OSC title frame.
       let ownerWorktreeId: string | null = null
       let ownerTabs: TerminalTab[] | null = null
+      let nextDismissedCandidateIds = s.dismissedContinuingActivationCandidateIds
       for (const [wId, tabs] of Object.entries(s.tabsByWorktree)) {
         const idx = tabs.findIndex((t) => t.id === tabId)
         if (idx === -1) {
@@ -659,6 +676,15 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         const nextTitle = title.trim() || getFallbackTabTitle(t)
         if (t.title === nextTitle) {
           return s
+        }
+        if (
+          detectAgentStatusFromTitle(t.title) === 'permission' &&
+          detectAgentStatusFromTitle(nextTitle) !== 'permission'
+        ) {
+          nextDismissedCandidateIds = clearContinuingActivationDismissal(
+            nextDismissedCandidateIds,
+            buildTerminalTitleTabCandidateId({ tabId })
+          )
         }
         ownerWorktreeId = wId
         ownerTabs = tabs.map((tab) =>
@@ -690,9 +716,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // title update). Bumping sortEpoch here would reorder the sidebar
       // on click — the exact bug PR #209 intended to fix.
       const isActive = ownerWorktreeId === s.activeWorktreeId
-      return isActive
-        ? { tabsByWorktree: nextTabsByWorktree }
-        : { tabsByWorktree: nextTabsByWorktree, sortEpoch: s.sortEpoch + 1 }
+      return {
+        tabsByWorktree: nextTabsByWorktree,
+        ...(nextDismissedCandidateIds !== s.dismissedContinuingActivationCandidateIds
+          ? { dismissedContinuingActivationCandidateIds: nextDismissedCandidateIds }
+          : {}),
+        ...(isActive ? {} : { sortEpoch: s.sortEpoch + 1 })
+      }
     })
     const item = Object.values(get().unifiedTabsByWorktree)
       .flat()
@@ -712,11 +742,24 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       if (currentByPane[paneId] === title) {
         return s
       }
+      const currentTitle = currentByPane[paneId]
+      const nextDismissedCandidateIds =
+        currentTitle != null &&
+        detectAgentStatusFromTitle(currentTitle) === 'permission' &&
+        detectAgentStatusFromTitle(title) !== 'permission'
+          ? clearContinuingActivationDismissal(
+              s.dismissedContinuingActivationCandidateIds,
+              buildTerminalTitlePaneCandidateId({ tabId, paneId })
+            )
+          : s.dismissedContinuingActivationCandidateIds
       return {
         runtimePaneTitlesByTabId: {
           ...s.runtimePaneTitlesByTabId,
           [tabId]: { ...currentByPane, [paneId]: title }
-        }
+        },
+        ...(nextDismissedCandidateIds !== s.dismissedContinuingActivationCandidateIds
+          ? { dismissedContinuingActivationCandidateIds: nextDismissedCandidateIds }
+          : {})
       }
     })
   },
@@ -727,6 +770,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       if (!currentByPane || !(paneId in currentByPane)) {
         return s
       }
+      const nextDismissedCandidateIds =
+        detectAgentStatusFromTitle(currentByPane[paneId]) === 'permission'
+          ? clearContinuingActivationDismissal(
+              s.dismissedContinuingActivationCandidateIds,
+              buildTerminalTitlePaneCandidateId({ tabId, paneId })
+            )
+          : s.dismissedContinuingActivationCandidateIds
       const nextByPane = { ...currentByPane }
       delete nextByPane[paneId]
 
@@ -737,7 +787,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         delete next[tabId]
       }
 
-      return { runtimePaneTitlesByTabId: next }
+      return {
+        runtimePaneTitlesByTabId: next,
+        ...(nextDismissedCandidateIds !== s.dismissedContinuingActivationCandidateIds
+          ? { dismissedContinuingActivationCandidateIds: nextDismissedCandidateIds }
+          : {})
+      }
     })
   },
 
