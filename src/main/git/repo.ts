@@ -89,12 +89,55 @@ export function getRepoName(path: string): string {
  */
 export function getRemoteUrl(path: string): string | null {
   try {
-    return gitExecFileSync(['remote', 'get-url', 'origin'], {
-      cwd: path
-    }).trim()
+    return getRemoteUrlByName(path, 'origin')
   } catch {
     return null
   }
+}
+
+function getRemoteUrlByName(path: string, remote: string): string {
+  return gitExecFileSync(['remote', 'get-url', remote], {
+    cwd: path
+  }).trim()
+}
+
+function listRemoteNamesSync(path: string): string[] {
+  try {
+    return gitExecFileSync(['remote'], { cwd: path })
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+function getConfiguredBranchRemote(path: string, branch: string | null): string {
+  if (!branch) {
+    return ''
+  }
+  const remote = getGitConfigValue(path, `branch.${branch}.remote`)
+  return remote === '.' ? '' : remote
+}
+
+function getCurrentBranchName(path: string): string {
+  try {
+    return gitExecFileSync(['branch', '--show-current'], { cwd: path }).trim()
+  } catch {
+    return ''
+  }
+}
+
+function getRemoteNameFromRef(shortRef: string, remotes: readonly string[]): string {
+  const sortedRemotes = [...remotes].sort((a, b) => b.length - a.length)
+  return sortedRemotes.find((remote) => shortRef.startsWith(`${remote}/`)) ?? ''
+}
+
+function getDefaultBranchName(shortRef: string, remoteName: string): string {
+  if (!shortRef.includes('/')) {
+    return shortRef
+  }
+  return remoteName ? shortRef.slice(remoteName.length + 1) : shortRef.split('/').slice(1).join('/')
 }
 
 function getGitConfigValue(path: string, key: string): string {
@@ -179,13 +222,47 @@ function getGhLogin(): string {
 }
 
 function getGhLoginForGitHubRemote(path: string): string {
-  const remoteUrl = getRemoteUrl(path)
-  if (parseHostedRemote(remoteUrl ?? '')?.provider !== 'github') {
-    // Why: `gh` reports a GitHub account. For GitLab/Bitbucket/self-hosted
-    // repos, using that identity would create the wrong provider prefix.
+  const remoteUrl = getGitHubRemoteUrlForGhLogin(path)
+  if (!remoteUrl) {
     return ''
   }
   return getGhLogin()
+}
+
+function getGitHubRemoteUrlForGhLogin(path: string): string {
+  const remotes = listRemoteNamesSync(path)
+  const defaultBaseRef = getDefaultBaseRef(path)
+  const defaultBaseRemote = defaultBaseRef ? getRemoteNameFromRef(defaultBaseRef, remotes) : ''
+  const defaultBranch = defaultBaseRef
+    ? getDefaultBranchName(defaultBaseRef, defaultBaseRemote)
+    : null
+
+  const candidateRemotes = [
+    getConfiguredBranchRemote(path, getCurrentBranchName(path)),
+    getConfiguredBranchRemote(path, defaultBranch),
+    defaultBaseRemote,
+    'origin',
+    remotes.length === 1 ? remotes[0] : ''
+  ]
+
+  const seen = new Set<string>()
+  for (const remote of candidateRemotes) {
+    if (!remote || seen.has(remote)) {
+      continue
+    }
+    seen.add(remote)
+    try {
+      const remoteUrl = getRemoteUrlByName(path, remote)
+      if (parseHostedRemote(remoteUrl)?.provider === 'github') {
+        return remoteUrl
+      }
+    } catch {
+      // Missing candidate remotes are expected; try the next repo-level fallback.
+    }
+  }
+  // Why: `gh` reports a GitHub account. For GitLab/Bitbucket/self-hosted
+  // repos, using that identity would create the wrong provider prefix.
+  return ''
 }
 
 /**

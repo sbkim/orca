@@ -17,6 +17,7 @@ vi.mock('child_process', async () => {
 describe('getGitUsername', () => {
   let gitConfig: Record<string, string>
   let originRemoteUrl: string | undefined
+  let remoteUrls: Record<string, string>
   let getGitUsername: typeof RepoModule.getGitUsername
 
   beforeEach(async () => {
@@ -25,6 +26,7 @@ describe('getGitUsername', () => {
     execFileSyncMock.mockReset()
     gitConfig = {}
     originRemoteUrl = undefined
+    remoteUrls = {}
 
     execFileSyncMock.mockImplementation((_binary: string, args: string[]) => {
       if (args[0] === 'config' && args[1] === '--get') {
@@ -34,11 +36,19 @@ describe('getGitUsername', () => {
         }
         throw new Error(`missing config ${args[2]}`)
       }
-      if (args[0] === 'remote' && args[1] === 'get-url' && args[2] === 'origin') {
+      if (args[0] === 'remote' && args.length === 1) {
+        const remotes = new Set(Object.keys(remoteUrls))
         if (originRemoteUrl) {
-          return `${originRemoteUrl}\n`
+          remotes.add('origin')
         }
-        throw new Error('missing origin remote')
+        return `${[...remotes].join('\n')}\n`
+      }
+      if (args[0] === 'remote' && args[1] === 'get-url') {
+        const remoteUrl = args[2] === 'origin' ? originRemoteUrl : remoteUrls[args[2]]
+        if (remoteUrl) {
+          return `${remoteUrl}\n`
+        }
+        throw new Error(`missing ${args[2]} remote`)
       }
       throw new Error(`unexpected git args: ${args.join(' ')}`)
     })
@@ -68,6 +78,27 @@ describe('getGitUsername', () => {
     originRemoteUrl = 'https://github.com/stablyai/orca.git'
     gitConfig['user.email'] = 'demo@example.com'
     gitConfig['user.name'] = 'Demo User'
+    execSyncMock.mockImplementationOnce(() => 'gh-demo\n')
+
+    expect(getGitUsername('/repo')).toBe('gh-demo')
+    expect(execSyncMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses GitHub CLI login for a single GitHub remote not named origin', () => {
+    remoteUrls.upstream = 'https://github.com/stablyai/orca.git'
+    execSyncMock.mockImplementationOnce(() => 'gh-demo\n')
+
+    expect(getGitUsername('/repo')).toBe('gh-demo')
+    expect(execFileSyncMock.mock.calls).toEqual(
+      expect.arrayContaining([
+        ['git', ['remote', 'get-url', 'upstream'], expect.objectContaining({ cwd: '/repo' })]
+      ])
+    )
+    expect(execSyncMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses GitHub CLI login for GitHub SSH-over-443 remotes', () => {
+    remoteUrls.upstream = 'ssh://git@ssh.github.com:443/stablyai/orca.git'
     execSyncMock.mockImplementationOnce(() => 'gh-demo\n')
 
     expect(getGitUsername('/repo')).toBe('gh-demo')
