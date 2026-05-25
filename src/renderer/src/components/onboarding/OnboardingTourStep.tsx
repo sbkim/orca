@@ -10,7 +10,7 @@ import { usePrefersReducedMotion } from '../feature-wall/feature-wall-modal-help
 const TOUR_LEARNING_POINTS: readonly string[] = [
   'Run agents in isolated workspaces.',
   'Start from GitHub or Linear.',
-  'Review, verify, and ship changes.'
+  'Review diffs, verify webpages, and draft PRs.'
 ]
 
 type OnboardingTourStepProps = {
