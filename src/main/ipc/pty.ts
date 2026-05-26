@@ -10,8 +10,6 @@ export { getBashShellReadyRcfileContent } from '../providers/local-pty-shell-rea
 import type { OrcaRuntimeService } from '../runtime/orca-runtime'
 import type { Store } from '../persistence'
 import type { GlobalSettings } from '../../shared/types'
-import { ORCA_CLAUDE_AGENT_STATUS_SETTINGS_ENV } from '../../shared/claude-settings'
-import { claudeHookService } from '../claude/hook-service'
 import { openCodeHookService } from '../opencode/hook-service'
 import { agentHookServer } from '../agent-hooks/server'
 import { isAgentStatusHooksEnabled } from '../agent-hooks/managed-agent-hook-controls'
@@ -56,6 +54,7 @@ import {
   clearMigrationUnsupportedPtysForPaneKey
 } from '../agent-hooks/migration-unsupported-pty-state'
 import { parseWslPath } from '../wsl'
+import { mergePersistedWindowsPath } from '../pty/windows-environment-path'
 
 // ─── Provider Registry ──────────────────────────────────────────────
 // Routes PTY operations by connectionId. null = local provider.
@@ -93,7 +92,9 @@ const AGENT_HOOK_RUNTIME_ENV_KEYS = [
   'ORCA_AGENT_HOOK_ENV',
   'ORCA_AGENT_HOOK_VERSION',
   'ORCA_AGENT_HOOK_ENDPOINT',
-  ORCA_CLAUDE_AGENT_STATUS_SETTINGS_ENV
+  // Why: PR 2778 briefly exported this scoped Claude settings path. Keep
+  // deleting stale inherited values so older PTYs cannot leak the reverted path.
+  'ORCA_CLAUDE_AGENT_STATUS_SETTINGS'
 ] as const
 
 export function getPtyIdForPaneKey(paneKey: string): string | undefined {
@@ -268,7 +269,7 @@ export type BuildPtyHostEnvOptions = {
 }
 
 function readInheritedPath(baseEnv: Record<string, string>): string {
-  return baseEnv.PATH ?? process.env.PATH ?? process.env.Path ?? ''
+  return baseEnv.PATH ?? baseEnv.Path ?? process.env.PATH ?? process.env.Path ?? ''
 }
 
 function isWslShellName(shellPath: string | undefined): boolean {
@@ -332,6 +333,16 @@ function mergePtyEnvDeletions(
   return Array.from(new Set([...(existingKeys ?? []), ...additionalKeys]))
 }
 
+function getInheritedAgentHookEnvKeysToDelete(
+  spawnEnv: Record<string, string> | undefined
+): string[] {
+  const env = spawnEnv ?? {}
+  // Why: daemon/local providers merge process.env after main-process cleanup.
+  // Delete reverted or unavailable hook env keys there without dropping fresh
+  // receiver coordinates that buildPtyHostEnv intentionally set.
+  return AGENT_HOOK_RUNTIME_ENV_KEYS.filter((key) => env[key] === undefined)
+}
+
 // Why: when agent status is disabled, a nested Orca terminal can still pass
 // through a prior PTY's OpenCode/Pi overlay env. Restore the user's original
 // source dir when Orca recorded one, otherwise strip only values known to be ours.
@@ -370,6 +381,8 @@ export function buildPtyHostEnv(
   baseEnv: Record<string, string>,
   opts: BuildPtyHostEnvOptions
 ): Record<string, string> {
+  mergePersistedWindowsPath(baseEnv)
+
   // Why: the Local path passes a baseEnv that already includes process.env
   // (LocalPtyProvider.spawn merges it before calling buildSpawnEnv). The
   // daemon path passes only args.env since process.env propagates to the
@@ -431,7 +444,6 @@ export function buildPtyHostEnv(
   }
   if (opts.agentStatusHooksEnabled) {
     Object.assign(baseEnv, agentHookServer.buildPtyEnv())
-    Object.assign(baseEnv, claudeHookService.buildPtyEnv())
   }
 
   // Why: PI_CODING_AGENT_DIR owns Pi's / OMP's full config/session root (OMP
@@ -1103,9 +1115,12 @@ export function registerPtyHandlers(
         cwd: args.cwd,
         env
       }
-      if (claudeAuth?.stripAuthEnv) {
-        spawnOptions.envToDelete = [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
-      }
+      spawnOptions.envToDelete = mergePtyEnvDeletions(
+        claudeAuth?.stripAuthEnv
+          ? [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
+          : undefined,
+        args.connectionId ? [] : getInheritedAgentHookEnvKeysToDelete(env)
+      )
       if (skipCodexHomeEnv) {
         spawnOptions.envToDelete = mergePtyEnvDeletions(
           spawnOptions.envToDelete,
@@ -1507,7 +1522,10 @@ export function registerPtyHandlers(
         ? [...CLAUDE_AUTH_ENV_VARS, 'ANTHROPIC_CUSTOM_HEADERS']
         : undefined
       const combinedEnvToDelete = mergePtyEnvDeletions(
-        envToDelete,
+        mergePtyEnvDeletions(
+          envToDelete,
+          args.connectionId ? [] : getInheritedAgentHookEnvKeysToDelete(spawnEnv)
+        ),
         skipCodexHomeEnv ? CODEX_HOME_ENV_KEYS : []
       )
       const spawnOptions: PtySpawnOptions = {

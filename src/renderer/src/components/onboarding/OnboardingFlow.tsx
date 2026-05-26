@@ -31,15 +31,15 @@ const stepCopy = {
   },
   agentSetup: {
     title: 'Set up Orca for agents',
-    subtitle: 'Choose the capabilities Orca should enable on this computer.'
+    subtitle: 'Turn on advanced Orca capabilities for agents.'
   },
   integrations: {
     title: 'Connect your task sources',
     subtitle: 'Connect GitHub or Linear to:'
   },
   tour: {
-    title: "Interested in Orca's advanced features?",
-    subtitle: 'Take a short tour before getting started.'
+    title: 'Explore Orca',
+    subtitle: ''
   },
   repo: {
     title: 'Point Orca at some code',
@@ -72,18 +72,15 @@ export default function OnboardingFlow({
   const continueShortcutModifierLabel = getScreenSubmitModifierLabel()
   const { currentStep, stepIndex, busyLabel } = flow
   const copy = stepCopy[currentStep.id]
-  const shouldShowSetupAction =
-    currentStep.id === 'agentSetup' &&
-    flow.hasSelectedFeatureSetup &&
-    !flow.featureSetupTerminalCommand
-  const primaryActionLabel = busyLabel ?? (shouldShowSetupAction ? 'Set up' : 'Continue')
   const isTourStep = currentStep.id === 'tour'
   const tourStarted = flow.tourStarted
   const isInlineTourRunning = isTourStep && tourStarted
   const shouldShowFooter = !isInlineTourRunning
   const shouldShowSkipToProjectSetup = currentStep.id !== 'repo'
   const shouldShowStepHeading = !isInlineTourRunning
-  const footerPrimaryLabel = primaryActionLabel
+  const shouldShowFooterBusy = Boolean(busyLabel) && currentStep.id !== 'agentSetup'
+  const footerPrimaryLabel =
+    currentStep.id === 'agentSetup' ? 'Continue' : (busyLabel ?? 'Continue')
   const {
     next: flowNext,
     openFolder: flowOpenFolder,
@@ -138,10 +135,7 @@ export default function OnboardingFlow({
 
   return (
     <div
-      className={cn(
-        'fixed inset-0 z-[100] bg-background text-foreground',
-        isInlineTourRunning ? 'overflow-hidden' : 'scrollbar-sleek overflow-auto'
-      )}
+      className={cn('fixed inset-0 z-[100] bg-background text-foreground', 'overflow-hidden')}
       data-onboarding-overlay
     >
       <div
@@ -159,10 +153,8 @@ export default function OnboardingFlow({
 
       <div
         className={cn(
-          'relative mx-auto flex w-full flex-col px-8 pb-10 pt-16 transition-[max-width] duration-[760ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
-          isInlineTourRunning
-            ? 'h-screen min-h-0 max-w-[1180px] overflow-hidden'
-            : 'min-h-screen max-w-[820px]'
+          'relative mx-auto flex h-screen min-h-0 w-full flex-col px-8 pb-10 pt-16 transition-[max-width] duration-[760ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+          isInlineTourRunning ? 'max-w-[1180px] overflow-hidden' : 'max-w-[820px] overflow-hidden'
         )}
       >
         <div className="flex items-center gap-2.5 text-sm font-semibold tracking-tight">
@@ -233,7 +225,12 @@ export default function OnboardingFlow({
               {copy.title}
             </h1>
             {copy.subtitle ? (
-              <p className="mt-3 max-w-[58ch] text-[15px] leading-relaxed text-muted-foreground">
+              <p
+                className={cn(
+                  'mt-3 text-[15px] leading-relaxed text-muted-foreground',
+                  currentStep.id === 'agentSetup' ? 'max-w-none' : 'max-w-[58ch]'
+                )}
+              >
                 {copy.subtitle}
               </p>
             ) : null}
@@ -242,8 +239,15 @@ export default function OnboardingFlow({
 
         <div
           className={cn(
-            'flex-1 transition-[margin-top] duration-[760ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
-            isInlineTourRunning ? 'mt-7 min-h-0' : 'mt-10'
+            'min-h-0 flex-1 transition-[margin-top] duration-[760ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none',
+            // Why: long setup output should scroll inside the step so the footer
+            // actions stay anchored across every onboarding page.
+            isInlineTourRunning
+              ? 'mt-7 overflow-hidden'
+              : cn(
+                  'scrollbar-sleek overflow-y-auto pr-1',
+                  currentStep.id === 'agentSetup' ? 'mt-4' : 'mt-10'
+                )
           )}
         >
           {currentStep.id === 'agent' && (
@@ -271,6 +275,8 @@ export default function OnboardingFlow({
               onFeatureSetupChange={flow.setFeatureSetupSelection}
               featureSetupCommand={flow.featureSetupTerminalCommand}
               featureSetupCommandSelection={flow.featureSetupTerminalSelection}
+              setupBusyLabel={currentStep.id === 'agentSetup' ? busyLabel : null}
+              onStartFeatureSetup={() => void flow.startFeatureSetup()}
             />
           )}
           {currentStep.id === 'integrations' && <IntegrationsStep />}
@@ -305,7 +311,7 @@ export default function OnboardingFlow({
         </div>
 
         {shouldShowFooter && (
-          <footer className="mt-10 flex items-center justify-between border-t border-border pt-5">
+          <footer className="mt-6 flex flex-none items-center justify-between border-t border-border pt-5">
             {shouldShowSkipToProjectSetup ? (
               <button
                 className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:text-muted-foreground"
@@ -328,19 +334,10 @@ export default function OnboardingFlow({
                   Back
                 </button>
               )}
-              {shouldShowSetupAction && (
-                <button
-                  className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:text-muted-foreground"
-                  disabled={Boolean(busyLabel)}
-                  onClick={() => void flow.skipAgentSetup()}
-                >
-                  Skip
-                </button>
-              )}
               {(currentStep.id !== 'repo' || flow.hasExistingProject) && (
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                  aria-busy={Boolean(busyLabel)}
+                  aria-busy={shouldShowFooterBusy}
                   disabled={Boolean(busyLabel)}
                   onClick={() => {
                     if (isTourStep) {
@@ -354,7 +351,7 @@ export default function OnboardingFlow({
                     void flow.next()
                   }}
                 >
-                  {busyLabel ? <Loader2 className="size-4 animate-spin" /> : null}
+                  {shouldShowFooterBusy ? <Loader2 className="size-4 animate-spin" /> : null}
                   {footerPrimaryLabel}
                   <span className="ml-1 inline-flex items-center gap-0.5 rounded border border-primary-foreground/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-current/80">
                     <span>{continueShortcutModifierLabel}</span>

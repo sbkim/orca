@@ -7218,7 +7218,7 @@ describe('OrcaRuntimeService', () => {
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: '/remote/mobile-startup-draft',
-        command: `claude --settings "$HOME/.orca/agent-hooks/claude-agent-status-settings.json" --prefill '${draftUrl}'`,
+        command: `claude --prefill '${draftUrl}'`,
         connectionId: 'ssh-1',
         worktreeId: result.worktree.id
       })

@@ -6734,8 +6734,7 @@ export class OrcaRuntimeService {
       agent,
       draft: content,
       cmdOverrides: settings.agentCmdOverrides ?? {},
-      platform: agentLaunchPlatform,
-      useOrcaClaudeAgentStatusSettings: settings.agentStatusHooksEnabled !== false
+      platform: agentLaunchPlatform
     })
     if (draftLaunchPlan) {
       return {
@@ -6752,8 +6751,7 @@ export class OrcaRuntimeService {
       prompt: '',
       cmdOverrides: settings.agentCmdOverrides ?? {},
       platform: agentLaunchPlatform,
-      allowEmptyPromptLaunch: true,
-      useOrcaClaudeAgentStatusSettings: settings.agentStatusHooksEnabled !== false
+      allowEmptyPromptLaunch: true
     })
     if (!startupPlan) {
       return null
