@@ -320,6 +320,7 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
     }
 
     const activation = activateAndRevealWorktree(worktreeId, {
+      sidebarRevealBehavior: 'auto',
       setup: result.setup,
       ...buildStartupOpts(effectiveAgent, startupPlan, launchSource)
     })

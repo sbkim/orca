@@ -1778,6 +1778,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         request_kind: 'new'
       }
       activateAndRevealWorktree(worktree.id, {
+        sidebarRevealBehavior: 'auto',
         setup: result.setup,
         issueCommand,
         ...(startupPlan
@@ -2016,6 +2017,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
                 request_kind: 'new'
               }
         activateAndRevealWorktree(worktree.id, {
+          sidebarRevealBehavior: 'auto',
           setup: result.setup,
           ...(startupPlan
             ? {
