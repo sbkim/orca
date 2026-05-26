@@ -31,8 +31,7 @@ const stepCopy = {
   },
   agentSetup: {
     title: 'Set up Orca for agents',
-    subtitle:
-      'Pick the capabilities you want ready after onboarding. Selected features run setup on the next click and show a terminal here with the skill command ready for review.'
+    subtitle: 'Turn on advanced Orca capabilities for agents.'
   },
   integrations: {
     title: 'Connect your task sources',
@@ -226,7 +225,12 @@ export default function OnboardingFlow({
               {copy.title}
             </h1>
             {copy.subtitle ? (
-              <p className="mt-3 max-w-[58ch] text-[15px] leading-relaxed text-muted-foreground">
+              <p
+                className={cn(
+                  'mt-3 text-[15px] leading-relaxed text-muted-foreground',
+                  currentStep.id === 'agentSetup' ? 'max-w-none' : 'max-w-[58ch]'
+                )}
+              >
                 {copy.subtitle}
               </p>
             ) : null}
