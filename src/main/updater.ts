@@ -299,6 +299,18 @@ async function sendCheckFailureStatus(
         // actionable cause.
         sendErrorStatus("Couldn't reach the update server. Try again in a few minutes.", true)
       } else {
+        // Why: a benign publishing-window failure during a nudge-driven check
+        // must not auto-dismiss the campaign. sendStatus({state:'idle'}) while
+        // awaitingNudgeCheckOutcome===true would persist the nudge id to
+        // dismissedUpdateNudgeId, suppressing it forever. Clear the nudge
+        // bookkeeping so the scheduled retry can re-trigger once assets are
+        // reachable.
+        if (
+          awaitingNudgeCheckOutcome &&
+          message.toLowerCase().includes('latest release assets are still publishing')
+        ) {
+          clearPendingUpdateNudge()
+        }
         sendStatus({ state: 'idle' })
       }
       return
