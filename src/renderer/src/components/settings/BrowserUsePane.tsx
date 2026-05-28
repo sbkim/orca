@@ -71,7 +71,7 @@ export function BrowserUseSetup({
     setBrowserUseEnabled(value)
     localStorage.setItem(BROWSER_USE_ENABLED_STORAGE_KEY, value ? '1' : '0')
     if (value) {
-      useAppStore.getState().recordFeatureInteraction('agent-browser-use')
+      useAppStore.getState().recordFeatureInteraction('agent-browser-setup')
     }
   }
 
@@ -140,7 +140,6 @@ export function BrowserUseSetup({
       .getState()
       .importCookiesFromBrowser(profileId, browserFamily, browserProfile)
     if (result.ok) {
-      useAppStore.getState().recordFeatureInteraction('agent-browser-use')
       const browser = detectedBrowsers.find((b) => b.family === browserFamily)
       toast.success(
         `Imported ${result.summary.importedCookies} cookies from ${browser?.label ?? browserFamily}${browserProfile ? ` (${browserProfile})` : ''}.`
@@ -153,7 +152,6 @@ export function BrowserUseSetup({
   const handleImportFromFile = async (): Promise<void> => {
     const result = await useAppStore.getState().importCookiesToProfile('default')
     if (result.ok) {
-      useAppStore.getState().recordFeatureInteraction('agent-browser-use')
       toast.success(`Imported ${result.summary.importedCookies} cookies from file.`)
     } else if (result.reason !== 'canceled') {
       toast.error(result.reason)
@@ -329,7 +327,7 @@ export function BrowserUseSetup({
             disabled={!cliEnabled}
             preInstallNotice={AGENT_SKILL_CLI_PREREQUISITE_NOTICE}
             onBeforeOpenTerminal={async () => {
-              useAppStore.getState().recordFeatureInteraction('agent-browser-use')
+              useAppStore.getState().recordFeatureInteraction('agent-browser-setup')
               await ensureOrcaCliAvailableForAgentSkillTerminal({ onStatusChange: setCliStatus })
             }}
             onRecheck={refreshSkill}

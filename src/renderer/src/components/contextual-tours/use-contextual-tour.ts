@@ -33,6 +33,7 @@ export function useContextualTour(
   )
   const enabledInteractionSnapshotRef = useRef<{
     id: ContextualTourId
+    source: string
     wasPreviouslyInteracted: boolean
   } | null>(null)
 
@@ -41,14 +42,21 @@ export function useContextualTour(
       enabledInteractionSnapshotRef.current = null
       return
     }
-    if (enabledInteractionSnapshotRef.current?.id !== id) {
-      enabledInteractionSnapshotRef.current = {
-        id,
-        wasPreviouslyInteracted: hasFeatureInteraction(featureInteractions, id)
-      }
+    if (
+      enabledInteractionSnapshotRef.current?.id === id &&
+      enabledInteractionSnapshotRef.current.source === source
+    ) {
+      return
+    }
+    enabledInteractionSnapshotRef.current = {
+      id,
+      source,
+      // Why: recording writes featureInteractions; subscribing here would retrigger
+      // this effect and repeatedly persist the same enabled source.
+      wasPreviouslyInteracted: hasFeatureInteraction(useAppStore.getState().featureInteractions, id)
     }
     recordFeatureInteraction(id)
-  }, [enabled, featureInteractions, id, persistedUIReady, recordFeatureInteraction])
+  }, [enabled, id, persistedUIReady, recordFeatureInteraction, source])
 
   useEffect(() => {
     // Why: source disable should end through the overlay so a shown tour gets
@@ -94,7 +102,7 @@ export function useContextualTour(
         requestContextualTour(
           id,
           source,
-          snapshot?.id === id
+          snapshot?.id === id && snapshot.source === source
             ? snapshot.wasPreviouslyInteracted
             : hasFeatureInteraction(featureInteractions, id)
         )

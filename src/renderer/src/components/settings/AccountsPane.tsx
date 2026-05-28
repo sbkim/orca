@@ -3,7 +3,7 @@
    add/select/reauth/remove flow is tightly coupled to the provider-specific
    error handling and restart prompts below; splitting them into separate files
    would scatter those flows without a meaningful abstraction boundary. */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   ClaudeRateLimitAccountsState,
   CodexRateLimitAccountsState,
@@ -115,6 +115,7 @@ export function AccountsPane({ settings, updateSettings }: AccountsPaneProps): R
   const fetchSettings = useAppStore((s) => s.fetchSettings)
   const localPreflightContext = useAppStore(getLocalPreflightContext)
   const activeWslDistro = localPreflightContext?.wslDistro?.trim() || null
+  const recordedOpenCodeSettingEditsRef = useRef<Set<'cookie' | 'workspaceId'>>(new Set())
 
   const [codexAccounts, setCodexAccounts] = useState<CodexRateLimitAccountsState>({
     accounts: [],
@@ -132,6 +133,14 @@ export function AccountsPane({ settings, updateSettings }: AccountsPaneProps): R
   >('idle')
   const [removeAccountId, setRemoveAccountId] = useState<string | null>(null)
   const [removeClaudeAccountId, setRemoveClaudeAccountId] = useState<string | null>(null)
+
+  const recordOpenCodeSettingEdit = (field: 'cookie' | 'workspaceId'): void => {
+    if (recordedOpenCodeSettingEditsRef.current.has(field)) {
+      return
+    }
+    recordedOpenCodeSettingEditsRef.current.add(field)
+    recordFeatureInteraction('usage-tracking')
+  }
 
   useEffect(() => {
     let stale = false
@@ -701,7 +710,7 @@ export function AccountsPane({ settings, updateSettings }: AccountsPaneProps): R
               type="password"
               value={settings.opencodeSessionCookie}
               onChange={(e) => {
-                recordFeatureInteraction('usage-tracking')
+                recordOpenCodeSettingEdit('cookie')
                 updateSettings({ opencodeSessionCookie: e.target.value })
               }}
               placeholder="Fe26.2**… token or auth=Fe26.2**… header"
@@ -741,7 +750,7 @@ export function AccountsPane({ settings, updateSettings }: AccountsPaneProps): R
               type="text"
               value={settings.opencodeWorkspaceId}
               onChange={(e) => {
-                recordFeatureInteraction('usage-tracking')
+                recordOpenCodeSettingEdit('workspaceId')
                 updateSettings({ opencodeWorkspaceId: e.target.value })
               }}
               placeholder="wrk_…  (leave blank for automatic lookup)"

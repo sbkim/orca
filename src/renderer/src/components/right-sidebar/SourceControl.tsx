@@ -1996,6 +1996,9 @@ function SourceControlInner(): React.JSX.Element {
         if (result.branchChangedByPreparation) {
           await refreshGitStatusAfterPullRequestGeneration(context)
         }
+        if (result.success) {
+          useAppStore.getState().recordFeatureInteraction('ai-pr-generation')
+        }
         setPrGenerationRecords((prev) => {
           const record = prev[generationKey]
           if (!result.success) {
@@ -2031,7 +2034,6 @@ function SourceControlInner(): React.JSX.Element {
           if (!nextRecord) {
             return prev
           }
-          useAppStore.getState().recordFeatureInteraction('ai-pr-generation')
           return {
             ...prev,
             [generationKey]: nextRecord

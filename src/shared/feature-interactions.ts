@@ -9,13 +9,17 @@ export type FeatureInteractionId =
   | 'browser-annotations'
   | 'browser-grab'
   | 'workspace-creation'
+  | 'agent-browser-setup'
   | 'agent-browser-use'
+  | 'agent-orchestration-setup'
   | 'agent-orchestration'
   | 'ai-commit-generation'
   | 'ai-pr-generation'
   | 'claude-account-switching'
+  | 'computer-use-setup'
   | 'computer-use'
   | 'codex-account-switching'
+  | 'cookie-import'
   | 'floating-workspace'
   | 'mobile-pairing'
   | 'notifications'
@@ -26,6 +30,7 @@ export type FeatureInteractionId =
   | 'ssh'
   | 'terminal-panes'
   | 'terminal-tabs'
+  | 'tab-splits'
   | 'usage-tracking'
   | 'voice-dictation'
   | 'workspace-cleanup'
@@ -91,12 +96,20 @@ export const FEATURE_INTERACTIONS = [
     interaction: 'workspace creation flow opened'
   },
   {
+    id: 'agent-browser-setup',
+    interaction: 'Agent Browser Use setup enabled or opened'
+  },
+  {
     id: 'agent-browser-use',
-    interaction: 'Agent Browser Use setup enabled or used'
+    interaction: 'agent browser runtime method used'
+  },
+  {
+    id: 'agent-orchestration-setup',
+    interaction: 'Agent Orchestration setup enabled or opened'
   },
   {
     id: 'agent-orchestration',
-    interaction: 'Agent Orchestration setup enabled or used'
+    interaction: 'agent orchestration runtime method used'
   },
   {
     id: 'ai-commit-generation',
@@ -111,12 +124,20 @@ export const FEATURE_INTERACTIONS = [
     interaction: 'Claude managed account added, selected, reauthenticated, or removed'
   },
   {
-    id: 'computer-use',
+    id: 'computer-use-setup',
     interaction: 'Computer Use setup or permission flow opened'
+  },
+  {
+    id: 'computer-use',
+    interaction: 'computer-use runtime method used'
   },
   {
     id: 'codex-account-switching',
     interaction: 'Codex managed account added, selected, reauthenticated, or removed'
+  },
+  {
+    id: 'cookie-import',
+    interaction: 'browser cookies imported or cleared'
   },
   {
     id: 'floating-workspace',
@@ -152,11 +173,15 @@ export const FEATURE_INTERACTIONS = [
   },
   {
     id: 'terminal-panes',
-    interaction: 'terminal/editor/browser pane split, moved, resized, or merged'
+    interaction: 'terminal/editor/browser pane created, resized, or merged'
   },
   {
     id: 'terminal-tabs',
-    interaction: 'workspace tab created, moved, reordered, pinned, renamed, or closed'
+    interaction: 'workspace tab created, moved, reordered, pinned, renamed, recolored, or closed'
+  },
+  {
+    id: 'tab-splits',
+    interaction: 'workspace tab split into another pane'
   },
   {
     id: 'usage-tracking',

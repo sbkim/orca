@@ -77,6 +77,32 @@ export type PendingSidebarWorktreeReveal = {
   behavior: 'auto' | 'smooth'
 }
 
+function mergeFeatureInteractionState(
+  current: FeatureInteractionState,
+  incoming: PersistedUIState['featureInteractions']
+): FeatureInteractionState {
+  const currentNormalized = normalizeFeatureInteractions(current)
+  const incomingNormalized = normalizeFeatureInteractions(incoming)
+  const merged: FeatureInteractionState = { ...currentNormalized }
+  for (const [id, incomingRecord] of Object.entries(incomingNormalized)) {
+    const featureId = id as FeatureInteractionId
+    const currentRecord = currentNormalized[featureId]
+    merged[featureId] = currentRecord
+      ? {
+          firstInteractedAt: Math.min(
+            currentRecord.firstInteractedAt,
+            incomingRecord.firstInteractedAt
+          ),
+          interactionCount: Math.max(
+            currentRecord.interactionCount,
+            incomingRecord.interactionCount
+          )
+        }
+      : incomingRecord
+  }
+  return merged
+}
+
 function clampPetSize(size: number): number {
   if (!Number.isFinite(size)) {
     return PET_SIZE_DEFAULT
@@ -940,7 +966,18 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         }
       }
       if (typeof window !== 'undefined') {
-        window.api.ui.set({ featureInteractions: next }).catch(console.error)
+        const recordInteraction = window.api.ui.recordFeatureInteraction
+        const persist = recordInteraction
+          ? recordInteraction(id).then((ui) => {
+              set((current) => ({
+                featureInteractions: mergeFeatureInteractionState(
+                  current.featureInteractions,
+                  ui.featureInteractions
+                )
+              }))
+            })
+          : window.api.ui.set({ featureInteractions: next })
+        persist.catch(console.error)
       }
       return { featureInteractions: next }
     }),

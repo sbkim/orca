@@ -129,9 +129,9 @@ const ONBOARDING_FEATURE_INTERACTIONS: Record<
   keyof OnboardingFeatureSetupSelection,
   FeatureInteractionId
 > = {
-  browserUse: 'agent-browser-use',
-  computerUse: 'computer-use',
-  orchestration: 'agent-orchestration'
+  browserUse: 'agent-browser-setup',
+  computerUse: 'computer-use-setup',
+  orchestration: 'agent-orchestration-setup'
 }
 
 export type PersistCurrentStepResult = {

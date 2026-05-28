@@ -1538,7 +1538,8 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         if (!exists) {
           state.createUnifiedTab(worktreeId, 'browser', {
             entityId: bt.id,
-            label: bt.title
+            label: bt.title,
+            recordInteraction: false
           })
         }
       }
@@ -1687,6 +1688,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         profileId
       })) as BrowserCookieImportResult
       if (result.ok) {
+        get().recordFeatureInteraction('cookie-import')
         set({
           browserSessionImportState: {
             profileId,
@@ -1830,6 +1832,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
         browserProfile
       })) as BrowserCookieImportResult
       if (result.ok) {
+        get().recordFeatureInteraction('cookie-import')
         set({
           browserSessionImportState: {
             profileId,
@@ -1886,6 +1889,7 @@ export const createBrowserSlice: StateCreator<AppState, [], [], BrowserSlice> = 
     try {
       const ok = await window.api.browser.sessionClearDefaultCookies()
       if (ok) {
+        get().recordFeatureInteraction('cookie-import')
         await get().fetchBrowserSessionProfiles()
       }
       return ok

@@ -201,6 +201,25 @@ describe('client UI RPC methods', () => {
     expect(response).toMatchObject({ ok: true, result: { ui: updated } })
   })
 
+  it('records a feature interaction through the runtime host', async () => {
+    const updated: PersistedUIState = {
+      ...getDefaultUIState(),
+      featureInteractions: {
+        tasks: { firstInteractedAt: 100, interactionCount: 1 }
+      }
+    }
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      recordFeatureInteraction: vi.fn(() => updated)
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    const response = await dispatcher.dispatch(makeRequest('ui.recordFeatureInteraction', 'tasks'))
+
+    expect(runtime.recordFeatureInteraction).toHaveBeenCalledWith('tasks')
+    expect(response).toMatchObject({ ok: true, result: { ui: updated } })
+  })
+
   it('rejects unknown and malformed UI update fields', async () => {
     const runtime = {
       getRuntimeId: () => 'test-runtime',
@@ -233,5 +252,20 @@ describe('client UI RPC methods', () => {
 
     expect(response).toMatchObject({ ok: false, error: { code: 'invalid_argument' } })
     expect(runtime.updateUIState).not.toHaveBeenCalled()
+  })
+
+  it('rejects unknown feature interaction ids for increment RPC', async () => {
+    const runtime = {
+      getRuntimeId: () => 'test-runtime',
+      recordFeatureInteraction: vi.fn()
+    } as unknown as OrcaRuntimeService
+    const dispatcher = new RpcDispatcher({ runtime, methods: CLIENT_UI_METHODS })
+
+    const response = await dispatcher.dispatch(
+      makeRequest('ui.recordFeatureInteraction', 'unknown-feature')
+    )
+
+    expect(response).toMatchObject({ ok: false, error: { code: 'invalid_argument' } })
+    expect(runtime.recordFeatureInteraction).not.toHaveBeenCalled()
   })
 })

@@ -1,5 +1,8 @@
 import { z } from 'zod'
-import { isFeatureInteractionId } from '../../../../shared/feature-interactions'
+import {
+  isFeatureInteractionId,
+  type FeatureInteractionId
+} from '../../../../shared/feature-interactions'
 import { isTuiAgent } from '../../../../shared/tui-agent-config'
 import type { PersistedUIState } from '../../../../shared/types'
 import { defineMethod, type RpcMethod } from '../core'
@@ -68,6 +71,9 @@ const FeatureInteractions = z
       }
     }
   })
+const FeatureInteractionIdParam = z.custom<FeatureInteractionId>(isFeatureInteractionId, {
+  message: 'Unknown feature interaction id'
+})
 const GitHubProjectRef = z
   .object({
     owner: z.string(),
@@ -206,6 +212,13 @@ export const CLIENT_UI_METHODS: RpcMethod[] = [
     params: UiUpdate,
     handler: (params, { runtime }) => ({
       ui: runtime.updateUIState(params as Partial<PersistedUIState>)
+    })
+  }),
+  defineMethod({
+    name: 'ui.recordFeatureInteraction',
+    params: FeatureInteractionIdParam,
+    handler: (params, { runtime }) => ({
+      ui: runtime.recordFeatureInteraction(params)
     })
   })
 ]

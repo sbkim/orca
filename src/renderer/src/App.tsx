@@ -257,6 +257,9 @@ function App(): React.JSX.Element {
   useRadixBodyPointerEventsRecovery()
   useWebSessionTabsSync()
   const [floatingTerminalOpen, setFloatingTerminalOpen] = useState(false)
+  // Why: floating workspace toggles can batch before React re-renders; keep
+  // functional SetStateAction semantics without side effects inside the updater.
+  const floatingTerminalOpenRef = useRef(floatingTerminalOpen)
 
   // Why: Zustand actions are referentially stable, but each individual
   // useAppStore(s => s.someAction) still registers a subscription that React
@@ -366,16 +369,17 @@ function App(): React.JSX.Element {
 
   const setFloatingTerminalOpenWithFocus = useCallback(
     (nextOpen: SetStateAction<boolean>): void => {
-      setFloatingTerminalOpen((currentOpen) => {
-        const resolvedOpen = typeof nextOpen === 'function' ? nextOpen(currentOpen) : nextOpen
-        if (resolvedOpen && !currentOpen) {
-          useAppStore.getState().recordFeatureInteraction('floating-workspace')
-          rememberFloatingTerminalReturnFocus()
-        } else if (!resolvedOpen && currentOpen) {
-          restoreFloatingTerminalReturnFocus()
-        }
-        return resolvedOpen
-      })
+      const currentOpen = floatingTerminalOpenRef.current
+      const resolvedOpen =
+        typeof nextOpen === 'function' ? nextOpen(floatingTerminalOpenRef.current) : nextOpen
+      floatingTerminalOpenRef.current = resolvedOpen
+      if (resolvedOpen && !currentOpen) {
+        useAppStore.getState().recordFeatureInteraction('floating-workspace')
+        rememberFloatingTerminalReturnFocus()
+      } else if (!resolvedOpen && currentOpen) {
+        restoreFloatingTerminalReturnFocus()
+      }
+      setFloatingTerminalOpen(resolvedOpen)
     },
     [rememberFloatingTerminalReturnFocus, restoreFloatingTerminalReturnFocus]
   )

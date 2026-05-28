@@ -811,7 +811,9 @@ describe('useIpcEvents updater integration', () => {
     expect(setActiveTabType).toHaveBeenCalledWith('terminal')
     expect(setActiveTab).toHaveBeenCalledWith('tab-new')
     expect(revealWorktreeInSidebar).toHaveBeenCalledWith('wt-2')
-    expect(setTabCustomTitle).toHaveBeenCalledWith('tab-new', 'Runner')
+    expect(setTabCustomTitle).toHaveBeenCalledWith('tab-new', 'Runner', {
+      recordInteraction: false
+    })
     expect(queueTabStartupCommand).toHaveBeenCalledWith('tab-new', { command: 'opencode' })
 
     if (typeof requestTerminalCreateListenerRef.current !== 'function') {
@@ -835,7 +837,10 @@ describe('useIpcEvents updater integration', () => {
       activate: false
     })
 
-    expect(createTab).toHaveBeenCalledWith('wt-2', 'group-left', undefined, { activate: false })
+    expect(createTab).toHaveBeenCalledWith('wt-2', 'group-left', undefined, {
+      activate: false,
+      recordInteraction: false
+    })
     expect(setActiveView).not.toHaveBeenCalled()
     expect(setActiveWorktree).not.toHaveBeenCalled()
     expect(setActiveTabType).not.toHaveBeenCalled()
@@ -847,7 +852,9 @@ describe('useIpcEvents updater integration', () => {
         detail: { worktreeId: 'wt-2' }
       })
     )
-    expect(setTabCustomTitle).toHaveBeenCalledWith('tab-new', 'Codex')
+    expect(setTabCustomTitle).toHaveBeenCalledWith('tab-new', 'Codex', {
+      recordInteraction: false
+    })
     expect(queueTabStartupCommand).toHaveBeenCalledWith('tab-new', { command: 'codex' })
     expect(replyTerminalCreate).toHaveBeenCalledWith({
       requestId: 'req-renderer-backed',

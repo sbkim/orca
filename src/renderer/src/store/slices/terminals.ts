@@ -256,6 +256,7 @@ export type TerminalSlice = {
       pendingActivationSpawn?: boolean
       initialPtyId?: string
       activate?: boolean
+      recordInteraction?: boolean
       /** Pre-allocated tab id (e.g. minted by main for CLI/runtime-spawned
        *  terminals whose PTY env already carries a pane key). Falls back to
        *  minting a fresh id when omitted or when the supplied id collides
@@ -264,7 +265,7 @@ export type TerminalSlice = {
       id?: string
     }
   ) => TerminalTab
-  closeTab: (tabId: string) => void
+  closeTab: (tabId: string, opts?: { recordInteraction?: boolean }) => void
   reorderTabs: (worktreeId: string, tabIds: string[]) => void
   setTabBarOrder: (worktreeId: string, order: string[]) => void
   setActiveTab: (tabId: string) => void
@@ -283,7 +284,11 @@ export type TerminalSlice = {
    *  model where the bell stays visible until the user engages with the
    *  surface that raised it. */
   clearTerminalTabUnread: (tabId: string) => void
-  setTabCustomTitle: (tabId: string, title: string | null) => void
+  setTabCustomTitle: (
+    tabId: string,
+    title: string | null,
+    opts?: { recordInteraction?: boolean }
+  ) => void
   setTabColor: (tabId: string, color: string | null) => void
   updateTabPtyId: (tabId: string, ptyId: string) => void
   clearTabPtyId: (tabId: string, ptyId?: string) => void
@@ -616,10 +621,15 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         }
       }
     })
+    const shouldRecordInteraction =
+      options?.recordInteraction ?? (!options?.pendingActivationSpawn && !options?.initialPtyId)
+    if (shouldRecordInteraction) {
+      get().recordFeatureInteraction('terminal-tabs')
+    }
     return tab
   },
 
-  closeTab: (tabId) => {
+  closeTab: (tabId, opts) => {
     set((s) => {
       const next = { ...s.tabsByWorktree }
       let closingPtyId: string | null = null
@@ -743,7 +753,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         (entry) => entry.contentType === 'terminal' && entry.entityId === tabId
       )
       if (workspaceItem) {
-        get().closeUnifiedTab(workspaceItem.id)
+        get().closeUnifiedTab(workspaceItem.id, opts)
       }
     }
   },
@@ -1033,7 +1043,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     })
   },
 
-  setTabCustomTitle: (tabId, title) => {
+  setTabCustomTitle: (tabId, title, opts) => {
     set((s) => {
       const next = { ...s.tabsByWorktree }
       for (const wId of Object.keys(next)) {
@@ -1046,7 +1056,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       .flat()
       .find((entry) => entry.contentType === 'terminal' && entry.entityId === tabId)
     if (item) {
-      get().setTabCustomLabel(item.id, title)
+      get().setTabCustomLabel(item.id, title, opts)
     }
   },
 

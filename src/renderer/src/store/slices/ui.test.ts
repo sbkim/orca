@@ -816,6 +816,91 @@ describe('createUISlice feature interactions', () => {
     }
   })
 
+  it('uses the main-owned feature interaction increment API when available', async () => {
+    const recordFeatureInteractionMock = vi.fn(() =>
+      Promise.resolve(
+        makePersistedUI({
+          featureInteractions: {
+            tasks: { firstInteractedAt: 100, interactionCount: 3 }
+          }
+        })
+      )
+    )
+    const setMock = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('window', {
+      api: {
+        ui: {
+          recordFeatureInteraction: recordFeatureInteractionMock,
+          set: setMock
+        }
+      }
+    })
+    const store = createUIStore()
+    store.getState().hydratePersistedUI(
+      makePersistedUI({
+        featureInteractions: {
+          tasks: { firstInteractedAt: 100, interactionCount: 2 }
+        }
+      })
+    )
+    setMock.mockClear()
+
+    store.getState().recordFeatureInteraction('tasks')
+    await Promise.resolve()
+
+    expect(recordFeatureInteractionMock).toHaveBeenCalledWith('tasks')
+    expect(setMock).not.toHaveBeenCalled()
+    expect(store.getState().featureInteractions.tasks).toEqual({
+      firstInteractedAt: 100,
+      interactionCount: 3
+    })
+  })
+
+  it('keeps newer optimistic interaction counts when persistence responses resolve out of order', async () => {
+    const pending: ((ui: PersistedUIState) => void)[] = []
+    const recordFeatureInteractionMock = vi.fn(
+      () =>
+        new Promise<PersistedUIState>((resolve) => {
+          pending.push(resolve)
+        })
+    )
+    vi.stubGlobal('window', {
+      api: {
+        ui: {
+          recordFeatureInteraction: recordFeatureInteractionMock,
+          set: vi.fn(() => Promise.resolve())
+        }
+      }
+    })
+    const store = createUIStore()
+    store.getState().hydratePersistedUI(makePersistedUI())
+
+    store.getState().recordFeatureInteraction('tasks')
+    store.getState().recordFeatureInteraction('tasks')
+
+    pending[1](
+      makePersistedUI({
+        featureInteractions: {
+          tasks: { firstInteractedAt: 100, interactionCount: 2 }
+        }
+      })
+    )
+    await Promise.resolve()
+    pending[0](
+      makePersistedUI({
+        featureInteractions: {
+          tasks: { firstInteractedAt: 100, interactionCount: 1 }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    expect(store.getState().featureInteractions.tasks).toEqual({
+      firstInteractedAt: 100,
+      interactionCount: 2
+    })
+  })
+
   it('does not record interactions before persisted UI has hydrated', () => {
     const setMock = vi.fn(() => Promise.resolve())
     vi.stubGlobal('window', {
