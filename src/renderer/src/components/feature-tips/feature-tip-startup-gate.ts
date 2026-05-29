@@ -3,6 +3,7 @@ import {
   getCompletedFeatureTipIds,
   getOrderedUnseenFeatureTips
 } from '../../../../shared/feature-tips'
+import type { CliInstallStatus } from '../../../../shared/cli-install-types'
 import type { GlobalSettings, OnboardingState } from '../../../../shared/types'
 import { shouldShowOnboarding } from '../onboarding/should-show-onboarding'
 
@@ -10,6 +11,12 @@ export type FeatureTipsAppOpenDecision =
   | { kind: 'open'; tipId: FeatureTipId }
   | { kind: 'skip' }
   | { kind: 'suppress-for-onboarding' }
+
+export function isCliFeatureTipCompleted(status: CliInstallStatus): boolean {
+  // Why: unsupported launch modes cannot complete setup, but an installed
+  // launcher still needs attention until it is reachable on PATH.
+  return !status.supported || (status.state === 'installed' && status.pathConfigured)
+}
 
 export function getFeatureTipsAppOpenDecision(args: {
   activeModal: string
@@ -32,6 +39,7 @@ export function getFeatureTipsAppOpenDecision(args: {
     !args.settings ||
     args.onboarding === null ||
     args.activeModal !== 'none' ||
+    args.cliInstalled === null ||
     shouldShowOnboarding(args.onboarding)
   ) {
     return { kind: 'skip' }
@@ -40,9 +48,7 @@ export function getFeatureTipsAppOpenDecision(args: {
   const unseenTips = getOrderedUnseenFeatureTips({
     seenTipIds: new Set<FeatureTipId>(args.featureTipsSeenIds),
     completedTipIds: getCompletedFeatureTipIds({
-      // Why: CLI status arrives asynchronously. Treat unknown as completed so
-      // the CLI tip never flashes before the install probe finishes.
-      cliInstalled: args.cliInstalled !== false,
+      cliInstalled: args.cliInstalled,
       voiceDictationEnabled: args.settings.voice?.enabled === true
     })
   })

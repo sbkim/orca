@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { getDefaultOnboardingState, getDefaultVoiceSettings } from '../../../../shared/constants'
+import type { CliInstallStatus } from '../../../../shared/cli-install-types'
 import type { GlobalSettings, OnboardingState } from '../../../../shared/types'
-import { getFeatureTipsAppOpenDecision } from './feature-tip-startup-gate'
+import { getFeatureTipsAppOpenDecision, isCliFeatureTipCompleted } from './feature-tip-startup-gate'
 
 const existingUserOnboarding: OnboardingState = {
   ...getDefaultOnboardingState(),
@@ -18,6 +19,24 @@ function makeSettings(voiceEnabled = false): Pick<GlobalSettings, 'voice'> {
       ...getDefaultVoiceSettings(),
       enabled: voiceEnabled
     }
+  }
+}
+
+function makeCliStatus(overrides: Partial<CliInstallStatus> = {}): CliInstallStatus {
+  return {
+    platform: 'darwin',
+    commandName: 'orca',
+    supported: true,
+    state: 'installed',
+    commandPath: '/usr/local/bin/orca',
+    pathDirectory: '/usr/local/bin',
+    pathConfigured: true,
+    launcherPath: '/Applications/Orca.app/Contents/MacOS/orca',
+    installMethod: 'symlink',
+    currentTarget: null,
+    unsupportedReason: null,
+    detail: null,
+    ...overrides
   }
 }
 
@@ -140,5 +159,37 @@ describe('feature tip startup gate', () => {
         suppressedByOnboardingThisSession: false
       })
     ).toEqual({ kind: 'skip' })
+  })
+
+  it('waits for CLI install status before opening later tips', () => {
+    expect(
+      getFeatureTipsAppOpenDecision({
+        activeModal: 'none',
+        cliInstalled: null,
+        featureTipsSeenIds: [],
+        onboarding: existingUserOnboarding,
+        persistedUIReady: true,
+        promptedThisSession: false,
+        settings: makeSettings(),
+        suppressedByOnboardingThisSession: false
+      })
+    ).toEqual({ kind: 'skip' })
+  })
+
+  it('requires an installed CLI to also be configured on PATH', () => {
+    expect(isCliFeatureTipCompleted(makeCliStatus())).toBe(true)
+    expect(isCliFeatureTipCompleted(makeCliStatus({ pathConfigured: false }))).toBe(false)
+  })
+
+  it('treats unsupported CLI setup as completed for feature tips', () => {
+    expect(
+      isCliFeatureTipCompleted(
+        makeCliStatus({
+          supported: false,
+          state: 'unsupported',
+          pathConfigured: false
+        })
+      )
+    ).toBe(true)
   })
 })

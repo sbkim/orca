@@ -114,7 +114,10 @@ import type { VirtualizedScrollAnchor } from './hooks/useVirtualizedScrollAnchor
 import type { RemoteWorkspacePatchResult } from '../../shared/remote-workspace-types'
 import type { OnboardingState } from '../../shared/types'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../shared/constants'
-import { getFeatureTipsAppOpenDecision } from './components/feature-tips/feature-tip-startup-gate'
+import {
+  getFeatureTipsAppOpenDecision,
+  isCliFeatureTipCompleted
+} from './components/feature-tips/feature-tip-startup-gate'
 import {
   keybindingMatchesAction,
   type KeybindingActionId,
@@ -464,9 +467,7 @@ function App(): React.JSX.Element {
         if (cancelled) {
           return
         }
-        // Why: unsupported launch modes cannot complete the setup action, so
-        // they should not be interrupted by a CLI setup tip.
-        setFeatureTipCliInstalled(!status.supported || status.state === 'installed')
+        setFeatureTipCliInstalled(isCliFeatureTipCompleted(status))
       })
       .catch(() => {
         if (!cancelled) {
