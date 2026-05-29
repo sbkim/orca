@@ -33,11 +33,14 @@ const {
 
 vi.mock('../github/client', () => ({
   createGitHubPullRequest: createGitHubPullRequestMock,
-  getRepoSlug: getRepoSlugMock
+  getRepoSlug: getRepoSlugMock,
+  getPRForBranch: vi.fn()
 }))
 
 vi.mock('../gitlab/client', () => ({
-  getProjectSlug: getProjectSlugMock
+  getProjectSlug: getProjectSlugMock,
+  getMergeRequestForBranch: vi.fn(),
+  getMergeRequest: vi.fn()
 }))
 
 vi.mock('../gitlab/merge-request-creation', () => ({
@@ -45,15 +48,21 @@ vi.mock('../gitlab/merge-request-creation', () => ({
 }))
 
 vi.mock('../bitbucket/client', () => ({
-  getBitbucketRepoSlug: getBitbucketRepoSlugMock
+  getBitbucketRepoSlug: getBitbucketRepoSlugMock,
+  getBitbucketPullRequestForBranch: vi.fn(),
+  getBitbucketPullRequest: vi.fn()
 }))
 
 vi.mock('../azure-devops/client', () => ({
-  getAzureDevOpsRepoSlug: getAzureDevOpsRepoSlugMock
+  getAzureDevOpsRepoSlug: getAzureDevOpsRepoSlugMock,
+  getAzureDevOpsPullRequestForBranch: vi.fn(),
+  getAzureDevOpsPullRequest: vi.fn()
 }))
 
 vi.mock('../gitea/client', () => ({
-  getGiteaRepoSlug: getGiteaRepoSlugMock
+  getGiteaRepoSlug: getGiteaRepoSlugMock,
+  getGiteaPullRequestForBranch: vi.fn(),
+  getGiteaPullRequest: vi.fn()
 }))
 
 vi.mock('../github/gh-utils', () => ({
