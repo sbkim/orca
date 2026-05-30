@@ -8,18 +8,23 @@ import type { RuntimeTerminalSummary } from '../../../../shared/runtime-types'
 
 describe('orchestration RPC methods', () => {
   let db: OrchestrationDb
+  let dbOpen = false
   let runtime: OrcaRuntimeService
   let ctx: RpcContext
 
   function setup(): void {
     db = new OrchestrationDb(':memory:')
+    dbOpen = true
     runtime = new OrcaRuntimeService()
     runtime.setOrchestrationDb(db)
     ctx = { runtime }
   }
 
   afterEach(() => {
-    db?.close()
+    if (dbOpen) {
+      db.close()
+      dbOpen = false
+    }
   })
 
   function findMethod(name: string) {
