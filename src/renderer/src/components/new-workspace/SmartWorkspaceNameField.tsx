@@ -916,6 +916,11 @@ export default function SmartWorkspaceNameField({
           setMode(nextMode)
           setOpen(!disabled && nextMode !== 'text')
           cancelLocalInputFocusFrame()
+          if (!localInputRef.current) {
+            return
+          }
+          // Why: selected-source mode keeps tabs visible while the input is
+          // absent, so no input ref would own cancellation for this frame.
           localInputFocusFrameRef.current = requestAnimationFrame(() => {
             localInputFocusFrameRef.current = null
             localInputRef.current?.focus({ preventScroll: true })
