@@ -66,6 +66,23 @@ describe('sftp-upload', () => {
     })
   })
 
+  it('rejects sibling directories outside the upload root', async () => {
+    const localDir = await mkdtemp(join(tmpdir(), 'orca-sftp-upload-'))
+    const escapedDir = `${localDir}-sibling`
+    await mkdir(escapedDir)
+    await writeFile(join(escapedDir, 'asset.txt'), 'asset')
+    const sftp = createSftpMock()
+
+    await expect(
+      uploadDirectory(sftp, escapedDir, '/remote/assets', await realpath(localDir), {
+        exclusive: true
+      })
+    ).rejects.toThrow('Path escaped upload root')
+
+    expect(sftp.mkdir).not.toHaveBeenCalled()
+    expect(sftp.createWriteStream).not.toHaveBeenCalled()
+  })
+
   it('does not create the remote file when the local source is a symlink', async () => {
     const localDir = await mkdtemp(join(tmpdir(), 'orca-sftp-upload-'))
     await writeFile(join(localDir, 'target.txt'), 'secret')
