@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   CircleStop,
   Loader2,
@@ -87,11 +87,10 @@ export function SshTargetCard({
   const removeInFlight = busyAction === 'remove'
   const mountedRef = useRef(true)
 
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
+  const handleCardRef = useCallback((node: HTMLDivElement | null): void => {
+    // Why: SSH target actions can resolve after the card is removed; the root
+    // ref gives async completions the same stale-write guard without an Effect.
+    mountedRef.current = node !== null
   }, [])
 
   const clearActionInFlight = (): void => {
@@ -226,7 +225,10 @@ export function SshTargetCard({
   )
 
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-border/50 bg-card/40 px-4 py-3">
+    <div
+      ref={handleCardRef}
+      className="flex items-center gap-3 rounded-lg border border-border/50 bg-card/40 px-4 py-3"
+    >
       <Server className="size-4 shrink-0 text-muted-foreground" />
 
       <div className="min-w-0 flex-1">
