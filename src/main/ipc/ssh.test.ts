@@ -151,8 +151,8 @@ vi.mock('./pty', () => ({
   deletePtyOwnership: vi.fn(),
   setPtyOwnership: vi.fn(),
   getSshPtyProvider: vi.fn(),
-  isRendererPtyOutputPaused: vi.fn().mockReturnValue(false),
-  getPtyIdsForConnection: vi.fn().mockReturnValue([])
+  getPtyIdsForConnection: vi.fn().mockReturnValue([]),
+  isRendererPtyOutputPaused: vi.fn().mockReturnValue(false)
 }))
 
 vi.mock('../providers/ssh-filesystem-dispatch', () => ({

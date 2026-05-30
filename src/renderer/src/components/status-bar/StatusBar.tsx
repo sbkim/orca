@@ -1211,8 +1211,12 @@ function CodexSwitcherMenu({
     }
   }, [])
 
-  useEffect(() => {
-    if (accountsExpanded) {
+  const handleAccountsExpandedToggle = useCallback((): void => {
+    const nextExpanded = !accountsExpanded
+    setAccountsExpanded(nextExpanded)
+    if (nextExpanded) {
+      // Why: inactive-account usage is needed only for the explicit switcher
+      // expansion, so fetch it on that event instead of one render later.
       void fetchInactiveCodexAccountUsage()
     }
   }, [accountsExpanded, fetchInactiveCodexAccountUsage])
@@ -1257,7 +1261,7 @@ function CodexSwitcherMenu({
       <DropdownMenuItem
         onSelect={(event) => {
           event.preventDefault()
-          setAccountsExpanded((prev) => !prev)
+          handleAccountsExpandedToggle()
         }}
       >
         <div className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5 text-[12px]">
