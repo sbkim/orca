@@ -326,69 +326,64 @@ export function AutoRenameBranchFromWorkSetting({
         </CollapsibleTrigger>
         <CollapsibleContent>
           <div className="mt-2 space-y-3 rounded-md border border-border/60 bg-muted/20 px-3 py-3">
-            <div className="space-y-2">
-              <div className="space-y-0.5">
-                <Label htmlFor="git-auto-rename-branch-name-prompt">Branch name prompt</Label>
-                <p className="text-xs text-muted-foreground">
-                  Appended to Orca&apos;s built-in branch-name prompt. The built-in prompt still
-                  requires a short lowercase kebab-case branch leaf.
-                </p>
-              </div>
-              <textarea
-                id="git-auto-rename-branch-name-prompt"
-                rows={4}
-                value={branchNamePromptDraft}
-                onChange={(event) => setBranchNamePromptDraft(event.target.value)}
-                placeholder="Prefer domain nouns from the task, avoid ticket IDs, and keep names reviewer-friendly."
-                className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
-              />
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[11px] text-muted-foreground">
-                  {branchNamePromptDirty ? 'Unsaved changes' : 'Saved'}
-                </p>
-                <div className="flex items-center gap-2">
-                  {branchNamePromptDirty ? (
+            <Collapsible open={builtInPromptOpen} onOpenChange={setBuiltInPromptOpen}>
+              <div className="space-y-2">
+                <div className="space-y-0.5">
+                  <Label htmlFor="git-auto-rename-branch-name-prompt">Branch name prompt</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Appended to Orca&apos;s{' '}
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-0.5 rounded-sm font-medium text-foreground underline decoration-border underline-offset-2 hover:decoration-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                      >
+                        built-in branch-name prompt
+                        <ChevronDown
+                          className={cn(
+                            'size-3 transition-transform',
+                            builtInPromptOpen && 'rotate-180'
+                          )}
+                        />
+                      </button>
+                    </CollapsibleTrigger>
+                    . Orca still forces the result to be a short lowercase kebab-case name.
+                  </p>
+                </div>
+                <textarea
+                  id="git-auto-rename-branch-name-prompt"
+                  rows={4}
+                  value={branchNamePromptDraft}
+                  onChange={(event) => setBranchNamePromptDraft(event.target.value)}
+                  placeholder="Prefer domain nouns from the task, avoid ticket IDs, and keep names reviewer-friendly."
+                  className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground outline-none placeholder:text-muted-foreground/70 focus-visible:ring-1 focus-visible:ring-ring"
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] text-muted-foreground">
+                    {branchNamePromptDirty ? 'Unsaved changes' : 'Saved'}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    {branchNamePromptDirty ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="xs"
+                        onClick={onDiscardPrompt}
+                        disabled={isSavingPrompt}
+                      >
+                        Discard
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
-                      variant="ghost"
+                      variant="secondary"
                       size="xs"
-                      onClick={onDiscardPrompt}
-                      disabled={isSavingPrompt}
+                      onClick={() => void onSavePrompt()}
+                      disabled={!branchNamePromptDirty || isSavingPrompt}
                     >
-                      Discard
+                      {isSavingPrompt ? 'Saving...' : 'Save'}
                     </Button>
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="xs"
-                    onClick={() => void onSavePrompt()}
-                    disabled={!branchNamePromptDirty || isSavingPrompt}
-                  >
-                    {isSavingPrompt ? 'Saving...' : 'Save'}
-                  </Button>
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            <Collapsible open={builtInPromptOpen} onOpenChange={setBuiltInPromptOpen}>
-              <div className="border-t border-border/50 pt-3">
-                <CollapsibleTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="-ml-2 h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    Built-in prompt
-                    <ChevronDown
-                      className={cn(
-                        'size-3.5 transition-transform',
-                        builtInPromptOpen && 'rotate-180'
-                      )}
-                    />
-                  </Button>
-                </CollapsibleTrigger>
                 <CollapsibleContent>
                   <div className="mt-2 space-y-2">
                     <p className="text-xs text-muted-foreground">
