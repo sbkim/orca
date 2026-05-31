@@ -143,9 +143,9 @@ export function FeatureWallBody(props: {
   ) : isReviewShip ? (
     <AiCommitPrSettingsCard />
   ) : null
-  const shouldLabelOnboardingTourZones =
+  const shouldUseOnboardingTourZones =
     source === 'onboarding' && hasAnimatedVisual && Boolean(settingContent)
-  const shouldStickSetupToBottom = shouldLabelOnboardingTourZones
+  const shouldStickSetupToBottom = shouldUseOnboardingTourZones
   // Why: several visuals expand/collapse internally; setup controls should sit
   // after a stable stage so they do not jump with the animation loop.
   const visualStageHeight = isTasks
@@ -223,10 +223,8 @@ export function FeatureWallBody(props: {
       </div>
     </div>
   )
-  const previewVisualNode = shouldLabelOnboardingTourZones ? (
-    <TourZone label="Demo" className="items-center">
-      {animatedVisualNode}
-    </TourZone>
+  const previewVisualNode = shouldUseOnboardingTourZones ? (
+    <TourZone className="items-center">{animatedVisualNode}</TourZone>
   ) : (
     animatedVisualNode
   )
@@ -262,41 +260,27 @@ export function FeatureWallBody(props: {
       {settingContent && shouldStickSetupToBottom ? (
         <div className="sticky bottom-0 z-10 -mx-8 mt-auto border-t border-border bg-card/95 px-8 py-3 backdrop-blur supports-[backdrop-filter]:bg-card/85">
           <TourZone
-            label="Setup"
             className={cn(
-              'scrollbar-sleek mx-auto max-h-[220px] w-full overflow-y-auto',
+              'scrollbar-sleek mx-auto max-h-[220px] w-full gap-2 overflow-y-auto',
               settingWidth
             )}
           >
-            {settingContent}
+            <>
+              <div className="text-center text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+                Setup
+              </div>
+              {settingContent}
+            </>
           </TourZone>
         </div>
       ) : settingContent ? (
-        <TourZone
-          label={shouldLabelOnboardingTourZones ? 'Setup' : null}
-          className={cn('mx-auto w-full', settingWidth)}
-        >
-          {settingContent}
-        </TourZone>
+        <TourZone className={cn('mx-auto w-full', settingWidth)}>{settingContent}</TourZone>
       ) : null}
     </div>
   )
 }
 
-function TourZone(props: {
-  label: string | null
-  className?: string
-  children: JSX.Element | null
-}): JSX.Element {
-  const { label, className, children } = props
-  return (
-    <div className={cn('flex min-w-0 flex-col gap-2', className)}>
-      {label ? (
-        <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-          {label}
-        </div>
-      ) : null}
-      {children}
-    </div>
-  )
+function TourZone(props: { className?: string; children: JSX.Element | null }): JSX.Element {
+  const { className, children } = props
+  return <div className={cn('flex min-w-0 flex-col', className)}>{children}</div>
 }
