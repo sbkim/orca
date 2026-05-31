@@ -5325,16 +5325,22 @@ export default function GitHubItemDialog({
     window.clearTimeout(linkCopiedResetTimerRef.current)
     linkCopiedResetTimerRef.current = null
   }, [])
-  const setLinkCopyButtonRef = useCallback((node: HTMLButtonElement | null) => {
-    linkCopyMountedRef.current = node !== null
-  }, [])
+  const setLinkCopyButtonRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      linkCopyMountedRef.current = node !== null
+      if (node === null) {
+        // Why: the copied-state timer belongs to the copy control surface;
+        // clear it when that surface detaches without a passive cleanup Effect.
+        clearLinkCopiedResetTimer()
+      }
+    },
+    [clearLinkCopiedResetTimer]
+  )
 
   useEffect(() => {
     clearLinkCopiedResetTimer()
     setLinkCopied(false)
   }, [clearLinkCopiedResetTimer, workItemId])
-
-  useEffect(() => clearLinkCopiedResetTimer, [clearLinkCopiedResetTimer])
 
   const handleCopyWorkItemLink = useCallback(async (): Promise<void> => {
     if (!workItem) {
