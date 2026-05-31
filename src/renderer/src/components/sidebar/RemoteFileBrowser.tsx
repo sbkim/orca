@@ -87,27 +87,28 @@ export function RemoteFileBrowser({
     previewGenRef.current++
   }, [])
 
-  useEffect(() => {
-    return () => {
+  const setBrowserRootRef = useCallback(
+    (node: HTMLDivElement | null): void => {
+      if (node !== null) {
+        return
+      }
+      // Why: remote browse generations and input timers are scoped to this
+      // picker owner; clear them when the owner detaches.
       invalidateBrowseRequests()
-      if (fileHintTimerRef.current) {
-        clearTimeout(fileHintTimerRef.current)
-        fileHintTimerRef.current = null
+      for (const timerRef of [
+        fileHintTimerRef,
+        debounceTimerRef,
+        pasteResolveTimerRef,
+        clickTimerRef
+      ]) {
+        if (timerRef.current) {
+          clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
       }
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current)
-        debounceTimerRef.current = null
-      }
-      if (pasteResolveTimerRef.current) {
-        clearTimeout(pasteResolveTimerRef.current)
-        pasteResolveTimerRef.current = null
-      }
-      if (clickTimerRef.current) {
-        clearTimeout(clickTimerRef.current)
-        clickTimerRef.current = null
-      }
-    }
-  }, [invalidateBrowseRequests])
+    },
+    [invalidateBrowseRequests]
+  )
 
   const fetchListing = useCallback(
     async (dirPath: string): Promise<BrowseResult> => {
@@ -572,7 +573,7 @@ export function RemoteFileBrowser({
   const selectDisabled = loading || (isPreviewActive && filter !== '')
 
   return (
-    <div className="flex flex-col gap-2 min-w-0 w-full">
+    <div ref={setBrowserRootRef} className="flex flex-col gap-2 min-w-0 w-full">
       {/* Breadcrumb bar */}
       <div className="flex items-center gap-0.5 min-h-[28px] overflow-x-auto scrollbar-none">
         <button
