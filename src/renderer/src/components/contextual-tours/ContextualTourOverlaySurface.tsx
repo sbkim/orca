@@ -101,6 +101,15 @@ export function ContextualTourOverlaySurface({
       kind: renderState.isLastStep ? 'complete' : 'next',
       label: renderState.isLastStep ? 'Done' : 'Next'
     } satisfies ContextualTourStepAction)
+  const showTargetRings = primaryAction.kind === 'create-worktree'
+  const targetRingStyle = showTargetRings
+    ? ({
+        left: renderState.rect.left,
+        top: renderState.rect.top,
+        width: renderState.rect.width,
+        height: renderState.rect.height
+      } satisfies CSSProperties)
+    : undefined
 
   const panel = (
     <section
@@ -183,6 +192,14 @@ export function ContextualTourOverlaySurface({
       role="presentation"
       onKeyDownCapture={onOverlayKeyDownCapture}
     >
+      {showTargetRings ? (
+        <div
+          aria-hidden="true"
+          className="orca-contextual-tour-target-rings fixed z-[75]"
+          data-contextual-tour-target-rings=""
+          style={targetRingStyle}
+        />
+      ) : null}
       <div className="pointer-events-auto">
         {panelHost ? createPortal(panel, panelHost) : panel}
       </div>

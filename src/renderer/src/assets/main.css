@@ -1735,6 +1735,49 @@ html.onboarding-tour-start-transition::view-transition-new(root) {
   }
 }
 
+.orca-contextual-tour-target-rings {
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+.orca-contextual-tour-target-rings::before,
+.orca-contextual-tour-target-rings::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 1px solid color-mix(in srgb, var(--ring) 72%, transparent);
+  border-radius: inherit;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ring) 18%, transparent);
+  opacity: 0;
+  transform-origin: center;
+  animation: contextual-tour-target-ring 1.8s ease-out infinite;
+}
+
+.orca-contextual-tour-target-rings::after {
+  animation-delay: 0.45s;
+}
+
+@keyframes contextual-tour-target-ring {
+  0% {
+    opacity: 0.72;
+    transform: scale(1);
+  }
+  72%,
+  100% {
+    opacity: 0;
+    transform: scale(2.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .orca-contextual-tour-target-rings::before,
+  .orca-contextual-tour-target-rings::after {
+    animation: none;
+    opacity: 0.72;
+    transform: scale(1.28);
+  }
+}
+
 .feature-tour-copy-slide {
   position: absolute;
   inset: 0;

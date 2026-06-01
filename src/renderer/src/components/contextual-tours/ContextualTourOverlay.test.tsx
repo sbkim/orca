@@ -245,6 +245,19 @@ describe('ContextualTourOverlaySurface', () => {
     expect(onStepAction).toHaveBeenCalledWith(secondaryAction)
   })
 
+  it('renders target rings for the create-worktree step only', () => {
+    const createWorktreeMarkup = renderToStaticMarkup(
+      renderSurface({
+        primaryAction: { kind: 'create-worktree', label: 'Create worktree' },
+        title: 'Run another task in parallel'
+      })
+    )
+    const defaultMarkup = renderToStaticMarkup(renderSurface())
+
+    expect(createWorktreeMarkup).toContain('data-contextual-tour-target-rings')
+    expect(defaultMarkup).not.toContain('data-contextual-tour-target-rings')
+  })
+
   it('handles Escape by clicking Skip before page-level handlers see it', () => {
     const click = vi.fn()
     const preventDefault = vi.fn()
