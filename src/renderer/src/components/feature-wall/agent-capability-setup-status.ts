@@ -122,15 +122,15 @@ function getSkillInstallStatus(skill: {
   error: string | null
 }): AgentCapabilityInstallStatus {
   if (skill.loading) {
-    return { label: 'Checking skill', tone: 'checking' }
+    return { label: 'Checking install', tone: 'checking' }
   }
   if (skill.error) {
-    return { label: 'Could not check skill', tone: 'error' }
+    return { label: 'Could not check install', tone: 'error' }
   }
   if (skill.installed) {
     return { label: 'Installed', tone: 'ready', installed: true }
   }
-  return { label: 'Skill not installed', tone: 'pending' }
+  return { label: 'Click Install CLI & Skills', tone: 'pending' }
 }
 
 function getComputerUseInstallStatus(
@@ -150,13 +150,17 @@ function getComputerUseInstallStatus(
     return skillStatus
   }
   if (permissions.checking) {
-    return { label: 'checking access', tone: 'checking', installed: true }
+    return { label: 'checking app access', tone: 'checking', installed: true }
   }
   if (permissions.unavailableReason) {
-    return { label: 'helper unavailable', tone: 'pending', installed: true }
+    return { label: 'install the Orca desktop app', tone: 'pending', installed: true }
   }
   if (!permissions.ready) {
-    return { label: 'permissions needed', tone: 'pending', installed: true }
+    return {
+      label: 'click Install CLI & Skills to grant app access',
+      tone: 'pending',
+      installed: true
+    }
   }
   return { label: 'Installed', tone: 'ready', installed: true }
 }
