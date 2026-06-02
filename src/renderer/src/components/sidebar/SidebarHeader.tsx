@@ -1,8 +1,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Kanban, Plus } from 'lucide-react'
+import { ChevronDown, FolderPlus, GitBranch, Kanban, Monitor, Plus } from 'lucide-react'
 import { useAppStore } from '@/store'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu'
 import SidebarWorkspaceOptionsMenu from './SidebarWorkspaceOptionsMenu'
 import WorkspaceKanbanDrawer from './WorkspaceKanbanDrawer'
 import { useShortcutLabel } from '@/hooks/useShortcutLabel'
@@ -13,11 +22,20 @@ const SidebarHeader = React.memo(function SidebarHeader() {
   const [workspaceBoardOpen, setWorkspaceBoardOpen] = useState(false)
   const [workspaceBoardMenuOpen, setWorkspaceBoardMenuOpen] = useState(false)
   const workspaceBoardOpenRef = useRef(workspaceBoardOpen)
+  const openModal = useAppStore((s) => s.openModal)
   const repos = useAppStore((s) => s.repos)
   const groupBy = useAppStore((s) => s.groupBy)
   const canCreateWorkspace = repos.length > 0
-  const sidebarTitle = groupBy === 'repo' ? 'Projects' : 'Workspaces'
+  const isRepoGrouping = groupBy === 'repo'
+  const sidebarTitle = isRepoGrouping ? 'Projects' : 'Workspaces'
   workspaceBoardOpenRef.current = workspaceBoardOpen
+
+  const openAddRepo = useCallback(
+    (data: Record<string, unknown> = {}) => {
+      openModal('add-repo', data)
+    },
+    [openModal]
+  )
 
   const openWorkspaceBoard = useCallback(() => {
     if (workspaceBoardOpenRef.current) {
@@ -94,7 +112,7 @@ const SidebarHeader = React.memo(function SidebarHeader() {
     <>
       <div className="mt-2 flex h-8 items-center justify-between px-2 gap-2">
         <div className="flex min-w-0 items-center gap-1">
-          <span className="pl-2 pr-0.5 text-xs font-semibold text-muted-foreground/80 select-none">
+          <span className="truncate pl-2 pr-0.5 text-xs font-semibold text-muted-foreground/80 select-none">
             {sidebarTitle}
           </span>
         </div>
@@ -123,12 +141,26 @@ const SidebarHeader = React.memo(function SidebarHeader() {
             </TooltipContent>
           </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
+          <DropdownMenu modal={false} onOpenChange={setWorkspaceBoardMenuOpen}>
+            <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
-                size="icon-xs"
-                onClick={() => {
+                // Why: Direction A combines workspace creation and adding a
+                // project under the Projects header, so the affordance reads
+                // as "Add" near the list rather than another bare plus icon.
+                size={isRepoGrouping ? 'xs' : 'icon-xs'}
+                aria-label="Add to Orca"
+                className={isRepoGrouping ? 'gap-1 text-muted-foreground' : 'text-muted-foreground'}
+              >
+                <Plus className="size-3.5" strokeWidth={2.25} />
+                {isRepoGrouping ? <span className="text-[11px]">Add</span> : null}
+                {isRepoGrouping ? <ChevronDown className="size-3 opacity-60" /> : null}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={6} className="w-64">
+              <DropdownMenuLabel>Worktree</DropdownMenuLabel>
+              <DropdownMenuItem
+                onSelect={() => {
                   if (!canCreateWorkspace) {
                     return
                   }
@@ -140,15 +172,45 @@ const SidebarHeader = React.memo(function SidebarHeader() {
                   canCreateWorkspace ? 'workspace-create-control' : undefined
                 }
               >
-                <Plus className="size-3.5" strokeWidth={2.25} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" sideOffset={6}>
-              {canCreateWorkspace
-                ? `New workspace (${newWorktreeShortcutLabel})`
-                : 'Add a project to create workspaces'}
-            </TooltipContent>
-          </Tooltip>
+                <Plus className="size-3.5" />
+                <span className="flex min-w-0 flex-col">
+                  <span>New worktree</span>
+                </span>
+                {canCreateWorkspace ? (
+                  <DropdownMenuShortcut>{newWorktreeShortcutLabel}</DropdownMenuShortcut>
+                ) : null}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Project</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => openAddRepo({ autoBrowse: true })}>
+                <FolderPlus className="size-3.5" />
+                <span className="flex min-w-0 flex-col">
+                  <span>Open local folder...</span>
+                  <span className="text-[11px] leading-4 font-normal text-muted-foreground">
+                    Pick a Git repo on this machine
+                  </span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => openAddRepo({ initialStep: 'clone' })}>
+                <GitBranch className="size-3.5" />
+                <span className="flex min-w-0 flex-col">
+                  <span>Clone from GitHub / GitLab...</span>
+                  <span className="text-[11px] leading-4 font-normal text-muted-foreground">
+                    Paste a repository URL
+                  </span>
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => openAddRepo({ initialStep: 'remote' })}>
+                <Monitor className="size-3.5" />
+                <span className="flex min-w-0 flex-col">
+                  <span>Remote (SSH) project...</span>
+                  <span className="text-[11px] leading-4 font-normal text-muted-foreground">
+                    Connect to a repo on a remote host
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       <WorkspaceKanbanDrawer

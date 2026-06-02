@@ -183,6 +183,10 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   // Why: a dropped path is modal data, so ordinary state updates must not
   // re-run the import while the Add Project dialog advances through steps.
   const droppedLocalPathHandledRef = useRef<string | null>(null)
+  // Why: header add-menu routing is modal data; handle it once per modal open
+  // so later state updates don't kick the user back to the requested entry step.
+  const initialStepHandledRef = useRef<string | null>(null)
+  const autoBrowseHandledRef = useRef(false)
   // Why: track whether we've already auto-filled for this entry into the clone step,
   // so a late settings hydration still gets a chance to set the default.
   const cloneStepAutoFilledRef = useRef(false)
@@ -274,6 +278,11 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   const isOpen = activeModal === 'add-repo'
   const droppedLocalPath =
     typeof modalData.droppedLocalPath === 'string' ? modalData.droppedLocalPath : ''
+  const initialStep =
+    modalData.initialStep === 'clone' || modalData.initialStep === 'remote'
+      ? modalData.initialStep
+      : 'add'
+  const autoBrowse = modalData.autoBrowse === true
   const projectId = addedRepo?.id ?? ''
   const isRuntimeEnvironmentActive = Boolean(settings?.activeRuntimeEnvironmentId?.trim())
 
@@ -351,6 +360,8 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   useEffect(() => {
     if (!isOpen) {
       droppedLocalPathHandledRef.current = null
+      initialStepHandledRef.current = null
+      autoBrowseHandledRef.current = false
       resetState()
     }
   }, [isOpen, resetState])
@@ -489,6 +500,35 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
       }
     }
   }, [handleAddLocalPath])
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+    const routeKey = `${initialStep}:${autoBrowse ? 'browse' : 'manual'}`
+    if (initialStepHandledRef.current === routeKey) {
+      return
+    }
+    initialStepHandledRef.current = routeKey
+    if (initialStep === 'clone') {
+      setCloneError(null)
+      setStep('clone')
+      return
+    }
+    if (initialStep === 'remote') {
+      void handleOpenRemoteStep()
+      return
+    }
+    setStep('add')
+  }, [autoBrowse, handleOpenRemoteStep, initialStep, isOpen])
+
+  useEffect(() => {
+    if (!isOpen || !autoBrowse || autoBrowseHandledRef.current) {
+      return
+    }
+    autoBrowseHandledRef.current = true
+    void handleBrowse()
+  }, [autoBrowse, handleBrowse, isOpen])
 
   const handleImportNestedRepos = useCallback(
     async (mode: 'group' | 'separate') => {
