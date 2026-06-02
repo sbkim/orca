@@ -1654,9 +1654,20 @@ export class Store {
         const migratedExperimentalActivity = experimentalActivityDefaultedOffForAllUsers
           ? (parsed.settings?.experimentalActivity ?? false)
           : false
-        const taskProviderSettings = normalizeTaskProviderSettings({
+        const rawTaskProviderSettings = normalizeTaskProviderSettings({
           visibleTaskProviders: parsed.settings?.visibleTaskProviders,
           defaultTaskSource: parsed.settings?.defaultTaskSource
+        })
+        const visibleTaskProvidersDefaultedForJira =
+          parsed.settings?.visibleTaskProvidersDefaultedForJira === true
+        const migratedVisibleTaskProviders = visibleTaskProvidersDefaultedForJira
+          ? rawTaskProviderSettings.visibleTaskProviders
+          : rawTaskProviderSettings.visibleTaskProviders.includes('jira')
+            ? rawTaskProviderSettings.visibleTaskProviders
+            : [...rawTaskProviderSettings.visibleTaskProviders, 'jira' as const]
+        const taskProviderSettings = normalizeTaskProviderSettings({
+          visibleTaskProviders: migratedVisibleTaskProviders,
+          defaultTaskSource: rawTaskProviderSettings.defaultTaskSource
         })
         const primarySelectionDefaultedForLinux =
           parsed.settings?.primarySelectionMiddleClickPasteDefaultedForLinux === true
@@ -1672,6 +1683,9 @@ export class Store {
         const stampPrimarySelectionTerminalDefaults =
           primarySelectionPlatformDefaultEnabled && !primarySelectionDefaultedForTerminalDefaults
         if (migratePrimarySelectionPlatformDefault || stampPrimarySelectionTerminalDefaults) {
+          this.loadNeedsSave = true
+        }
+        if (!visibleTaskProvidersDefaultedForJira) {
           this.loadNeedsSave = true
         }
         result = {
@@ -1712,6 +1726,7 @@ export class Store {
             ),
             defaultTaskSource: taskProviderSettings.defaultTaskSource,
             visibleTaskProviders: taskProviderSettings.visibleTaskProviders,
+            visibleTaskProvidersDefaultedForJira: true,
             terminalShortcutPolicy: normalizeTerminalShortcutPolicy(
               parsed.settings?.terminalShortcutPolicy
             ),
@@ -2843,6 +2858,9 @@ export class Store {
       })
       sanitizedUpdates.defaultTaskSource = taskProviderSettings.defaultTaskSource
       sanitizedUpdates.visibleTaskProviders = taskProviderSettings.visibleTaskProviders
+      if ('visibleTaskProviders' in updates) {
+        sanitizedUpdates.visibleTaskProvidersDefaultedForJira = true
+      }
     }
     if ('openInApplications' in updates) {
       sanitizedUpdates.openInApplications = normalizeOpenInApplications(updates.openInApplications)

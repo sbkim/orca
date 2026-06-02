@@ -1373,6 +1373,29 @@ export type {
   MRState
 } from './gitlab-types'
 
+export type {
+  JiraComment,
+  JiraConnectArgs,
+  JiraConnectionStatus,
+  JiraCreateField,
+  JiraCreateFieldAllowedValue,
+  JiraCreateIssueArgs,
+  JiraCreateIssueResult,
+  JiraIssue,
+  JiraIssueFilter,
+  JiraIssueType,
+  JiraIssueUpdate,
+  JiraMutationResult,
+  JiraPriority,
+  JiraProject,
+  JiraSite,
+  JiraSiteSelection,
+  JiraStatus,
+  JiraTransition,
+  JiraUser,
+  JiraViewer
+} from './jira-types'
+
 /**
  * GitHub API rate-limit buckets surfaced in the TaskPage header so users can
  * see remaining budget before they hit the wall. `core` = REST (5000/hr),
@@ -2101,6 +2124,9 @@ export type GlobalSettings = {
    *  list hides unused providers from Tasks chrome and sidebar shortcuts while
    *  leaving the chosen default source stable when it is still visible. */
   visibleTaskProviders: TaskProvider[]
+  /** Why: one-shot migration guard so Jira becomes visible for existing
+   *  profiles once, without re-adding it after a later deliberate opt-out. */
+  visibleTaskProvidersDefaultedForJira: boolean
   /** Why: persists the user's repo selection in the cross-repo tasks view.
    *  `null` means sticky-all — every eligible repo is selected, including
    *  repos added in future sessions, so the "All repos" label stays
@@ -2442,6 +2468,8 @@ export type TaskResumeState = {
     workspaceId: LinearConcreteWorkspaceId
     model?: LinearCustomViewModel
   }
+  jiraPreset?: 'assigned' | 'reported' | 'all' | 'done'
+  jiraQuery?: string
 }
 
 export type RightSidebarTab = 'explorer' | 'search' | 'source-control' | 'checks' | 'ports'

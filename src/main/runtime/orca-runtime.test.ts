@@ -65,6 +65,7 @@ const electronMocks = vi.hoisted(() => {
   }
   return {
     BrowserWindow: { fromId: vi.fn((_id: number): unknown => null) },
+    webContents: { fromId: vi.fn((_id: number): unknown => null) },
     ipcMain,
     app: { getPath: vi.fn(() => '/tmp') }
   }
@@ -338,6 +339,8 @@ afterEach(() => {
   advertisedUrlWatcher.clear()
   electronMocks.BrowserWindow.fromId.mockReset()
   electronMocks.BrowserWindow.fromId.mockReturnValue(null)
+  electronMocks.webContents.fromId.mockReset()
+  electronMocks.webContents.fromId.mockReturnValue(null)
   electronMocks.ipcMain.on.mockClear()
   electronMocks.ipcMain.removeListener.mockClear()
   electronMocks.ipcMain.emit.mockClear()
@@ -2831,14 +2834,39 @@ describe('OrcaRuntimeService', () => {
       expect.arrayContaining([
         expect.objectContaining({
           worktreeId: `${TEST_REPO_ID}::C:\\Repo`,
-          worktreePath: 'C:\\Repo'
+          worktreePath: 'C:\\Repo',
+          title: 'Windows shell'
         }),
         expect.objectContaining({
           worktreeId: `${TEST_REPO_ID}:://Server/Share/Repo`,
-          worktreePath: '//Server/Share/Repo'
+          worktreePath: '//Server/Share/Repo',
+          title: 'UNC shell'
         })
       ])
     )
+  })
+
+  it('prefers OSC titles over provider titles for rendererless PTYs', async () => {
+    const ptyId = `${TEST_REPO_ID}::/tmp/worktree-a@@pty-bg`
+    const runtime = createRuntime()
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [{ id: ptyId, cwd: '/tmp/worktree-a', title: 'shell' }]
+    })
+    runtime.attachWindow(1)
+    runtime.markGraphReady(1)
+
+    expect((await runtime.listTerminals()).terminals[0]).toMatchObject({
+      title: 'shell'
+    })
+
+    runtime.onPtyData(ptyId, '\x1b]0;Codex\x07', 123)
+
+    expect((await runtime.listTerminals()).terminals[0]).toMatchObject({
+      title: 'Codex'
+    })
   })
 
   it('reads bounded terminal output and writes through the PTY controller', async () => {
@@ -4436,6 +4464,54 @@ describe('OrcaRuntimeService', () => {
     expect(appendRecentPtyOutput(previous, 'tail')).toBe(`${previous}tail`.slice(-4096))
     expect(appendRecentPtyOutput(previous, data)).toBe(expected)
     expect(appendRecentPtyOutput(undefined, data)).toBe(data.slice(-4096))
+  })
+
+  it('applies terminal redraw controls before retaining previews', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    syncSinglePty(runtime)
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    runtime.onPtyData('pty-1', 'Working\rWorking 1s\rWorking 2s', 100)
+
+    const carriageRead = await runtime.readTerminal(terminal.handle)
+    expect(carriageRead.tail).toEqual(['Working 2s'])
+    expect(carriageRead.latestCursor).toBe('0')
+
+    runtime.onPtyData('pty-1', '\b\b3s', 101)
+    const backspaceRead = await runtime.readTerminal(terminal.handle)
+    expect(backspaceRead.tail).toEqual(['Working 3s'])
+    expect(backspaceRead.latestCursor).toBe('0')
+
+    runtime.onPtyData('pty-1', '\rDone\n', 102)
+    const completedRead = await runtime.readTerminal(terminal.handle)
+    expect(completedRead.tail).toEqual(['Done'])
+    expect(completedRead.latestCursor).toBe('1')
+  })
+
+  it('applies ANSI terminal redraw controls before retaining previews', async () => {
+    const cursorRedraw = appendNormalizedToTailBuffer([], '', 'Working 10%\x1b[3D25%')
+    expect(cursorRedraw.partialLine).toBe('Working 25%')
+
+    const eraseWithoutCarriageReturn = appendNormalizedToTailBuffer(
+      [],
+      'Downloading 10%',
+      '\x1b[2K\x1b[1GDownloading 20%'
+    )
+    expect(eraseWithoutCarriageReturn.partialLine).toBe('Downloading 20%')
+
+    const runtime = new OrcaRuntimeService(store)
+    syncSinglePty(runtime)
+
+    const [terminal] = (await runtime.listTerminals()).terminals
+    runtime.onPtyData(
+      'pty-1',
+      'Working\r\x1b[2K\x1b[1G\x1b[?25l\x1b[32mDone\x1b[0m\x1b]0;title\u0007\n',
+      100
+    )
+
+    const read = await runtime.readTerminal(terminal.handle)
+    expect(read.tail).toEqual(['Done'])
+    expect(read.latestCursor).toBe('1')
   })
 
   it('bounds retained partial terminal output before preview reads', async () => {
@@ -10816,8 +10892,15 @@ describe('OrcaRuntimeService', () => {
   })
 
   describe('browser page targeting', () => {
+    function mockLiveBrowserGuest(): void {
+      electronMocks.webContents.fromId.mockReturnValue({
+        isDestroyed: () => false
+      })
+    }
+
     it('passes explicit page ids through without resolving the current worktree', async () => {
       vi.mocked(listWorktrees).mockClear()
+      mockLiveBrowserGuest()
       const runtime = createRuntime()
       const snapshotMock = vi.fn().mockResolvedValue({
         browserPageId: 'page-1',
@@ -10828,7 +10911,8 @@ describe('OrcaRuntimeService', () => {
       })
 
       runtime.setAgentBrowserBridge({
-        snapshot: snapshotMock
+        snapshot: snapshotMock,
+        getRegisteredTabs: vi.fn(() => new Map([['page-1', 1]]))
       } as never)
 
       const result = await runtime.browserSnapshot({ page: 'page-1' })
@@ -10840,6 +10924,7 @@ describe('OrcaRuntimeService', () => {
 
     it('resolves explicit worktree selectors when page ids are also provided', async () => {
       vi.mocked(listWorktrees).mockClear()
+      mockLiveBrowserGuest()
       const runtime = createRuntime()
       const snapshotMock = vi.fn().mockResolvedValue({
         browserPageId: 'page-1',
@@ -10863,6 +10948,7 @@ describe('OrcaRuntimeService', () => {
     })
 
     it('routes tab switch and capture start by explicit page id', async () => {
+      mockLiveBrowserGuest()
       const runtime = createRuntime()
       const tabSwitchMock = vi.fn().mockResolvedValue({
         switched: 2,
@@ -10874,7 +10960,8 @@ describe('OrcaRuntimeService', () => {
 
       runtime.setAgentBrowserBridge({
         tabSwitch: tabSwitchMock,
-        captureStart: captureStartMock
+        captureStart: captureStartMock,
+        getRegisteredTabs: vi.fn(() => new Map([['page-2', 2]]))
       } as never)
 
       await expect(runtime.browserTabSwitch({ page: 'page-2' })).resolves.toEqual({
@@ -10889,13 +10976,17 @@ describe('OrcaRuntimeService', () => {
     })
 
     it('accepts focus on tab switch without altering bridge args (focus is main-side concern)', async () => {
+      mockLiveBrowserGuest()
       const runtime = createRuntime()
       const tabSwitchMock = vi.fn().mockResolvedValue({
         switched: 0,
         browserPageId: 'page-1'
       })
 
-      runtime.setAgentBrowserBridge({ tabSwitch: tabSwitchMock } as never)
+      runtime.setAgentBrowserBridge({
+        tabSwitch: tabSwitchMock,
+        getRegisteredTabs: vi.fn(() => new Map([['page-1', 1]]))
+      } as never)
 
       await expect(runtime.browserTabSwitch({ page: 'page-1', focus: true })).resolves.toEqual({
         switched: 0,
@@ -10908,6 +10999,7 @@ describe('OrcaRuntimeService', () => {
 
     it('does not silently drop invalid explicit worktree selectors for page-targeted commands', async () => {
       vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
+      mockLiveBrowserGuest()
       const runtime = createRuntime()
       const snapshotMock = vi.fn()
 
@@ -10944,6 +11036,7 @@ describe('OrcaRuntimeService', () => {
 
     it('rejects closing an unknown page id instead of treating it as success', async () => {
       vi.mocked(listWorktrees).mockResolvedValue(MOCK_GIT_WORKTREES)
+      mockLiveBrowserGuest()
       const runtime = createRuntime()
 
       runtime.setAgentBrowserBridge({
@@ -10958,6 +11051,7 @@ describe('OrcaRuntimeService', () => {
     })
 
     it('rejects closing a page outside the explicitly scoped worktree', async () => {
+      mockLiveBrowserGuest()
       vi.mocked(listWorktrees).mockResolvedValue([
         ...MOCK_GIT_WORKTREES,
         {
@@ -11091,9 +11185,11 @@ describe('OrcaRuntimeService', () => {
         { id: `${TEST_WORKTREE_ID}@@aaaaaaaa`, cwd: '/tmp', title: 'shell' }
       ])
       let currentProvider: ReturnType<typeof createProviderStub> = preDaemonProvider
+      const onPtyStopped = vi.fn()
 
       const runtime = new OrcaRuntimeService(store, undefined, {
-        getLocalProvider: () => currentProvider as never
+        getLocalProvider: () => currentProvider as never,
+        onPtyStopped
       })
       vi.mocked(removeWorktree).mockResolvedValue({})
 
@@ -11107,6 +11203,7 @@ describe('OrcaRuntimeService', () => {
       expect(postDaemonProvider.shutdown).toHaveBeenCalledWith(`${TEST_WORKTREE_ID}@@aaaaaaaa`, {
         immediate: true
       })
+      expect(onPtyStopped).toHaveBeenCalledWith(`${TEST_WORKTREE_ID}@@aaaaaaaa`)
       // The pre-daemon provider must not have been consulted for the kill.
       expect(preDaemonProvider.shutdown).not.toHaveBeenCalled()
     })

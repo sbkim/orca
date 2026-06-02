@@ -480,9 +480,11 @@ function Settings(): React.JSX.Element {
   const windowsTerminalCapabilityOwnerKey = getWindowsTerminalCapabilityOwnerKey(
     settings?.activeRuntimeEnvironmentId
   )
+  // Why: General owns the Orca CLI controls, including WSL skill-location setup.
   const windowsTerminalCapabilities = useWindowsTerminalCapabilities(
     (isWindows || isWebClient) &&
       (neededSectionIds.has('terminal') ||
+        neededSectionIds.has('general') ||
         neededSectionIds.has('accounts') ||
         neededSectionIds.has('agents')),
     true,
@@ -909,7 +911,13 @@ function Settings(): React.JSX.Element {
                   searchEntries={getSectionSearchEntries('general')}
                 >
                   {isSectionMounted('general') ? (
-                    <GeneralPane settings={settings} updateSettings={updateSettings} />
+                    <GeneralPane
+                      settings={settings}
+                      updateSettings={updateSettings}
+                      wslSupportedPlatform={wslSupportedPlatform}
+                      wslAvailable={windowsTerminalCapabilities.wslAvailable}
+                      wslCapabilitiesLoading={windowsTerminalCapabilities.isLoading}
+                    />
                   ) : null}
                 </SettingsSection>
 

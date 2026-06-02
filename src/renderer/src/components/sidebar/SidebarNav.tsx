@@ -19,6 +19,7 @@ import { isGitRepoKind } from '../../../../shared/repo-kind'
 import type { GlobalSettings } from '../../../../shared/types'
 import { getTaskPresetQuery, PER_REPO_FETCH_LIMIT } from '@/lib/new-workspace'
 import { LinearIcon } from '@/components/icons/LinearIcon'
+import { JiraIcon } from '@/components/icons/JiraIcon'
 import {
   FEATURE_WALL_SETUP_PARALLEL_WORK_STEP_IDS,
   getFirstIncompleteFeatureWallSetupStepId,
@@ -308,6 +309,23 @@ const SidebarNav = React.memo(function SidebarNav() {
                 aria-label="Open Linear tasks"
               >
                 <LinearIcon className="size-3.5" />
+              </span>
+            ) : null}
+            {visibleTaskProviders.includes('jira') ? (
+              <span
+                role="button"
+                tabIndex={-1}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!canBrowseTasks) {
+                    return
+                  }
+                  openTaskPage({ taskSource: 'jira' })
+                }}
+                className="rounded p-0.5 text-muted-foreground/70 transition-colors hover:text-foreground"
+                aria-label="Open Jira tasks"
+              >
+                <JiraIcon className="size-3.5" />
               </span>
             ) : null}
           </span>

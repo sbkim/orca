@@ -54,12 +54,18 @@ import type {
   WorktreeRemoteBranchConflictEvent,
   WorktreeStartupLaunch,
   LinearCustomViewModel,
+  JiraConnectArgs,
+  JiraCreateIssueArgs,
+  JiraIssueFilter,
+  JiraIssueUpdate,
+  JiraSiteSelection,
   LinearIssueUpdate,
   LinearWorkspaceSelection,
   NestedRepoScanResult,
   ProjectGroup,
   ProjectGroupImportMode,
   ProjectGroupImportResult,
+  MemorySnapshot,
   TabGroupLayoutNode,
   TuiAgent,
   WorkspaceCreateTelemetrySource
@@ -158,6 +164,7 @@ import { RuntimeBrowserCommands } from './orca-runtime-browser'
 import { RuntimeFileCommands } from './orca-runtime-files'
 import { RuntimeGitCommands } from './orca-runtime-git'
 import { joinWorktreeRelativePath } from './runtime-relative-paths'
+import { collectMemorySnapshot } from '../memory/collector'
 import { BrowserWindow, ipcMain } from 'electron'
 import type { AgentBrowserBridge } from '../browser/agent-browser-bridge'
 import { BrowserError } from '../browser/cdp-bridge'
@@ -283,6 +290,28 @@ import {
   getTeamStates as getLinearTeamStates,
   listTeams as listLinearTeams
 } from '../linear/teams'
+import {
+  connect as connectJira,
+  disconnect as disconnectJira,
+  getStatus as getJiraStatus,
+  selectSite as selectJiraSite,
+  testConnection as testJiraConnection
+} from '../jira/client'
+import {
+  addIssueComment as addJiraIssueComment,
+  createIssue as createJiraIssue,
+  getIssue as getJiraIssue,
+  getIssueComments as getJiraIssueComments,
+  listAssignableUsers as listJiraAssignableUsers,
+  listCreateFields as listJiraCreateFields,
+  listIssueTypes as listJiraIssueTypes,
+  listIssues as listJiraIssues,
+  listPriorities as listJiraPriorities,
+  listProjects as listJiraProjects,
+  listTransitions as listJiraTransitions,
+  searchIssues as searchJiraIssues,
+  updateIssue as updateJiraIssue
+} from '../jira/issues'
 import {
   clearProjectItemFieldValue,
   getProjectViewTable,
@@ -1417,6 +1446,7 @@ export class OrcaRuntimeService {
   private removeManagedWorktreeInFlight = new Map<string, RuntimeWorktreeRemovalInFlight>()
   private preservedBranchCleanupByWorktreeId = new Map<string, PreservedBranchCleanupTarget>()
   private readonly getLocalProviderFn: (() => IPtyProvider) | null
+  private readonly onPtyStopped: ((ptyId: string) => void) | null
   private accountServices: RuntimeAccountServices | null = null
   private commitMessageAgentEnv: CommitMessageAgentEnvironmentResolvers | null = null
   private automationService: AutomationService | null = null
@@ -1434,7 +1464,7 @@ export class OrcaRuntimeService {
   constructor(
     store: RuntimeStore | null = null,
     stats?: StatsCollector,
-    deps?: { getLocalProvider?: () => IPtyProvider }
+    deps?: { getLocalProvider?: () => IPtyProvider; onPtyStopped?: (ptyId: string) => void }
   ) {
     this.store = store
     if (stats) {
@@ -1448,6 +1478,7 @@ export class OrcaRuntimeService {
     // lazily via thunk so teardown always sees the currently-installed
     // provider (design §4.3 wire-up).
     this.getLocalProviderFn = deps?.getLocalProvider ?? null
+    this.onPtyStopped = deps?.onPtyStopped ?? null
   }
 
   getLocalProvider(): IPtyProvider | null {
@@ -1456,6 +1487,13 @@ export class OrcaRuntimeService {
 
   getStatsSummary(): StatsSummary | null {
     return this.stats?.getSummary() ?? null
+  }
+
+  getMemorySnapshot(): Promise<MemorySnapshot> {
+    if (!this.store) {
+      throw new Error('runtime_unavailable')
+    }
+    return collectMemorySnapshot(this.store)
   }
 
   getUIState(): PersistedUIState {
@@ -9232,7 +9270,8 @@ export class OrcaRuntimeService {
           // would otherwise be swept; tear them down before hiding the workspace.
           await killAllProcessesForWorktree(removalTarget.id, {
             runtime: this,
-            localProvider
+            localProvider,
+            onPtyStopped: this.onPtyStopped ?? undefined
           }).catch((err) => {
             console.warn(`[worktree-teardown] failed for ${removalTarget.id}:`, err)
           })
@@ -9408,7 +9447,8 @@ export class OrcaRuntimeService {
         // closes the headless-CLI leak for confirmed-removable worktrees.
         await killAllProcessesForWorktree(removalTarget.id, {
           runtime: this,
-          localProvider
+          localProvider,
+          onPtyStopped: this.onPtyStopped ?? undefined
         })
           .then((r) => {
             const total = r.runtimeStopped + r.providerStopped + r.registryStopped
@@ -10958,7 +10998,10 @@ export class OrcaRuntimeService {
     ptyId: string,
     worktreeId: string,
     state: Partial<
-      Pick<RuntimePtyWorktreeRecord, 'connected' | 'lastOutputAt' | 'preview' | 'tabId' | 'paneKey'>
+      Pick<
+        RuntimePtyWorktreeRecord,
+        'connected' | 'lastOutputAt' | 'preview' | 'tabId' | 'paneKey' | 'title'
+      >
     > = {}
   ): RuntimePtyWorktreeRecord {
     let pty = this.ptysById.get(ptyId)
@@ -10973,7 +11016,7 @@ export class OrcaRuntimeService {
         lastExitCode: null,
         lastAgentStatus: null,
         lastOscTitle: null,
-        title: null,
+        title: state.title ?? null,
         lastOutputAt: state.lastOutputAt ?? null,
         tailBuffer: [],
         tailPartialLine: '',
@@ -11004,6 +11047,9 @@ export class OrcaRuntimeService {
     }
     if (state.preview !== undefined && state.preview.length > 0) {
       pty.preview = state.preview
+    }
+    if (state.title !== undefined && state.title !== null && state.title.length > 0) {
+      pty.title = state.title
     }
     // Why: recordPtyWorktree is the common lifecycle point for every path that
     // resolves a PTY's worktree, including renderer restore and controller list.
@@ -11054,7 +11100,10 @@ export class OrcaRuntimeService {
         inferWorktreeIdFromPtyId(session.id) ??
         findResolvedWorktreeIdForPath(resolvedWorktrees, session.cwd)
       if (worktreeId) {
-        this.recordPtyWorktree(session.id, worktreeId, { connected: true })
+        this.recordPtyWorktree(session.id, worktreeId, {
+          connected: true,
+          title: session.title
+        })
       }
     }
     for (const pty of this.ptysById.values()) {
@@ -11803,7 +11852,7 @@ export class OrcaRuntimeService {
       branch: worktree?.branch ?? '',
       tabId: `pty:${pty.ptyId}`,
       leafId: `pty:${pty.ptyId}`,
-      title: pty.title ?? pty.lastOscTitle,
+      title: pty.lastOscTitle ?? pty.title,
       connected: pty.connected,
       writable: pty.connected,
       lastOutputAt: pty.lastOutputAt,
@@ -12519,6 +12568,108 @@ export class OrcaRuntimeService {
     return getLinearTeamMembers(teamId, workspaceId)
   }
 
+  // ── Jira integration ──
+
+  jiraConnect(args: JiraConnectArgs): ReturnType<typeof connectJira> {
+    return connectJira(args)
+  }
+
+  jiraDisconnect(siteId?: string): { ok: true } {
+    disconnectJira(siteId)
+    return { ok: true }
+  }
+
+  jiraSelectSite(siteId: JiraSiteSelection): ReturnType<typeof getJiraStatus> {
+    return selectJiraSite(siteId)
+  }
+
+  jiraStatus(): ReturnType<typeof getJiraStatus> {
+    return getJiraStatus()
+  }
+
+  jiraTestConnection(siteId?: string): ReturnType<typeof testJiraConnection> {
+    return testJiraConnection(siteId)
+  }
+
+  jiraSearchIssues(
+    jql: string,
+    limit = 30,
+    siteId?: JiraSiteSelection
+  ): ReturnType<typeof searchJiraIssues> {
+    return searchJiraIssues(jql, Math.min(Math.max(1, limit), 100), siteId)
+  }
+
+  jiraListIssues(
+    filter?: JiraIssueFilter,
+    limit = 30,
+    siteId?: JiraSiteSelection
+  ): ReturnType<typeof listJiraIssues> {
+    return listJiraIssues(filter, Math.min(Math.max(1, limit), 100), siteId)
+  }
+
+  jiraCreateIssue(args: JiraCreateIssueArgs): ReturnType<typeof createJiraIssue> {
+    return createJiraIssue(args)
+  }
+
+  jiraGetIssue(key: string, siteId?: string): ReturnType<typeof getJiraIssue> {
+    return getJiraIssue(key, siteId)
+  }
+
+  jiraUpdateIssue(
+    key: string,
+    updates: JiraIssueUpdate,
+    siteId?: string
+  ): ReturnType<typeof updateJiraIssue> {
+    return updateJiraIssue(key, updates, siteId)
+  }
+
+  jiraAddIssueComment(
+    key: string,
+    body: string,
+    siteId?: string
+  ): ReturnType<typeof addJiraIssueComment> {
+    return addJiraIssueComment(key, body, siteId)
+  }
+
+  jiraIssueComments(key: string, siteId?: string): ReturnType<typeof getJiraIssueComments> {
+    return getJiraIssueComments(key, siteId)
+  }
+
+  jiraListProjects(siteId?: JiraSiteSelection): ReturnType<typeof listJiraProjects> {
+    return listJiraProjects(siteId)
+  }
+
+  jiraListIssueTypes(
+    projectIdOrKey: string,
+    siteId?: string
+  ): ReturnType<typeof listJiraIssueTypes> {
+    return listJiraIssueTypes(projectIdOrKey, siteId)
+  }
+
+  jiraListCreateFields(
+    projectIdOrKey: string,
+    issueTypeId: string,
+    siteId?: string
+  ): ReturnType<typeof listJiraCreateFields> {
+    return listJiraCreateFields(projectIdOrKey, issueTypeId, siteId)
+  }
+
+  jiraListPriorities(siteId?: string): ReturnType<typeof listJiraPriorities> {
+    return listJiraPriorities(siteId)
+  }
+
+  jiraListAssignableUsers(
+    key: string,
+    query?: string,
+    siteId?: string
+  ): ReturnType<typeof listJiraAssignableUsers> {
+    return listJiraAssignableUsers(key, query, siteId)
+  }
+
+  jiraListTransitions(key: string, siteId?: string): ReturnType<typeof listJiraTransitions> {
+    return listJiraTransitions(key, siteId)
+  }
+
   // ── Browser automation ──
 
   private readonly browserCommands = new RuntimeBrowserCommands({
@@ -13106,7 +13257,12 @@ export function appendNormalizedToTailBuffer(
   // larger line transcript for pagination, but keep partial-line work bounded.
   const previousPartialWasCapped = previousPartialLine.length > MAX_TAIL_PARTIAL_CHARS
   const boundedPreviousPartialLine = previousPartialLine.slice(-MAX_TAIL_PARTIAL_CHARS)
-  const pieces = `${boundedPreviousPartialLine}${normalizedChunk}`.split('\n')
+  // Why: status UIs redraw a single line with CR/backspace/ANSI erase
+  // controls. Terminal previews are text, not a full screen model, so retain
+  // the latest visible redraw segment instead of appending every spinner frame.
+  const pieces = `${boundedPreviousPartialLine}${normalizedChunk}`
+    .split('\n')
+    .map(applyTerminalLineControls)
   const nextPartialLine = (pieces.pop() ?? '').replace(/[ \t]+$/g, '')
   const retainedPartialLine = nextPartialLine.slice(-MAX_TAIL_PARTIAL_CHARS)
   const newCompleteLines = pieces.length
@@ -13144,6 +13300,105 @@ export function appendNormalizedToTailBuffer(
     truncated,
     newCompleteLines
   }
+}
+
+function applyTerminalLineControls(line: string): string {
+  const carriageIndex = line.lastIndexOf('\r')
+  const latestRedraw = carriageIndex >= 0 ? line.slice(carriageIndex + 1) : line
+  if (!latestRedraw.includes('\u0008') && !latestRedraw.includes('\u001b')) {
+    return latestRedraw
+  }
+
+  const chars: string[] = []
+  let cursor = 0
+  const writeChar = (char: string): void => {
+    if (cursor >= chars.length) {
+      chars.push(char)
+    } else {
+      chars[cursor] = char
+    }
+    cursor += 1
+  }
+  for (let index = 0; index < latestRedraw.length; index += 1) {
+    const char = latestRedraw[index]
+    if (char === '\u0008') {
+      if (cursor > 0) {
+        cursor -= 1
+      }
+    } else if (char === '\u001b') {
+      const parsed = parseAnsiControlSequence(latestRedraw, index)
+      if (!parsed) {
+        continue
+      }
+      index = parsed.endIndex
+      if (parsed.kind !== 'csi') {
+        continue
+      }
+      if (parsed.final === 'K') {
+        const mode = parsed.firstParam ?? 0
+        if (mode === 0) {
+          chars.length = cursor
+        } else if (mode === 1) {
+          chars.splice(0, cursor)
+          cursor = 0
+        } else if (mode === 2 || mode === 3) {
+          chars.length = 0
+          cursor = 0
+        }
+      } else if (parsed.final === 'G' || parsed.final === '`') {
+        cursor = Math.min(chars.length, Math.max(0, (parsed.firstParam ?? 1) - 1))
+      } else if (parsed.final === 'D') {
+        cursor = Math.max(0, cursor - (parsed.firstParam ?? 1))
+      } else if (parsed.final === 'C') {
+        cursor = Math.min(chars.length, cursor + (parsed.firstParam ?? 1))
+      }
+    } else {
+      writeChar(char)
+    }
+  }
+  return chars.join('')
+}
+
+function parseAnsiControlSequence(
+  value: string,
+  escapeIndex: number
+):
+  | { kind: 'csi'; final: string; firstParam: number | null; endIndex: number }
+  | {
+      kind: 'other'
+      endIndex: number
+    }
+  | null {
+  const introducer = value[escapeIndex + 1]
+  if (introducer === '[') {
+    for (let index = escapeIndex + 2; index < value.length; index += 1) {
+      const code = value.charCodeAt(index)
+      if (code < 0x40 || code > 0x7e) {
+        continue
+      }
+      const params = value.slice(escapeIndex + 2, index)
+      const firstParamMatch = /^\??(\d+)/.exec(params)
+      return {
+        kind: 'csi',
+        final: value[index] ?? '',
+        firstParam: firstParamMatch ? Number(firstParamMatch[1]) : null,
+        endIndex: index
+      }
+    }
+    return null
+  }
+  if (introducer === ']') {
+    for (let index = escapeIndex + 2; index < value.length; index += 1) {
+      if (value[index] === '\u0007') {
+        return { kind: 'other', endIndex: index }
+      }
+      if (value[index] === '\u001b' && value[index + 1] === '\\') {
+        return { kind: 'other', endIndex: index + 1 }
+      }
+    }
+    return null
+  }
+  return { kind: 'other', endIndex: escapeIndex + 1 }
 }
 
 function tailStateMatches(
@@ -13658,12 +13913,10 @@ function normalizeTerminalChunk(chunk: string): string {
   }
   return chunk
     .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\x1b[@-_]/g, '')
-    .replace(/\u0008/g, '')
-    .replace(/[^\x09\x0a\x20-\x7e]/g, '')
+    .replace(/[^\x08\x09\x0a\x0d\x20-\x7e]/g, '')
 }
 
 function terminalChunkNeedsNormalization(chunk: string): boolean {

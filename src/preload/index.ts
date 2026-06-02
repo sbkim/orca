@@ -43,7 +43,7 @@ import type {
 } from '../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../shared/git-history'
 import type { ShellOpenLocalPathResult } from '../shared/shell-open-types'
-import type { SkillDiscoveryResult } from '../shared/skills'
+import type { SkillDiscoveryResult, SkillDiscoveryTarget } from '../shared/skills'
 import type {
   RuntimeBrowserDriverState,
   RuntimeMobileSessionTabMove,
@@ -1290,6 +1290,92 @@ const api = {
       ipcRenderer.invoke('linear:teamMembers', args)
   },
 
+  jira: {
+    connect: (args: {
+      siteUrl: string
+      email: string
+      apiToken: string
+    }): Promise<{ ok: true; viewer: unknown } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('jira:connect', args),
+
+    disconnect: (args?: { siteId?: string }): Promise<void> =>
+      ipcRenderer.invoke('jira:disconnect', args),
+
+    selectSite: (args: { siteId: string }): Promise<unknown> =>
+      ipcRenderer.invoke('jira:selectSite', args),
+
+    status: (): Promise<unknown> => ipcRenderer.invoke('jira:status'),
+
+    testConnection: (args?: {
+      siteId?: string
+    }): Promise<{ ok: true; viewer: unknown } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('jira:testConnection', args),
+
+    searchIssues: (args: { jql: string; limit?: number; siteId?: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('jira:searchIssues', args),
+
+    listIssues: (args?: {
+      filter?: 'assigned' | 'reported' | 'all' | 'done'
+      limit?: number
+      siteId?: string
+    }): Promise<unknown[]> => ipcRenderer.invoke('jira:listIssues', args),
+
+    getIssue: (args: { key: string; siteId?: string }): Promise<unknown> =>
+      ipcRenderer.invoke('jira:getIssue', args),
+
+    createIssue: (args: {
+      siteId?: string
+      projectId: string
+      issueTypeId: string
+      title: string
+      description?: string
+      customFields?: Record<string, unknown>
+    }): Promise<
+      { ok: true; id: string; key: string; url: string } | { ok: false; error: string }
+    > => ipcRenderer.invoke('jira:createIssue', args),
+
+    updateIssue: (args: {
+      key: string
+      updates: unknown
+      siteId?: string
+    }): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('jira:updateIssue', args),
+
+    addIssueComment: (args: {
+      key: string
+      body: string
+      siteId?: string
+    }): Promise<{ ok: true; id: string } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('jira:addIssueComment', args),
+
+    issueComments: (args: { key: string; siteId?: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('jira:issueComments', args),
+
+    listProjects: (args?: { siteId?: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('jira:listProjects', args),
+
+    listIssueTypes: (args: { projectIdOrKey: string; siteId?: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('jira:listIssueTypes', args),
+
+    listCreateFields: (args: {
+      projectIdOrKey: string
+      issueTypeId: string
+      siteId?: string
+    }): Promise<unknown[]> => ipcRenderer.invoke('jira:listCreateFields', args),
+
+    listPriorities: (args?: { siteId?: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('jira:listPriorities', args),
+
+    listAssignableUsers: (args: {
+      key: string
+      query?: string
+      siteId?: string
+    }): Promise<unknown[]> => ipcRenderer.invoke('jira:listAssignableUsers', args),
+
+    listTransitions: (args: { key: string; siteId?: string }): Promise<unknown[]> =>
+      ipcRenderer.invoke('jira:listTransitions', args)
+  },
+
   starNag: {
     onShow: (callback: () => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent): void => callback()
@@ -1628,7 +1714,8 @@ const api = {
   },
 
   skills: {
-    discover: (): Promise<SkillDiscoveryResult> => ipcRenderer.invoke('skills:discover')
+    discover: (target?: SkillDiscoveryTarget): Promise<SkillDiscoveryResult> =>
+      ipcRenderer.invoke('skills:discover', target)
   },
 
   pet: {
@@ -1822,9 +1909,13 @@ const api = {
       return () => ipcRenderer.removeListener('browser:navigation-update', listener)
     },
 
-    onActivateView: (callback: (data: { worktreeId?: string }) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: { worktreeId?: string }) =>
-        callback(data)
+    onActivateView: (
+      callback: (data: { worktreeId?: string; browserPageId?: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { worktreeId?: string; browserPageId?: string }
+      ) => callback(data)
       ipcRenderer.on('browser:activateView', listener)
       return () => ipcRenderer.removeListener('browser:activateView', listener)
     },
