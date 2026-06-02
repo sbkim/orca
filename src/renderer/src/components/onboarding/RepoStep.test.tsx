@@ -46,6 +46,17 @@ describe('RepoStep', () => {
     expect(html).toContain('Clone a repo')
   })
 
+  it('emphasizes browse in the center of the local-folder card', () => {
+    const html = renderRepoStep()
+
+    expect(html).toContain('md:grid-cols-[minmax(0,1fr)_auto]')
+    expect(html).toContain('ml-[3.75rem] mt-3')
+    expect(html).toContain('bg-primary text-primary-foreground')
+    expect(html).toContain('h-11 min-w-36 px-10')
+    expect(html).toContain('Browse...')
+    expect(html).toContain('Want to import many repos at once? Select the parent folder.')
+  })
+
   it('disables nested import actions when no repositories are selected', () => {
     const html = renderRepoStep({
       nestedScan: {
