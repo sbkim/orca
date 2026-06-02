@@ -22,7 +22,7 @@ On Linux, the CLI command is `orca-ide` instead of `orca` to avoid conflicting w
 
 ## When To Use
 
-Use `orca` or `orca-ide` for:
+Use `orca` for:
 
 - worktree orchestration inside a running Orca app
 - updating the current worktree comment at meaningful checkpoints
@@ -38,32 +38,32 @@ When the user asks for browser work "with Orca CLI", "with the Orca browser", or
 
 ## Preconditions
 
-- Prefer the public `orca` command first (`orca-ide` on Linux).
+- Prefer the public `orca` command first.
 - Orca editor/runtime should already be running, or the agent should start it with `orca open`.
 - Do not inspect Orca source files just to decide how to invoke the CLI.
 - Do not use generic environment variables as proof that the shell is inside Orca.
 - Do not move on until the public CLI exists and runtime reachability is known. If this turn already checked `status`, reuse that result.
 
 ```bash
-ORCA=$(command -v orca || command -v orca-ide) || exit 1
-"$ORCA" status --json
+command -v orca
+orca status --json
 ```
 
 If Orca is not running:
 
 ```bash
-"$ORCA" open --json
-"$ORCA" status --json
+orca open --json
+orca status --json
 ```
 
-If `orca` / `orca-ide` is not on PATH, say so explicitly and stop or ask the user to install/register the CLI before continuing.
+If `orca` is not on PATH, say so explicitly and stop or ask the user to install/register the CLI before continuing. On Linux, retry with `orca-ide` first as noted above.
 
 ## Core Workflow
 
 ```bash
-"$ORCA" status --json
-"$ORCA" worktree ps --json
-"$ORCA" terminal list --json
+orca status --json
+orca worktree ps --json
+orca terminal list --json
 ```
 
 Resolve the target worktree or terminal handle, then act through Orca:
@@ -212,7 +212,7 @@ Terminal guidance:
 - Use `terminal read` before `terminal send` unless the next input is obvious.
 - For agent-to-agent messages or handoffs, use the `orchestration` skill. Do not type prompts into another agent terminal with `terminal send`.
 - Prefer Orca selectors over hardcoded paths when Orca identity already exists.
-- If the user asks for CLI UX feedback, test the public `orca` / `orca-ide` command first. Inspect `src/cli` only if the public command is missing or implementation internals are the task.
+- If the user asks for CLI UX feedback, test the public `orca` command first. Inspect `src/cli` only if the public command is missing or implementation internals are the task.
 
 ## Browser Automation
 
@@ -260,7 +260,7 @@ Browser guidance:
 
 - Orca CLI only talks to a running Orca editor.
 - Orca is the source of truth for worktree, terminal, automation, and browser state.
-- The public `orca` command (`orca-ide` on Linux) is the interface users experience. Agents should validate and use that surface, not repo-local implementation entrypoints.
+- The public `orca` command is the interface users experience. Agents should validate and use that surface, not repo-local implementation entrypoints.
 
 ## References
 
