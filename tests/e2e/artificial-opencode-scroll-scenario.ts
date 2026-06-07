@@ -169,11 +169,11 @@ export function annotateScrollMeasurement(
   mainPressure: ScrollMainPressureSnapshot | null,
   ackGate: ScrollAckGateSnapshot | null
 ): void {
+  const scrollMoved = measurement.afterViewportY < measurement.beforeViewportY
+  const scrollMetric = scrollMoved ? ` scroll=${measurement.scrollLatencyMs.toFixed(1)}ms` : ''
   testInfo.annotations.push({
     type,
-    description: `panes=${paneCount} scroll=${measurement.scrollLatencyMs.toFixed(
-      1
-    )}ms maxTimerDrift=${measurement.maxTimerDriftMs.toFixed(
+    description: `panes=${paneCount}${scrollMetric} scrollMoved=${scrollMoved} maxTimerDrift=${measurement.maxTimerDriftMs.toFixed(
       1
     )}ms viewportBefore=${measurement.beforeViewportY} viewportAfter=${
       measurement.afterViewportY
