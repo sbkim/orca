@@ -147,7 +147,18 @@ export function useTerminalPaneGlobalEffects({
     // Why: main uses this as a scheduler hint only, so the foreground pane's
     // renderer output gets first chance at the bounded ACK reserve.
     window.api.pty.setActiveRendererPty?.(ptyId, true)
-    return () => window.api.pty.setActiveRendererPty?.(ptyId, false)
+    return () => {
+      // Why: split-pane focus can move to another pane via onActivePaneChange
+      // after this effect captured ptyId, flagging that pane's PTY active
+      // without re-running this effect. Clear every local pane transport on
+      // hide so a focus-changed pane's PTY cannot stay flagged active in main.
+      for (const transport of paneTransportsRef.current.values()) {
+        const cleanupPtyId = transport.getPtyId()
+        if (cleanupPtyId && !cleanupPtyId.startsWith('remote:')) {
+          window.api.pty.setActiveRendererPty?.(cleanupPtyId, false)
+        }
+      }
+    }
   }, [isActive, isVisible, managerRef, paneTransportsRef])
 
   useEffect(() => {
