@@ -61,10 +61,14 @@ export async function refreshLocalBaseRefForWorktreeCreateOp(
     await git(['reset', '--hard', remoteOid], ownerWorktree.path)
     return
   }
+
+  // Why: not checked out anywhere — fast-forward the bare ref. The
+  // expected-old-OID form is a no-op-safe compare-and-swap if the ref moved
+  // since the caller's evaluation snapshot.
   if (checkOnly) {
-    throw new Error('Local base ref is not checked out in a worktree.')
+    return
   }
-  throw new Error('Local base ref is not checked out in a worktree.')
+  await git(['update-ref', fullRef, remoteOid, localOid], repoPath)
 }
 
 async function revParseCommit(

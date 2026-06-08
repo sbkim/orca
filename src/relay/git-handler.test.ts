@@ -1205,7 +1205,37 @@ describe('GitHandler', () => {
       await expect(fs.readFile(path.join(tmpDir, 'base.txt'), 'utf-8')).resolves.toBe('remote')
     })
 
-    it('rejects local branch refresh when it is not checked out', async () => {
+    it('fast-forwards a non-checked-out local branch via update-ref', async () => {
+      gitInit(tmpDir)
+      writeFileSync(path.join(tmpDir, 'base.txt'), 'base')
+      gitCommit(tmpDir, 'initial')
+      execFileSync('git', ['branch', 'main-copy'], { cwd: tmpDir, stdio: 'pipe' })
+      writeFileSync(path.join(tmpDir, 'base.txt'), 'remote')
+      gitCommit(tmpDir, 'remote update')
+      const remoteSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: tmpDir,
+        encoding: 'utf-8'
+      }).trim()
+      execFileSync('git', ['update-ref', 'refs/remotes/origin/main', remoteSha], {
+        cwd: tmpDir,
+        stdio: 'pipe'
+      })
+
+      await dispatcher.callRequest('git.refreshLocalBaseRefForWorktreeCreate', {
+        repoPath: tmpDir,
+        fullRef: 'refs/heads/main-copy',
+        remoteTrackingRef: 'refs/remotes/origin/main'
+      })
+
+      // No working tree owns main-copy, so the bare ref fast-forwards.
+      const actual = execFileSync('git', ['rev-parse', 'refs/heads/main-copy'], {
+        cwd: tmpDir,
+        encoding: 'utf-8'
+      }).trim()
+      expect(actual).toBe(remoteSha)
+    })
+
+    it('does not move a non-checked-out local branch when checkOnly is set', async () => {
       gitInit(tmpDir)
       writeFileSync(path.join(tmpDir, 'base.txt'), 'base')
       gitCommit(tmpDir, 'initial')
@@ -1225,13 +1255,12 @@ describe('GitHandler', () => {
         stdio: 'pipe'
       })
 
-      await expect(
-        dispatcher.callRequest('git.refreshLocalBaseRefForWorktreeCreate', {
-          repoPath: tmpDir,
-          fullRef: 'refs/heads/main-copy',
-          remoteTrackingRef: 'refs/remotes/origin/main'
-        })
-      ).rejects.toThrow('Local base ref is not checked out in a worktree.')
+      await dispatcher.callRequest('git.refreshLocalBaseRefForWorktreeCreate', {
+        repoPath: tmpDir,
+        fullRef: 'refs/heads/main-copy',
+        remoteTrackingRef: 'refs/remotes/origin/main',
+        checkOnly: true
+      })
 
       const actual = execFileSync('git', ['rev-parse', 'refs/heads/main-copy'], {
         cwd: tmpDir,

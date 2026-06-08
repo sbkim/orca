@@ -1253,7 +1253,15 @@ async function evaluateRemoteLocalBaseRefRefreshability(
       }
     }
 
-    return { refreshable: false, result: { ...resultBase, status: 'skipped_error' } }
+    // Why: not checked out anywhere — a bare ref fast-forward is safe. Omitting
+    // ownerWorktreePath tells the relay to update-ref instead of reset --hard.
+    return {
+      refreshable: true,
+      ...resultBase,
+      fullRef,
+      remoteTrackingRef: remoteTrackingBase.ref,
+      behind
+    }
   } catch {
     return { refreshable: false, result: { ...resultBase, status: 'skipped_error' } }
   }

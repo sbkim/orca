@@ -221,7 +221,18 @@ async function evaluateLocalBaseRefRefreshability(
       }
     }
 
-    return undefined
+    // Why: localBranch isn't checked out anywhere, so there is no working tree
+    // to desync — a bare ref fast-forward (update-ref) is safe. Omitting
+    // ownerWorktreePath signals the mutating path to take that branch.
+    return {
+      refreshable: true,
+      ...resultBase,
+      fullRef: parsed.fullRef,
+      remoteTrackingRef,
+      localOid,
+      remoteOid,
+      behind: drift.behind
+    }
   } catch {
     return { refreshable: false, result: { ...resultBase, status: 'skipped_error' } }
   }
@@ -531,7 +542,18 @@ async function refreshLocalBaseRefForWorktreeCreate(
       }
     }
 
-    return undefined
+    // Why: no owner worktree — fast-forward the bare ref. The expected-old-OID
+    // form makes this a no-op-safe compare-and-swap if the ref moved since the
+    // evaluation snapshot.
+    await gitExecFileAsync(
+      ['update-ref', evaluation.fullRef, evaluation.remoteOid, evaluation.localOid],
+      { cwd: repoPath }
+    )
+    return {
+      baseRef: evaluation.baseRef,
+      localBranch: evaluation.localBranch,
+      status: 'updated'
+    }
   } catch {
     // update-ref/reset can fail on locked refs, filesystem errors, or unusual
     // worktree states. Worktree creation should still proceed.
