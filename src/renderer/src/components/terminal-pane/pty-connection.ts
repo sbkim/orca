@@ -88,6 +88,7 @@ import {
   normalizeAgentProviderSession
 } from '../../../../shared/agent-session-resume'
 import { isWslUncPath } from '../../../../shared/wsl-paths'
+import { shouldSkipHiddenRendererOutput } from './hidden-renderer-skip-eligibility'
 
 const pendingSpawnByPaneKey = new Map<string, Promise<string | null>>()
 const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
@@ -622,6 +623,7 @@ export function connectPanePty(
   let pendingTerminalBellNotification = false
   let reattachIdleAgentCursorResetTimer: ReturnType<typeof setTimeout> | null = null
   let synchronizedForegroundOutputActive = false
+  let synchronizedHiddenOutputActive = false
   // Why: idle callbacks are registered before the deferred PTY output plumbing
   // exists. Start with the shared scheduler, then switch to the PTY writer
   // below so hidden-tab resets keep backlog-recovery callbacks and byte order.
@@ -2193,16 +2195,6 @@ export function connectPanePty(
       }
     }
 
-    function shouldSkipHiddenRendererOutput(foreground: boolean, data: string): boolean {
-      void foreground
-      void data
-      // Why: release correctness beats the hidden-output perf optimization.
-      // Real OpenCode tables still corrupt after workspace switching when PTY
-      // bytes bypass the renderer, so keep hidden panes on the live xterm path
-      // and leave snapshot skipping for a later perf branch.
-      return false
-    }
-
     function skipHiddenRendererOutput(data: string): void {
       respondToSkippedMode2031Subscribe(data)
       markHiddenOutputRestoreNeeded()
@@ -2607,7 +2599,20 @@ export function connectPanePty(
       const foreground = shouldWritePtyOutputForeground(deps.isVisibleRef.current)
       const restoreAppliesToCurrentPty =
         hiddenOutputRestorePtyId !== null && transport.getPtyId() === hiddenOutputRestorePtyId
-      if (shouldSkipHiddenRendererOutput(foreground, data)) {
+      const synchronizedHiddenOutput =
+        !foreground &&
+        (synchronizedHiddenOutputActive ||
+          containsSynchronizedOutputStart(data) ||
+          containsSynchronizedOutputEnd(data))
+      if (
+        shouldSkipHiddenRendererOutput({
+          foreground,
+          canRestoreHiddenOutput: canUseHiddenOutputSnapshot(transport.getPtyId()),
+          startupRendererQueryWindowActive: isHiddenStartupRendererQueryWindowActive(),
+          synchronizedOutputActive: synchronizedHiddenOutput,
+          data
+        })
+      ) {
         skipHiddenRendererOutput(data)
       } else if (
         (hiddenOutputRestoreNeeded || hiddenOutputRestoreInFlight) &&
@@ -2622,6 +2627,12 @@ export function connectPanePty(
         }
       } else {
         writePtyOutputToXterm(data, foreground)
+      }
+      if (!foreground) {
+        synchronizedHiddenOutputActive = shouldSynchronizedOutputRemainActive(
+          data,
+          synchronizedHiddenOutputActive
+        )
       }
 
       schedulePendingStartupCommandDelivery()

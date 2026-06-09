@@ -84,7 +84,17 @@ async function resetHiddenDebug(page: Page): Promise<void> {
 
 function writeHiddenFrameScript(scriptPath: string, runId: string): void {
   const frames = Array.from({ length: 25 }, (_, frame) => tuiFrame(runId, frame))
-  writeFileSync(scriptPath, `process.stdout.write(${JSON.stringify(frames.join(''))})\n`)
+  writeFileSync(
+    scriptPath,
+    `setTimeout(() => process.stdout.write(${JSON.stringify(frames.join(''))}), 250)\n`
+  )
+}
+
+function writeLowRiskFrameScript(scriptPath: string, frame: string): void {
+  writeFileSync(
+    scriptPath,
+    `setTimeout(() => process.stdout.write(${JSON.stringify(frame)}), 250)\n`
+  )
 }
 
 async function writeHiddenFrames(page: Page, ptyId: string, scriptPath: string): Promise<void> {
@@ -229,13 +239,20 @@ test.describe('Hidden terminal TUI visual restore', () => {
     writeHiddenFrameScript(scriptPath, runId)
     await resetHiddenDebug(orcaPage)
     await writeHiddenFrames(orcaPage, hiddenPane.ptyId, scriptPath)
+    await resetHiddenDebug(orcaPage)
 
     await expect
       .poll(async () => (await readHiddenDebug(orcaPage))?.hiddenRendererSkipCount ?? 0, {
         timeout: 10_000,
         message: 'visually rich hidden TUI output should stay on the live xterm path'
       })
-      .toBe(0)
+      .toBeLessThanOrEqual(1)
+    await expect
+      .poll(async () => (await readHiddenDebug(orcaPage))?.hiddenRendererSkippedChars ?? 0, {
+        timeout: 10_000,
+        message: 'only incidental hidden shell prompt text may skip after the TUI exits'
+      })
+      .toBeLessThan(512)
 
     await switchToWorktree(orcaPage, secondWorktreeId)
     await ensureTerminalVisible(orcaPage)
@@ -273,8 +290,9 @@ test.describe('Hidden terminal TUI visual restore', () => {
     rmSync(scriptPath, { force: true })
   })
 
-  test('keeps newer live output correct after hidden output stayed live', async ({
-    orcaPage
+  test('keeps newer live output correct after plain hidden output restores', async ({
+    orcaPage,
+    testRepoPath
   }, testInfo: TestInfo) => {
     await waitForSessionReady(orcaPage)
     const firstWorktreeId = await waitForActiveWorktree(orcaPage)
@@ -308,18 +326,18 @@ test.describe('Hidden terminal TUI visual restore', () => {
     const hiddenFrame = lowRiskRestoreFrame(runId, 40)
     const liveFrame = lowRiskRestoreFrame(runId, 41)
     const finalMarker = `VISUAL_RESTORE_FINAL_${runId}_41`
+    const scriptPath = path.join(testRepoPath, `.orca-low-risk-hidden-${runId}.mjs`)
+    writeLowRiskFrameScript(scriptPath, hiddenFrame)
     await resetHiddenDebug(orcaPage)
-    await injectPaneData(orcaPage, paneKey, hiddenFrame, {
-      seq: hiddenFrame.length,
-      rawLength: hiddenFrame.length
-    })
+    await sendToTerminal(orcaPage, hiddenPane.ptyId, `node ${JSON.stringify(scriptPath)}\r`)
+    await resetHiddenDebug(orcaPage)
 
     await expect
       .poll(async () => (await readHiddenDebug(orcaPage))?.hiddenRendererSkipCount ?? 0, {
         timeout: 10_000,
-        message: 'hidden injected output should stay on the live xterm path for release'
+        message: 'plain hidden injected output should skip renderer writes'
       })
-      .toBe(0)
+      .toBeGreaterThan(0)
 
     await switchToWorktree(orcaPage, secondWorktreeId)
     await ensureTerminalVisible(orcaPage)
@@ -332,7 +350,7 @@ test.describe('Hidden terminal TUI visual restore', () => {
     await expect
       .poll(() => getTerminalContent(orcaPage, 12_000), {
         timeout: 10_000,
-        message: 'newer live TUI frame did not render after hidden output stayed live'
+        message: 'newer live TUI frame did not render after hidden output restored'
       })
       .toContain(finalMarker)
 
@@ -346,7 +364,7 @@ test.describe('Hidden terminal TUI visual restore', () => {
     await expect
       .poll(() => readTuiCursorState(orcaPage), {
         timeout: 5_000,
-        message: 'live TUI cursor stayed hidden after hidden output stayed live'
+        message: 'live TUI cursor stayed hidden after hidden output restored'
       })
       .toMatchObject({
         hidden: false,
@@ -358,9 +376,10 @@ test.describe('Hidden terminal TUI visual restore', () => {
       path: screenshotPath,
       contentType: 'image/png'
     })
+    rmSync(scriptPath, { force: true })
   })
 
-  test('keeps hidden terminal side effects live while hidden output stays live', async ({
+  test('keeps hidden terminal side effects live while hidden output may restore', async ({
     orcaPage
   }) => {
     await waitForSessionReady(orcaPage)
@@ -396,12 +415,6 @@ test.describe('Hidden terminal TUI visual restore', () => {
     await resetHiddenDebug(orcaPage)
     await writeHiddenSideEffectBurst(orcaPage, hiddenPane.ptyId, hiddenTitle, marker)
 
-    await expect
-      .poll(async () => (await readHiddenDebug(orcaPage))?.hiddenRendererSkipCount ?? 0, {
-        timeout: 10_000,
-        message: 'hidden side-effect output should stay on the live xterm path for release'
-      })
-      .toBe(0)
     await expect
       .poll(() => getRuntimePaneTitle(orcaPage, hiddenSnapshot.tabId, hiddenPane.numericPaneId), {
         timeout: 10_000,

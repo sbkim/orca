@@ -1,8 +1,12 @@
 import type { Page, TestInfo } from '@stablyai/playwright-test'
 import { expect } from '@stablyai/playwright-test'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { rmSync } from 'node:fs'
 import path from 'node:path'
+import {
+  type HiddenPressureOutputMode,
+  writePressureOutputScript
+} from './artificial-opencode-hidden-pressure-script'
 import {
   ensureTerminalVisible,
   getActiveWorktreeId,
@@ -77,38 +81,6 @@ type HiddenPressureAckGate = {
 const MAX_HIDDEN_RESTORE_LATENCY_MS = 1_500
 const MAIN_RENDERER_PRESSURE_TARGET_CHARS = 2 * 1024 * 1024
 
-export function pressureOutputScript(runId: string): string {
-  return `
-const paneIndex = process.argv[2] ?? '0'
-const targetChars = Number(process.argv[3] ?? '0')
-const delayMs = Number(process.argv[4] ?? '0')
-const header = 'OPENCODE_PRESSURE_START_${runId}_' + paneIndex + '\\n'
-const chunkBody = '#'.repeat(8192)
-let written = 0
-process.stdout.write(header)
-function writeMore() {
-  let canContinue = true
-  while (canContinue && written < targetChars) {
-    const frame = String(written).padStart(8, '0')
-    const chunk = '\\x1b[?2026h\\x1b[1;1Hpressure pane=' + paneIndex + ' frame=' + frame + ' ' + chunkBody + '\\x1b[?2026l\\n'
-    written += chunk.length
-    canContinue = process.stdout.write(chunk)
-  }
-  if (written < targetChars) {
-    process.stdout.once('drain', writeMore)
-    return
-  }
-  process.stdout.write('OPENCODE_PRESSURE_DONE_${runId}_' + paneIndex + '\\n')
-}
-setTimeout(writeMore, Number.isFinite(delayMs) && delayMs > 0 ? delayMs : 0)
-`
-}
-
-export function writePressureOutputScript(scriptPath: string, runId: string): void {
-  mkdirSync(path.dirname(scriptPath), { recursive: true })
-  writeFileSync(scriptPath, pressureOutputScript(runId))
-}
-
 export async function runHiddenRealPtyPressureScenario<
   TMeasurement extends HiddenPressureMeasurement,
   TDebug extends HiddenPressureDebug,
@@ -120,6 +92,7 @@ export async function runHiddenRealPtyPressureScenario<
   annotationSuffix,
   hiddenPaneCount,
   pressureOutputChars,
+  pressureOutputMode = 'tui',
   pressureStartDelayMs,
   testInfo,
   testRepoPath,
@@ -129,6 +102,7 @@ export async function runHiddenRealPtyPressureScenario<
   annotationSuffix?: string
   hiddenPaneCount: number
   pressureOutputChars: number
+  pressureOutputMode?: HiddenPressureOutputMode
   pressureStartDelayMs: number
   testInfo: TestInfo
   testRepoPath: string
@@ -158,7 +132,7 @@ export async function runHiddenRealPtyPressureScenario<
     `.orca-opencode-hidden-pressure-load-${runId}.mjs`
   )
   deps.writeInteractivePromptScript(typingScriptPath, runId)
-  writePressureOutputScript(pressureScriptPath, runId)
+  writePressureOutputScript(pressureScriptPath, runId, pressureOutputMode)
 
   await deps.resetTerminalPtyOutputDebug(orcaPage)
   await deps.holdTerminalAckGate(
@@ -197,8 +171,13 @@ export async function runHiddenRealPtyPressureScenario<
       ackGate
     )
 
-    expect(debug?.hiddenRendererSkipCount ?? 0).toBe(0)
-    expect(debug?.hiddenRendererSkippedChars ?? 0).toBe(0)
+    if (pressureOutputMode === 'plain') {
+      expect(debug?.hiddenRendererSkipCount ?? 0).toBeGreaterThan(0)
+      expect(debug?.hiddenRendererSkippedChars ?? 0).toBeGreaterThan(0)
+    } else {
+      expect(debug?.hiddenRendererSkipCount ?? 0).toBe(0)
+      expect(debug?.hiddenRendererSkippedChars ?? 0).toBe(0)
+    }
     expect(pressureBeforeTyping.peakPendingChars).toBeGreaterThan(0)
     expect(pressureBeforeTyping.ackGatedFlushSkipCount).toBeGreaterThan(0)
     expect(mainPressure?.peakRendererInFlightChars ?? 0).toBeGreaterThanOrEqual(

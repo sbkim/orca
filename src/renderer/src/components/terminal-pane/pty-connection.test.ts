@@ -2945,7 +2945,7 @@ describe('connectPanePty', () => {
     expect(transport.sendInput).not.toHaveBeenCalled()
   })
 
-  it('keeps non-visible local PTY bytes on the live xterm path for release', async () => {
+  it('keeps hidden terminal-control bytes on the live xterm path', async () => {
     const pendingTimeouts: (() => void)[] = []
     const originalSetTimeout = globalThis.setTimeout
     globalThis.setTimeout = vi.fn((fn: () => void) => {
@@ -2975,14 +2975,15 @@ describe('connectPanePty', () => {
       await flushAsyncTicks(6)
 
       expect(capturedDataCallback.current).not.toBeNull()
-      capturedDataCallback.current?.('hello\r\n')
-      expect(pane.terminal.write).not.toHaveBeenCalledWith('hello\r\n')
+      const controlOutput = '\x1b[2J\x1b[Hhello\r\n'
+      capturedDataCallback.current?.(controlOutput)
+      expect(pane.terminal.write).not.toHaveBeenCalledWith(controlOutput)
 
       for (const fn of pendingTimeouts) {
         fn()
       }
 
-      expect(pane.terminal.write).toHaveBeenCalledWith('hello\r\n')
+      expect(pane.terminal.write).toHaveBeenCalledWith(controlOutput)
     } finally {
       globalThis.setTimeout = originalSetTimeout
     }
@@ -3306,7 +3307,7 @@ describe('connectPanePty', () => {
     binding.dispose()
   })
 
-  it('writes ordinary hidden output live instead of proactively restoring a snapshot', async () => {
+  it('restores plain hidden output from the main snapshot when the pane returns', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: {
@@ -3347,20 +3348,24 @@ describe('connectPanePty', () => {
     })
     await flushAsyncTicks(20)
 
-    expect(getMainBufferSnapshot).not.toHaveBeenCalled()
-    expect(pane.terminal.write).toHaveBeenCalledWith(hidden)
-    expect(pane.terminal.write).toHaveBeenCalledWith(live, expect.any(Function))
+    expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
+    expect(pane.terminal.write).not.toHaveBeenCalledWith(hidden)
+    expect(pane.terminal.write).not.toHaveBeenCalledWith(live, expect.any(Function))
+    expect(pane.terminal.write).toHaveBeenCalledWith(
+      expect.stringContaining(`snapshot-with-${hidden}`),
+      expect.any(Function)
+    )
     disposable.dispose()
   })
 
-  it('writes ordinary hidden remote runtime output live instead of restoring a snapshot', async () => {
+  it('restores plain hidden remote runtime output from its serialized snapshot', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('remote:env-1@@terminal-1')
     const capturedDataCallback: {
       current: ((data: string, meta?: { seq?: number; rawLength?: number }) => void) | null
     } = { current: null }
     transport.serializeBuffer = vi.fn().mockResolvedValue({
-      data: 'remote snapshot\r\n',
+      data: 'remote snapshot with hidden remote output\r\n',
       cols: 120,
       rows: 40,
       seq: 40,
@@ -3394,13 +3399,16 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(20)
 
     expect(getMainBufferSnapshot).not.toHaveBeenCalled()
-    expect(transport.serializeBuffer).not.toHaveBeenCalled()
-    expect(pane.terminal.write).toHaveBeenCalledWith(hidden)
-    expect(pane.terminal.write).toHaveBeenCalledWith(live, expect.any(Function))
+    expect(transport.serializeBuffer).toHaveBeenCalledWith({ scrollbackRows: 5000 })
+    expect(pane.terminal.write).not.toHaveBeenCalledWith(hidden)
+    expect(pane.terminal.write).toHaveBeenCalledWith(
+      expect.stringContaining('remote snapshot with hidden remote output'),
+      expect.any(Function)
+    )
     disposable.dispose()
   })
 
-  it('keeps inactive split-pane hidden output live instead of deferring snapshot restore', async () => {
+  it('defers inactive split-pane plain hidden output restore until the pane returns', async () => {
     const { resetHiddenOutputRestoreSchedulerForTests } =
       await import('./hidden-output-restore-scheduler')
     let disposable: { dispose: () => void } | null = null
@@ -3452,9 +3460,12 @@ describe('connectPanePty', () => {
       await new Promise((resolve) => setTimeout(resolve, 30))
       await flushAsyncTicks(20)
 
-      expect(getMainBufferSnapshot).not.toHaveBeenCalled()
-      expect(pane.terminal.write).toHaveBeenCalledWith(hidden)
-      expect(pane.terminal.write).toHaveBeenCalledWith(live, expect.any(Function))
+      expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
+      expect(pane.terminal.write).not.toHaveBeenCalledWith(hidden)
+      expect(pane.terminal.write).toHaveBeenCalledWith(
+        expect.stringContaining('inactive snapshot'),
+        expect.any(Function)
+      )
     } finally {
       disposable?.dispose()
       resetHiddenOutputRestoreSchedulerForTests()
@@ -3519,7 +3530,7 @@ describe('connectPanePty', () => {
     }
   })
 
-  it('does not retry remote snapshots for ordinary hidden runtime output', async () => {
+  it('retries null remote snapshots for skipped plain hidden runtime output', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('remote:env-1@@terminal-1')
     const capturedDataCallback: {
@@ -3555,7 +3566,7 @@ describe('connectPanePty', () => {
     })
     await flushAsyncTicks(20)
 
-    expect(transport.serializeBuffer).not.toHaveBeenCalled()
+    expect(transport.serializeBuffer).toHaveBeenCalledTimes(1)
     expect(pane.terminal.write).not.toHaveBeenCalledWith(
       expect.stringContaining('Orca skipped hidden terminal output'),
       expect.any(Function)
@@ -3568,8 +3579,11 @@ describe('connectPanePty', () => {
     await new Promise((resolve) => setTimeout(resolve, 80))
     await flushAsyncTicks(20)
 
-    expect(transport.serializeBuffer).not.toHaveBeenCalled()
-    expect(pane.terminal.write).toHaveBeenCalledWith(firstLive, expect.any(Function))
+    expect(transport.serializeBuffer).toHaveBeenCalledTimes(2)
+    expect(pane.terminal.write).toHaveBeenCalledWith(
+      expect.stringContaining('remote recovered snapshot'),
+      expect.any(Function)
+    )
     disposable.dispose()
   })
 

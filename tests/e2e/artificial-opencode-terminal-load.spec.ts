@@ -727,7 +727,8 @@ test.describe('Artificial OpenCode terminal load', () => {
     testRepoPath: string,
     testInfo: TestInfo,
     hiddenPaneCount: number,
-    annotationSuffix?: string
+    annotationSuffix?: string,
+    pressureOutputMode?: 'tui' | 'plain'
   ): Promise<void> {
     await runHiddenRealPtyPressureScenario({
       orcaPage,
@@ -735,6 +736,7 @@ test.describe('Artificial OpenCode terminal load', () => {
       annotationSuffix,
       hiddenPaneCount,
       pressureOutputChars: PRESSURE_OUTPUT_CHARS,
+      pressureOutputMode,
       pressureStartDelayMs: HIDDEN_PRESSURE_START_DELAY_MS,
       testInfo,
       deps: {
@@ -762,6 +764,19 @@ test.describe('Artificial OpenCode terminal load', () => {
       testRepoPath,
       testInfo,
       HIDDEN_PRESSURE_PANES
+    )
+  })
+  test('skips renderer writes for plain hidden PTY output while preserving restore', async ({
+    orcaPage,
+    testRepoPath
+  }, testInfo) => {
+    await runConfiguredHiddenRealPtyPressureScenario(
+      orcaPage,
+      testRepoPath,
+      testInfo,
+      HIDDEN_PRESSURE_PANES,
+      '-plain',
+      'plain'
     )
   })
   for (const paneCount of SCALE_HIDDEN_PRESSURE_PANES) {
