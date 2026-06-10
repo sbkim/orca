@@ -411,6 +411,16 @@ export function getAgentLabel(title: string): string | null {
 // stomp the synthesized state back to idle.
 const CURSOR_NATIVE_TITLE_LOWER = 'cursor agent'
 
+/**
+ * True for cursor-agent's bare native title ("Cursor Agent", trimmed,
+ * case-insensitive). Title trackers drop it before it reaches stored state so
+ * cursor's per-turn re-emissions cannot stomp Orca's synthesized spinner
+ * titles. Anything with additional tokens ("⠋ Cursor Agent") passes through.
+ */
+export function isCursorNativeAgentTitle(title: string): boolean {
+  return title.trim().toLowerCase() === CURSOR_NATIVE_TITLE_LOWER
+}
+
 export function detectAgentStatusFromTitle(title: string): AgentStatus | null {
   if (!title) {
     return null

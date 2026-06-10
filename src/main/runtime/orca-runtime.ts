@@ -1,12 +1,12 @@
 /* eslint-disable max-lines -- Why: OrcaRuntimeService still owns the mutable live graph, PTY handles, waiters, mobile floor/layout state, and managed-worktree reconciliation. Stateless browser and file command adapters live beside it; the remaining split points need state-owner extraction before enforcing max-lines. */
 /* eslint-disable unicorn/no-useless-spread -- Why: waiter sets and handle keys are cloned intentionally before mutation so resolution and rejection can safely remove entries while iterating. */
 /* eslint-disable no-control-regex -- Why: terminal normalization must strip ANSI and OSC control sequences from PTY output before returning bounded text to agents. */
-import {
-  extractLastOscTitle,
-  detectAgentStatusFromTitle,
-  isShellProcess
-} from '../../shared/agent-detection'
+import { detectAgentStatusFromTitle, isShellProcess } from '../../shared/agent-detection'
 import type { AgentStatus } from '../../shared/agent-detection'
+import {
+  createTerminalTitleTracker,
+  type TerminalTitleTracker
+} from '../../shared/terminal-output-side-effects'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
   type ParsedAgentStatusPayload,
@@ -714,6 +714,15 @@ export type RuntimeTerminalAgentStatusEvent = {
   payload: ParsedAgentStatusPayload
 }
 
+type RuntimePtyTitleTrackerEntry = {
+  tracker: TerminalTitleTracker
+  // Why: onPtyData batches the mobile session-tab touch to once per chunk;
+  // the stale-working-title timer fires between chunks and must touch
+  // immediately. These flags route the tracker callback to the right mode.
+  applyingChunk: boolean
+  chunkTouchedSessionTabs: boolean
+}
+
 type RuntimeHeadlessTerminal = {
   emulator: HeadlessEmulator
   // Why: serialize can race with newer writes appended to writeChain; return
@@ -1378,6 +1387,11 @@ export class OrcaRuntimeService {
     string,
     ReturnType<typeof createAgentStatusOscProcessor>
   >()
+  // Why: per-PTY shared title trackers (all-titles ordering + stale-working
+  // timer) replace last-title-per-chunk scanning so main observes the same
+  // intra-chunk working→idle transitions the renderer does (issue #1083).
+  // Lazily created like agentStatusOscProcessorsByPtyId; disposed on PTY exit.
+  private ptyTitleTrackersByPtyId = new Map<string, RuntimePtyTitleTrackerEntry>()
   // Why: per-PTY hydration state guards against double-hydration. Keys:
   //   'pending'  → maybeHydrateHeadlessFromRenderer is in flight
   //   'done'     → hydration completed (success or skip); never run again
@@ -3279,20 +3293,12 @@ export class OrcaRuntimeService {
     this.maybeHydrateHeadlessFromRenderer(ptyId)
     this.trackHeadlessTerminalData(ptyId, data, outputSequence)
 
-    // Why: extract OSC title from raw PTY data before tail-buffer processing
-    // strips the escape sequences. Agent CLIs (Claude Code, Gemini, etc.)
-    // announce status via OSC 0/1/2 title sequences — this is the same
-    // detection path the renderer uses for notifications and sidebar badges.
-    const oscTitle = extractLastOscTitle(data)
-    const agentStatus = oscTitle ? detectAgentStatusFromTitle(oscTitle) : null
-
     let normalizedData: string | null = null
     const getNormalizedData = (): string => {
       normalizedData ??= normalizeTerminalChunk(data)
       return normalizedData
     }
     const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
-    let shouldTouchPtyBackedSessionTabs = false
     const ptyTailBefore = pty
       ? {
           lines: pty.tailBuffer,
@@ -3317,17 +3323,6 @@ export class OrcaRuntimeService {
       pty.tailTruncated = pty.tailTruncated || nextTail.truncated
       pty.tailLinesTotal += nextTail.newCompleteLines
       pty.preview = buildPreview(pty.tailBuffer, pty.tailPartialLine)
-      if (oscTitle !== null) {
-        const prevStatus = pty.lastAgentStatus
-        const prevTitle = pty.lastOscTitle
-        pty.lastOscTitle = oscTitle
-        pty.lastAgentStatus = agentStatus
-        shouldTouchPtyBackedSessionTabs =
-          prevTitle !== oscTitle || prevStatus !== pty.lastAgentStatus
-        if (agentStatus === 'idle' && prevStatus !== 'idle') {
-          this.resolvePtyTuiIdleWaiters(pty, ptyId)
-        }
-      }
     }
 
     for (const leaf of this.getLeavesForPty(ptyId)) {
@@ -3372,35 +3367,18 @@ export class OrcaRuntimeService {
         leaf.tailLinesTotal += nextTail.newCompleteLines
         leaf.preview = buildPreview(leaf.tailBuffer, leaf.tailPartialLine)
       }
-
-      if (oscTitle !== null) {
-        // Why: keep the latest OSC title on the leaf so worktree.ps can
-        // recompute status from the live title each call. Without this,
-        // daemon-hosted terminals (no renderer pushing pane titles) had no
-        // way to clear a stale 'working' status after the agent exited and
-        // the shell took over the title — the stuck-spinner bug in #1437.
-        leaf.lastOscTitle = oscTitle
-        const prevStatus = leaf.lastAgentStatus
-        // Why: when a new OSC title doesn't classify as an agent state (e.g.
-        // bare shell title after the agent exits), clear lastAgentStatus so
-        // it is no longer sticky. Tui-idle waiters that needed the previous
-        // 'idle' transition were already resolved at the moment of the
-        // transition below; only fresh waiters registered after the agent
-        // exits would observe the cleared value, and they correctly fall
-        // back to title-based detection / polling.
-        leaf.lastAgentStatus = agentStatus
-        // Why: resolve tui-idle on any transition TO idle (not just working→idle).
-        // Claude Code may skip "working" entirely on fast tasks, going null→idle,
-        // and the coordinator's tui-idle waiter would hang forever waiting for a
-        // working→idle transition that never comes. Permission→idle is excluded:
-        // it means the agent was blocked on user approval and the user said no,
-        // which isn't a task-completion signal.
-        if (agentStatus === 'idle' && prevStatus !== 'idle') {
-          this.resolveTuiIdleWaiters(leaf)
-          this.deliverPendingMessages(leaf)
-        }
-      }
     }
+
+    // Why: feed the chunk's OSC titles through the shared per-PTY tracker in
+    // byte order — the same ordering the renderer transport uses — so
+    // coalesced working→idle transitions reach tui-idle waiters and
+    // pending-message delivery instead of being masked by the chunk's last
+    // title (issue #1083). Uses the OSC 9999-stripped cleanData like the
+    // renderer, so pure status chunks don't perturb the stale-title probe.
+    const shouldTouchPtyBackedSessionTabs = this.ingestPtyTitlesForChunk(
+      ptyId,
+      agentStatusChunk.cleanData
+    )
 
     this.emitTerminalAgentStatusEvents(ptyId, agentStatusChunk)
     if (shouldTouchPtyBackedSessionTabs) {
@@ -3424,6 +3402,107 @@ export class OrcaRuntimeService {
       this.agentStatusOscProcessorsByPtyId.set(ptyId, processor)
     }
     return processor(data)
+  }
+
+  /** Feed one raw PTY chunk through the per-PTY title tracker. Returns true
+   *  when a title application changed the PTY record's title/status, so
+   *  onPtyData can touch mobile session snapshots once per chunk. */
+  private ingestPtyTitlesForChunk(ptyId: string, data: string): boolean {
+    const entry = this.getOrCreatePtyTitleTrackerEntry(ptyId)
+    entry.applyingChunk = true
+    entry.chunkTouchedSessionTabs = false
+    try {
+      entry.tracker.handleChunk(data)
+    } finally {
+      entry.applyingChunk = false
+    }
+    return entry.chunkTouchedSessionTabs
+  }
+
+  private getOrCreatePtyTitleTrackerEntry(ptyId: string): RuntimePtyTitleTrackerEntry {
+    const existing = this.ptyTitleTrackersByPtyId.get(ptyId)
+    if (existing) {
+      return existing
+    }
+    const tracker = createTerminalTitleTracker({
+      onTitle: (_normalizedTitle, rawTitle) => {
+        const changed = this.applyTrackedPtyTitle(ptyId, rawTitle)
+        if (!changed) {
+          return
+        }
+        const live = this.ptyTitleTrackersByPtyId.get(ptyId)
+        if (live?.applyingChunk) {
+          live.chunkTouchedSessionTabs = true
+        } else {
+          // Stale-working-title timer path — fires between chunks, so the
+          // per-chunk batching in onPtyData cannot pick it up.
+          this.touchMobileSessionSnapshotsForPty(ptyId)
+        }
+      }
+    })
+    const entry: RuntimePtyTitleTrackerEntry = {
+      tracker,
+      applyingChunk: false,
+      chunkTouchedSessionTabs: false
+    }
+    this.ptyTitleTrackersByPtyId.set(ptyId, entry)
+    return entry
+  }
+
+  /** Apply one observed OSC title (raw form) to the PTY and leaf records.
+   *  Returns true when the PTY record's title or status changed. */
+  private applyTrackedPtyTitle(ptyId: string, rawTitle: string): boolean {
+    const agentStatus = detectAgentStatusFromTitle(rawTitle)
+    let ptyRecordChanged = false
+    const pty = this.ptysById.get(ptyId)
+    if (pty) {
+      const prevStatus = pty.lastAgentStatus
+      const prevTitle = pty.lastOscTitle
+      // Why: records keep the RAW title — worktree `ps` and mobile tab titles
+      // expect it; normalized titles ride along on the tracker for later
+      // emitted facts (terminal-side-effect-authority.md).
+      pty.lastOscTitle = rawTitle
+      pty.lastAgentStatus = agentStatus
+      ptyRecordChanged = prevTitle !== rawTitle || prevStatus !== agentStatus
+      if (agentStatus === 'idle' && prevStatus !== 'idle') {
+        this.resolvePtyTuiIdleWaiters(pty, ptyId)
+      }
+    }
+    for (const leaf of this.getLeavesForPty(ptyId)) {
+      // Why: keep the latest OSC title on the leaf so worktree.ps can
+      // recompute status from the live title each call. Without this,
+      // daemon-hosted terminals (no renderer pushing pane titles) had no
+      // way to clear a stale 'working' status after the agent exited and
+      // the shell took over the title — the stuck-spinner bug in #1437.
+      leaf.lastOscTitle = rawTitle
+      const prevStatus = leaf.lastAgentStatus
+      // Why: when a new OSC title doesn't classify as an agent state (e.g.
+      // bare shell title after the agent exits), clear lastAgentStatus so
+      // it is no longer sticky. Tui-idle waiters that needed the previous
+      // 'idle' transition were already resolved at the moment of the
+      // transition below; only fresh waiters registered after the agent
+      // exits would observe the cleared value, and they correctly fall
+      // back to title-based detection / polling.
+      leaf.lastAgentStatus = agentStatus
+      // Why: resolve tui-idle on any transition TO idle (not just working→idle).
+      // Claude Code may skip "working" entirely on fast tasks, going null→idle,
+      // and the coordinator's tui-idle waiter would hang forever waiting for a
+      // working→idle transition that never comes. Permission→idle is excluded:
+      // it means the agent was blocked on user approval and the user said no,
+      // which isn't a task-completion signal.
+      if (agentStatus === 'idle' && prevStatus !== 'idle') {
+        this.resolveTuiIdleWaiters(leaf)
+        this.deliverPendingMessages(leaf)
+      }
+    }
+    return ptyRecordChanged
+  }
+
+  /** Cancel the per-PTY title tracker (stale-title timer included) on PTY
+   *  teardown so it cannot fire into pruned records. */
+  private disposePtyTitleTracker(ptyId: string): void {
+    this.ptyTitleTrackersByPtyId.get(ptyId)?.tracker.dispose()
+    this.ptyTitleTrackersByPtyId.delete(ptyId)
   }
 
   private emitTerminalAgentStatusEvents(ptyId: string, chunk: ProcessedAgentStatusChunk): void {
@@ -4630,6 +4709,7 @@ export class OrcaRuntimeService {
     this.recentPtyOutputById.delete(ptyId)
     this.ptyOutputSequenceById.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
+    this.disposePtyTitleTracker(ptyId)
     // Layout state machine: clear `layouts` and `layoutQueues`. Any
     // already-queued applyLayout work for this ptyId will run, but every
     // applyLayout re-checks `layouts.has(ptyId)` (or fresh-subscribe) and
@@ -12739,6 +12819,7 @@ export class OrcaRuntimeService {
     this.recentPtyOutputById.delete(ptyId)
     this.ptyOutputSequenceById.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
+    this.disposePtyTitleTracker(ptyId)
     const handle = this.handleByPtyId.get(ptyId)
     if (handle) {
       this.handleByPtyId.delete(ptyId)

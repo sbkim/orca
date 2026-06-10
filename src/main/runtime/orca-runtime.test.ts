@@ -3502,6 +3502,145 @@ describe('OrcaRuntimeService', () => {
     })
   })
 
+  it('resolves tui-idle when a completion title is coalesced with the next working title', async () => {
+    // Why: node-pty + the main batch window can coalesce "task done" and the
+    // next task's working title into one chunk. A last-title reader never
+    // sees the intermediate idle and the waiter hangs (issue #1083 class).
+    const runtime = createRuntime()
+    syncSinglePty(runtime)
+    runtime.onPtyData('pty-1', '\x1b]0;Codex working\x07', 100)
+    const [terminal] = (await runtime.listTerminals()).terminals
+    const wait = runtime.waitForTerminal(terminal.handle, {
+      condition: 'tui-idle',
+      timeoutMs: 1_000
+    })
+
+    runtime.onPtyData('pty-1', '\x1b]0;Codex done\x07\x1b]0;Codex working\x07', 101)
+
+    await expect(wait).resolves.toMatchObject({
+      handle: terminal.handle,
+      condition: 'tui-idle',
+      status: 'running'
+    })
+  })
+
+  it('ignores the bare cursor-agent native title so synthesized spinner state survives', async () => {
+    const ptyId = `${TEST_REPO_ID}::/tmp/worktree-a@@pty-bg`
+    const runtime = createRuntime()
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => [{ id: ptyId, cwd: '/tmp/worktree-a', title: 'shell' }]
+    })
+    runtime.attachWindow(1)
+    runtime.markGraphReady(1)
+
+    runtime.onPtyData(ptyId, '\x1b]0;⠋ Cursor Agent\x07', 100)
+    // cursor-agent re-emits its bare native title on internal redraws while
+    // still working; it must not stomp the synthesized working title.
+    runtime.onPtyData(ptyId, '\x1b]0;Cursor Agent\x07', 101)
+
+    expect((await runtime.listTerminals()).terminals[0]).toMatchObject({
+      title: '⠋ Cursor Agent'
+    })
+  })
+
+  it('clears a stale working title after 3s of title-less output', async () => {
+    vi.useFakeTimers()
+    try {
+      const ptyId = `${TEST_REPO_ID}::/tmp/worktree-a@@pty-bg`
+      const runtime = createRuntime()
+      runtime.setPtyController({
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null,
+        listProcesses: async () => [{ id: ptyId, cwd: '/tmp/worktree-a', title: 'shell' }]
+      })
+      runtime.attachWindow(1)
+      runtime.markGraphReady(1)
+
+      runtime.onPtyData(ptyId, '\x1b]0;Codex working\x07', 100)
+      runtime.onPtyData(ptyId, 'output without a title\r\n', 101)
+      expect((await runtime.listTerminals()).terminals[0]).toMatchObject({
+        title: 'Codex working'
+      })
+
+      await vi.advanceTimersByTimeAsync(3_000)
+
+      expect((await runtime.listTerminals()).terminals[0]).toMatchObject({
+        title: 'Codex'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('cancels the stale-title timer when the PTY exits', async () => {
+    vi.useFakeTimers()
+    try {
+      const ptyId = `${TEST_REPO_ID}::/tmp/worktree-a@@pty-bg`
+      const runtime = createRuntime()
+      runtime.setPtyController({
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null,
+        listProcesses: async () => [{ id: ptyId, cwd: '/tmp/worktree-a', title: 'shell' }]
+      })
+      runtime.attachWindow(1)
+      runtime.markGraphReady(1)
+
+      runtime.onPtyData(ptyId, '\x1b]0;Codex working\x07', 100)
+      runtime.onPtyData(ptyId, 'output without a title\r\n', 101)
+      runtime.onPtyExit(ptyId, 0)
+
+      await vi.advanceTimersByTimeAsync(4_000)
+
+      // The dead session keeps its factual last title — the disposed tracker's
+      // stale-title rewrite must not fire into the retained record.
+      expect((await runtime.listTerminals()).terminals[0]).toMatchObject({
+        title: 'Codex working'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps stale-title timers isolated per PTY', async () => {
+    vi.useFakeTimers()
+    try {
+      const ptyA = `${TEST_REPO_ID}::/tmp/worktree-a@@pty-a`
+      const ptyB = `${TEST_REPO_ID}::/tmp/worktree-a@@pty-b`
+      const runtime = createRuntime()
+      runtime.setPtyController({
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null,
+        listProcesses: async () => [
+          { id: ptyA, cwd: '/tmp/worktree-a', title: 'shell' },
+          { id: ptyB, cwd: '/tmp/worktree-a', title: 'shell' }
+        ]
+      })
+      runtime.attachWindow(1)
+      runtime.markGraphReady(1)
+
+      runtime.onPtyData(ptyA, '\x1b]0;Codex working\x07', 100)
+      runtime.onPtyData(ptyB, '\x1b]0;Aider working\x07', 100)
+      // Only A receives title-less output, so only A's stale timer arms.
+      runtime.onPtyData(ptyA, 'output without a title\r\n', 101)
+
+      await vi.advanceTimersByTimeAsync(3_000)
+
+      const { terminals } = await runtime.listTerminals()
+      expect(terminals.find((t) => t.tabId === `pty:${ptyA}`)).toMatchObject({ title: 'Codex' })
+      expect(terminals.find((t) => t.tabId === `pty:${ptyB}`)).toMatchObject({
+        title: 'Aider working'
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('returns OSC titles from headless main terminal snapshots', async () => {
     const runtime = createRuntime()
     syncSinglePty(runtime, 'pty-1')
