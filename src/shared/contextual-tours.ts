@@ -6,6 +6,7 @@ export type ContextualTourId =
   | 'browser'
   | 'tasks'
   | 'automations'
+  | 'floating-workspace'
   | 'workspace-creation'
 
 export type ContextualTourStepControl = {
@@ -160,6 +161,26 @@ export const CONTEXTUAL_TOURS = [
         title: 'Find the results',
         body: 'Runs show when automations executed, what happened, and where to inspect their output.',
         targetSelector: '[data-contextual-tour-target="automations-runs"]'
+      }
+    ]
+  },
+  {
+    id: 'floating-workspace',
+    steps: [
+      {
+        title: 'Your portable command center',
+        body: 'Use the floating workspace for repo-root work: agents, quick commands, notes, browser tabs, and cross-cutting side work you keep with you.',
+        targetSelector:
+          '[data-contextual-tour-target="floating-workspace-actions"], [data-contextual-tour-target="floating-workspace-surface"]',
+        requiredForStart: true,
+        preferredPlacement: 'left'
+      },
+      {
+        title: 'Keep side work out of the way',
+        body: 'Park scratch terminals, references, and long-running remote sessions here without cluttering the task you’re focused on.',
+        targetSelector:
+          '[data-contextual-tour-target="floating-workspace-actions"], [data-contextual-tour-target="floating-workspace-surface"]',
+        preferredPlacement: 'left'
       }
     ]
   },

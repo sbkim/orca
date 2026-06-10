@@ -37,7 +37,15 @@ export function clampContextualTourPanelPosition(args: {
   let left: number
   let top: number
   if (args.preferredPlacement) {
-    placement = args.preferredPlacement
+    placement = resolvePreferredPlacement({
+      preferredPlacement: args.preferredPlacement,
+      roomAbove,
+      roomBelow,
+      roomLeft,
+      roomRight,
+      panel,
+      gap
+    })
     const preferredPosition = getUnclampedPanelPosition({
       placement,
       targetRect,
@@ -88,6 +96,54 @@ export function clampContextualTourPanelPosition(args: {
       : clampNumber(targetCenterY - clampedTop, arrowMargin, panel.height - arrowMargin)
 
   return { left: clampedLeft, top: clampedTop, placement, arrowOffset }
+}
+
+function resolvePreferredPlacement(args: {
+  preferredPlacement: ContextualTourPanelPlacement
+  roomAbove: number
+  roomBelow: number
+  roomLeft: number
+  roomRight: number
+  panel: PanelSize
+  gap: number
+}): ContextualTourPanelPlacement {
+  const horizontalRoom = args.panel.width + args.gap
+  const verticalRoom = args.panel.height + args.gap
+  if (args.preferredPlacement === 'left') {
+    return args.roomLeft < horizontalRoom && args.roomRight >= horizontalRoom ? 'right' : 'left'
+  }
+  if (args.preferredPlacement === 'right') {
+    return args.roomRight < horizontalRoom && args.roomLeft >= horizontalRoom ? 'left' : 'right'
+  }
+  if (args.preferredPlacement === 'top') {
+    if (args.roomAbove >= verticalRoom) {
+      return 'top'
+    }
+    if (args.roomBelow >= verticalRoom) {
+      return 'bottom'
+    }
+    return getPreferredHorizontalPlacement(args)
+  }
+  if (args.roomBelow >= verticalRoom) {
+    return 'bottom'
+  }
+  if (args.roomAbove >= verticalRoom) {
+    return 'top'
+  }
+  return getPreferredHorizontalPlacement(args)
+}
+
+function getPreferredHorizontalPlacement(args: {
+  roomLeft: number
+  roomRight: number
+  panel: PanelSize
+  gap: number
+}): ContextualTourPanelPlacement {
+  const horizontalRoom = args.panel.width + args.gap
+  if (args.roomRight >= horizontalRoom || args.roomRight >= args.roomLeft) {
+    return 'right'
+  }
+  return 'left'
 }
 
 function getUnclampedPanelPosition(args: {
