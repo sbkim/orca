@@ -19,7 +19,12 @@ export function getHiddenImportedWorktrees(
   }
   return detected.worktrees.filter(
     (worktree) =>
-      !worktree.visible && !worktree.selectedCheckout && worktree.ownership !== 'orca-managed'
+      !worktree.visible &&
+      !worktree.selectedCheckout &&
+      worktree.ownership !== 'orca-managed' &&
+      // Why: ownership keeps bare entries hidden regardless, so "Show in
+      // worktree list" would be a dead-end affordance for them.
+      worktree.isBare !== true
   )
 }
 

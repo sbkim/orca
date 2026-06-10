@@ -964,6 +964,8 @@ function createReposApi(): NonNullable<Partial<PreloadApi>['repos']> {
     getGitUsername: () => Promise.resolve(''),
     getBaseRefDefault: async ({ repoId }) =>
       callRuntimeResult('repo.baseRefDefault', { repo: repoId }),
+    createInitialCommit: async ({ repoId }) =>
+      callRuntimeResult('repo.createInitialCommit', { repo: repoId }),
     searchBaseRefs: async ({ repoId, query, limit }) =>
       (
         await callRuntimeResult<{ refs: string[] }>('repo.searchRefs', {

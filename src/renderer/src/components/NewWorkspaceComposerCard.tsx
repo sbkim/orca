@@ -78,6 +78,8 @@ type NewWorkspaceComposerCardProps = {
   shouldWaitForSetupCheck: boolean
   resolvedSetupDecision: 'run' | 'skip' | null
   createError: WorkspaceCreateErrorDisplay | null
+  createInitialCommitPending: boolean
+  onCreateInitialCommit: () => void
   selectedRepoConnectionId: string | null
   selectedRepoSshStatus: SshConnectionStatus | null
   selectedRepoRequiresConnection: boolean
@@ -244,6 +246,8 @@ export default function NewWorkspaceComposerCard({
   shouldWaitForSetupCheck,
   resolvedSetupDecision,
   createError,
+  createInitialCommitPending,
+  onCreateInitialCommit,
   selectedRepoConnectionId,
   selectedRepoSshStatus,
   selectedRepoRequiresConnection,
@@ -263,6 +267,7 @@ export default function NewWorkspaceComposerCard({
   const autoRenameBranchFromWork = useAppStore((s) => s.settings?.autoRenameBranchFromWork ?? false)
   const nameInputFocusFrameRef = React.useRef<number | null>(null)
   const submitShortcutModifierLabel = getScreenSubmitModifierLabel()
+  const createBlocked = createDisabled || createInitialCommitPending
   const selectedRepoName = React.useMemo(() => {
     const repo = eligibleRepos.find((candidate) => candidate.id === repoId)
     return repo?.displayName ?? repo?.path ?? 'This project'
@@ -530,7 +535,7 @@ export default function NewWorkspaceComposerCard({
             defaultAgent={defaultTuiAgent}
             onSetDefault={handleSetDefaultAgent}
             triggerClassName="h-9 w-full border-input text-sm focus:border-ring focus:ring-[3px] focus:ring-ring/50"
-            onTriggerEnter={createDisabled ? undefined : onCreate}
+            onTriggerEnter={createBlocked ? undefined : onCreate}
           />
         </div>
 
@@ -728,13 +733,27 @@ export default function NewWorkspaceComposerCard({
           ) : (
             createError.message
           )}
+          {createError.action === 'create-initial-commit' ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="mt-2 text-xs"
+              disabled={createInitialCommitPending}
+              onClick={() => onCreateInitialCommit()}
+            >
+              {createInitialCommitPending ? (
+                <LoaderCircle className="size-3.5 animate-spin" />
+              ) : null}
+              Create initial commit
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
       <div className="flex justify-end">
         <Button
           onClick={() => void onCreate()}
-          disabled={createDisabled}
+          disabled={createBlocked}
           size="sm"
           className="text-xs"
         >

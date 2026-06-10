@@ -98,8 +98,11 @@ import {
 import type { SshConnectionStatus } from '../../../shared/ssh-types'
 import {
   resolveComposerBranchNameOverrideForCreate,
-  resolveComposerBranchSelection
+  resolveComposerBranchSelection,
+  resolveComposerSubmitBaseBranch
 } from './composer-branch-selection'
+import { createRuntimeRepoInitialCommit } from '@/runtime/runtime-repo-client'
+import { runComposerInitialCommitAction } from './composer-initial-commit-action'
 
 export type UseComposerStateOptions = {
   initialRepoId?: string
@@ -217,6 +220,9 @@ export type ComposerCardProps = {
   shouldWaitForSetupCheck: boolean
   resolvedSetupDecision: 'run' | 'skip' | null
   createError: WorkspaceCreateErrorDisplay | null
+  /** True while the "Create initial commit" recovery action is running. */
+  createInitialCommitPending: boolean
+  onCreateInitialCommit: () => void
   canUseSparseCheckout: boolean
   /** Saved presets for the currently-selected repo. Empty array when no
    *  presets exist or when the repo is remote. */
@@ -234,8 +240,11 @@ export type UseComposerStateResult = {
   onComposerNodeChange: (node: HTMLDivElement | null) => void
   promptTextareaRef: React.RefObject<HTMLTextAreaElement | null>
   nameInputRef: React.RefObject<HTMLInputElement | null>
-  submit: () => Promise<void>
-  submitQuick: (agent: TuiAgent | null) => Promise<void>
+  /** `baseBranchOverride` is the explicit base used by the initial-commit
+   *  retry — state set during the recovery action is not visible to the
+   *  in-flight closure. */
+  submit: (baseBranchOverride?: string) => Promise<void>
+  submitQuick: (agent: TuiAgent | null, baseBranchOverride?: string) => Promise<void>
   /** Invoked by the Enter handler to re-check whether submission should fire. */
   createDisabled: boolean
 }
@@ -249,6 +258,7 @@ export type UseComposerStateResult = {
 // closes.
 const composerDropStack: symbol[] = []
 const EMPTY_SPARSE_PRESETS: SparsePreset[] = []
+type LastComposerSubmit = { kind: 'full' } | { kind: 'quick'; agent: TuiAgent | null }
 
 export function useComposerState(options: UseComposerStateOptions): UseComposerStateResult {
   const {
@@ -341,6 +351,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     })
   const repoIdRef = useRef(repoId)
   repoIdRef.current = repoId
+  const lastComposerSubmitRef = useRef<LastComposerSubmit>({ kind: 'full' })
   const setRepoId = useCallback(
     (value: string) => {
       if (onRepoIdOverrideChange) {
@@ -469,6 +480,18 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   const [setupDecision, setSetupDecision] = useState<'run' | 'skip' | null>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<WorkspaceCreateErrorDisplay | null>(null)
+  const [creatingInitialCommit, setCreatingInitialCommit] = useState(false)
+  const creatingRef = useRef(false)
+  creatingRef.current = creating
+  const creatingInitialCommitRef = useRef(false)
+  creatingInitialCommitRef.current = creatingInitialCommit
+  const mountedRef = useRef(false)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const [advancedOpen, setAdvancedOpen] = useState(
     persistDraft ? Boolean((newWorkspaceDraft?.note ?? '').trim()) : false
   )
@@ -1524,6 +1547,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         hint = `was ${baseBranch}`
       }
       const preserveLinearLinkedWorkItem = isLinearLinkedWorkItem(linkedWorkItem)
+      setCreateError(null)
+      lastComposerSubmitRef.current = { kind: 'full' }
       setRepoId(value)
       setLinkedIssue('')
       setLinkedPR(null)
@@ -1834,266 +1859,273 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     [updateWorktreeMeta]
   )
 
-  const submit = useCallback(async (): Promise<void> => {
-    if (
-      !repoId ||
-      !workspaceSeedName ||
-      !selectedRepo ||
-      selectedRepoRequiresConnection ||
-      shouldWaitForSetupCheck ||
-      shouldWaitForIssueAutomationCheck ||
-      (requiresExplicitSetupChoice && !setupDecision) ||
-      sparseError !== null
-    ) {
-      return
-    }
-    if (!isTuiAgentEnabled(tuiAgent, disabledTuiAgents)) {
-      setTuiAgent(fallbackDefaultAgent)
-      toast.error('Selected agent is disabled. Choose an enabled agent before creating.')
-      return
-    }
-
-    setCreateError(null)
-    setCreating(true)
-    try {
-      const smartGitHubResolution = await resolvePendingSmartGitHubSubmit()
-      const submitLinkedWorkItem = smartGitHubResolution?.linkedWorkItem ?? linkedWorkItem
-      const submitLinkedIssueNumber =
-        smartGitHubResolution?.linkedIssueNumber ?? parsedLinkedIssueNumber
-      const submitLinkedPR = smartGitHubResolution?.linkedPR ?? effectiveLinkedPR
-      const workspaceName = smartGitHubResolution?.workspaceName ?? workspaceSeedName
-      if (!workspaceName) {
+  const submit = useCallback(
+    async (baseBranchOverride?: string): Promise<void> => {
+      lastComposerSubmitRef.current = { kind: 'full' }
+      if (
+        !repoId ||
+        !workspaceSeedName ||
+        !selectedRepo ||
+        selectedRepoRequiresConnection ||
+        shouldWaitForSetupCheck ||
+        shouldWaitForIssueAutomationCheck ||
+        (requiresExplicitSetupChoice && !setupDecision) ||
+        sparseError !== null
+      ) {
         return
       }
-      const submitShouldApplyLinkedOnlyTemplate =
-        enableIssueAutomation &&
-        !agentPrompt.trim() &&
-        Boolean(submitLinkedWorkItem) &&
-        hasLoadedIssueCommand
-      const submitLinkedOnlyTemplatePrompt =
-        submitShouldApplyLinkedOnlyTemplate && submitLinkedWorkItem
-          ? renderIssueCommandTemplate(
-              issueCommandTemplate.trim() || DEFAULT_ISSUE_COMMAND_TEMPLATE,
-              {
-                issueNumber:
-                  submitLinkedWorkItem.type === 'issue' ? submitLinkedWorkItem.number : null,
-                artifactUrl: submitLinkedWorkItem.url
-              }
+      if (!isTuiAgentEnabled(tuiAgent, disabledTuiAgents)) {
+        setTuiAgent(fallbackDefaultAgent)
+        toast.error('Selected agent is disabled. Choose an enabled agent before creating.')
+        return
+      }
+
+      setCreateError(null)
+      creatingRef.current = true
+      setCreating(true)
+      try {
+        const smartGitHubResolution = await resolvePendingSmartGitHubSubmit()
+        const submitLinkedWorkItem = smartGitHubResolution?.linkedWorkItem ?? linkedWorkItem
+        const submitLinkedIssueNumber =
+          smartGitHubResolution?.linkedIssueNumber ?? parsedLinkedIssueNumber
+        const submitLinkedPR = smartGitHubResolution?.linkedPR ?? effectiveLinkedPR
+        const workspaceName = smartGitHubResolution?.workspaceName ?? workspaceSeedName
+        if (!workspaceName) {
+          return
+        }
+        const submitShouldApplyLinkedOnlyTemplate =
+          enableIssueAutomation &&
+          !agentPrompt.trim() &&
+          Boolean(submitLinkedWorkItem) &&
+          hasLoadedIssueCommand
+        const submitLinkedOnlyTemplatePrompt =
+          submitShouldApplyLinkedOnlyTemplate && submitLinkedWorkItem
+            ? renderIssueCommandTemplate(
+                issueCommandTemplate.trim() || DEFAULT_ISSUE_COMMAND_TEMPLATE,
+                {
+                  issueNumber:
+                    submitLinkedWorkItem.type === 'issue' ? submitLinkedWorkItem.number : null,
+                  artifactUrl: submitLinkedWorkItem.url
+                }
+              )
+            : ''
+        const linkedPromptContext = getLinkedWorkItemPromptContext(submitLinkedWorkItem)
+        const submitStartupPrompt = submitShouldApplyLinkedOnlyTemplate
+          ? buildAgentPromptWithContext(
+              submitLinkedOnlyTemplatePrompt,
+              attachmentPaths,
+              [],
+              linkedPromptContext.linkedContextBlocks
             )
-          : ''
-      const linkedPromptContext = getLinkedWorkItemPromptContext(submitLinkedWorkItem)
-      const submitStartupPrompt = submitShouldApplyLinkedOnlyTemplate
-        ? buildAgentPromptWithContext(
-            submitLinkedOnlyTemplatePrompt,
-            attachmentPaths,
-            [],
-            linkedPromptContext.linkedContextBlocks
-          )
-        : buildAgentPromptWithContext(
-            agentPrompt,
-            attachmentPaths,
-            linkedPromptContext.linkedUrls,
-            linkedPromptContext.linkedContextBlocks
-          )
-      const submitShouldRunIssueAutomation =
-        enableIssueAutomation &&
-        submitLinkedIssueNumber !== null &&
-        issueCommandTemplate.length > 0 &&
-        !submitShouldApplyLinkedOnlyTemplate
+          : buildAgentPromptWithContext(
+              agentPrompt,
+              attachmentPaths,
+              linkedPromptContext.linkedUrls,
+              linkedPromptContext.linkedContextBlocks
+            )
+        const submitShouldRunIssueAutomation =
+          enableIssueAutomation &&
+          submitLinkedIssueNumber !== null &&
+          issueCommandTemplate.length > 0 &&
+          !submitShouldApplyLinkedOnlyTemplate
 
-      const setupTrustDecision = selectedRepoIsGit
-        ? await ensureHooksConfirmed(useAppStore.getState(), repoId, 'setup')
-        : 'skip'
-      const effectiveSetupDecision: SetupDecision =
-        setupTrustDecision === 'skip'
-          ? 'skip'
-          : ((resolvedSetupDecision ?? 'inherit') as SetupDecision)
-
-      let issueCommandTrustDecision: 'run' | 'skip' = 'run'
-      if (selectedRepoIsGit && submitShouldRunIssueAutomation) {
-        issueCommandTrustDecision =
+        const setupTrustDecision = selectedRepoIsGit
+          ? await ensureHooksConfirmed(useAppStore.getState(), repoId, 'setup')
+          : 'skip'
+        const effectiveSetupDecision: SetupDecision =
           setupTrustDecision === 'skip'
             ? 'skip'
-            : await ensureHooksConfirmed(useAppStore.getState(), repoId, 'issueCommand')
-      }
+            : ((resolvedSetupDecision ?? 'inherit') as SetupDecision)
 
-      const linkedLinearIssue =
-        submitLinkedWorkItem && getLinkedWorkItemProvider(submitLinkedWorkItem) === 'linear'
-          ? submitLinkedWorkItem.linearIdentifier
-          : undefined
-      const effectiveBranchNameOverride = resolveComposerBranchNameOverrideForCreate({
-        branchNameOverride,
-        branchAutoName: branchAutoNameRef.current,
-        workspaceName,
-        preserveWorkspaceNameEdits: branchNameOverridePreservesNameEdits
-      })
-      const createDisplayName = smartGitHubResolution?.displayName ?? submitLinkedWorkItem?.title
-      // Why: the first-work hook only renames blank, auto-generated git workspaces
-      // that actually launch an agent. Persist that known-pending state for the card.
-      const pendingFirstAgentMessageRename =
-        selectedRepoIsGit &&
-        settings?.autoRenameBranchFromWork === true &&
-        !name.trim() &&
-        Boolean(tuiAgent) &&
-        !effectiveBranchNameOverride &&
-        !createDisplayName
-      const startupPlan = buildAgentStartupPlan({
-        agent: tuiAgent,
-        prompt: submitStartupPrompt,
-        cmdOverrides: settings?.agentCmdOverrides ?? {},
-        platform: CLIENT_PLATFORM
-      })
+        let issueCommandTrustDecision: 'run' | 'skip' = 'run'
+        if (selectedRepoIsGit && submitShouldRunIssueAutomation) {
+          issueCommandTrustDecision =
+            setupTrustDecision === 'skip'
+              ? 'skip'
+              : await ensureHooksConfirmed(useAppStore.getState(), repoId, 'issueCommand')
+        }
 
-      // Why: backend startup is safe only when the launch command is
-      // self-contained. Agents that need post-ready paste/follow-up stay on
-      // the renderer path so prompt delivery is not skipped.
-      const composerTelemetry: AgentStartedTelemetry = {
-        agent_kind: tuiAgentToAgentKind(tuiAgent),
-        launch_source: telemetrySource === 'onboarding' ? 'onboarding' : 'new_workspace_composer',
-        request_kind: 'new'
-      }
-      const backendStartup =
-        startupPlan && !startupPlan.draftPrompt && !startupPlan.followupPrompt
-          ? {
-              command: startupPlan.launchCommand,
-              ...(startupPlan.env ? { env: startupPlan.env } : {}),
-              telemetry: composerTelemetry
-            }
-          : undefined
-      const result = await createWorktree(
-        repoId,
-        workspaceName,
-        selectedRepoIsGit ? baseBranch : undefined,
-        effectiveSetupDecision,
-        selectedRepoIsGit && sparseEnabled
-          ? {
-              directories: normalizedSparseDirectories,
-              ...(effectivePresetId ? { presetId: effectivePresetId } : {})
-            }
-          : undefined,
-        telemetrySource,
-        createDisplayName,
-        submitLinkedIssueNumber ?? undefined,
-        submitLinkedPR ?? undefined,
-        pushTarget,
-        tuiAgent,
-        linkedLinearIssue,
-        effectiveBranchNameOverride,
-        resolvedInitialWorkspaceStatus,
-        linkedGitLabMR ?? undefined,
-        linkedGitLabIssue ?? undefined,
-        backendStartup,
-        pendingFirstAgentMessageRename
-      )
-      const worktree = result.worktree
+        const linkedLinearIssue =
+          submitLinkedWorkItem && getLinkedWorkItemProvider(submitLinkedWorkItem) === 'linear'
+            ? submitLinkedWorkItem.linearIdentifier
+            : undefined
+        const effectiveBranchNameOverride = resolveComposerBranchNameOverrideForCreate({
+          branchNameOverride,
+          branchAutoName: branchAutoNameRef.current,
+          workspaceName,
+          preserveWorkspaceNameEdits: branchNameOverridePreservesNameEdits
+        })
+        const createDisplayName = smartGitHubResolution?.displayName ?? submitLinkedWorkItem?.title
+        // Why: the first-work hook only renames blank, auto-generated git workspaces
+        // that actually launch an agent. Persist that known-pending state for the card.
+        const pendingFirstAgentMessageRename =
+          selectedRepoIsGit &&
+          settings?.autoRenameBranchFromWork === true &&
+          !name.trim() &&
+          Boolean(tuiAgent) &&
+          !effectiveBranchNameOverride &&
+          !createDisplayName
+        const startupPlan = buildAgentStartupPlan({
+          agent: tuiAgent,
+          prompt: submitStartupPrompt,
+          cmdOverrides: settings?.agentCmdOverrides ?? {},
+          platform: CLIENT_PLATFORM
+        })
 
-      const trimmedNote = note.trim()
-      // Why: linked source metadata is already included in createWorktree.
-      // Re-saving it here can trigger slow post-create PR push-target lookups.
-      await applyWorktreeMeta(worktree.id, trimmedNote ? { comment: trimmedNote } : {})
-
-      const issueCommand =
-        submitShouldRunIssueAutomation && issueCommandTrustDecision === 'run'
-          ? {
-              command: renderIssueCommandTemplate(issueCommandTemplate, {
-                issueNumber: submitLinkedIssueNumber,
-                artifactUrl: submitLinkedWorkItem?.url ?? null
-              })
-            }
-          : undefined
-      const backendSpawnedStartup = result.startupTerminal?.spawned === true
-      const activation = activateAndRevealWorktree(worktree.id, {
-        sidebarRevealBehavior: 'auto',
-        setup: result.setup,
-        defaultTabs: result.defaultTabs,
-        issueCommand,
-        ...(startupPlan && !backendSpawnedStartup
-          ? {
-              startup: {
+        // Why: backend startup is safe only when the launch command is
+        // self-contained. Agents that need post-ready paste/follow-up stay on
+        // the renderer path so prompt delivery is not skipped.
+        const composerTelemetry: AgentStartedTelemetry = {
+          agent_kind: tuiAgentToAgentKind(tuiAgent),
+          launch_source: telemetrySource === 'onboarding' ? 'onboarding' : 'new_workspace_composer',
+          request_kind: 'new'
+        }
+        const backendStartup =
+          startupPlan && !startupPlan.draftPrompt && !startupPlan.followupPrompt
+            ? {
                 command: startupPlan.launchCommand,
                 ...(startupPlan.env ? { env: startupPlan.env } : {}),
-                ...(tuiAgent === 'command-code' && submitStartupPrompt.trim().length > 0
-                  ? {
-                      initialAgentStatus: {
-                        agent: tuiAgent,
-                        prompt: submitStartupPrompt.trim()
-                      }
-                    }
-                  : {}),
                 telemetry: composerTelemetry
               }
-            }
-          : {})
-      })
-      if (startupPlan && !backendSpawnedStartup) {
-        void ensureAgentStartupInTerminal({
-          worktreeId: worktree.id,
-          primaryTabId: activation === false ? null : activation.primaryTabId,
-          startup: startupPlan
+            : undefined
+        const result = await createWorktree(
+          repoId,
+          workspaceName,
+          resolveComposerSubmitBaseBranch({ selectedRepoIsGit, baseBranch, baseBranchOverride }),
+          effectiveSetupDecision,
+          selectedRepoIsGit && sparseEnabled
+            ? {
+                directories: normalizedSparseDirectories,
+                ...(effectivePresetId ? { presetId: effectivePresetId } : {})
+              }
+            : undefined,
+          telemetrySource,
+          createDisplayName,
+          submitLinkedIssueNumber ?? undefined,
+          submitLinkedPR ?? undefined,
+          pushTarget,
+          tuiAgent,
+          linkedLinearIssue,
+          effectiveBranchNameOverride,
+          resolvedInitialWorkspaceStatus,
+          linkedGitLabMR ?? undefined,
+          linkedGitLabIssue ?? undefined,
+          backendStartup,
+          pendingFirstAgentMessageRename
+        )
+        const worktree = result.worktree
+
+        const trimmedNote = note.trim()
+        // Why: linked source metadata is already included in createWorktree.
+        // Re-saving it here can trigger slow post-create PR push-target lookups.
+        await applyWorktreeMeta(worktree.id, trimmedNote ? { comment: trimmedNote } : {})
+
+        const issueCommand =
+          submitShouldRunIssueAutomation && issueCommandTrustDecision === 'run'
+            ? {
+                command: renderIssueCommandTemplate(issueCommandTemplate, {
+                  issueNumber: submitLinkedIssueNumber,
+                  artifactUrl: submitLinkedWorkItem?.url ?? null
+                })
+              }
+            : undefined
+        const backendSpawnedStartup = result.startupTerminal?.spawned === true
+        const activation = activateAndRevealWorktree(worktree.id, {
+          sidebarRevealBehavior: 'auto',
+          setup: result.setup,
+          defaultTabs: result.defaultTabs,
+          issueCommand,
+          ...(startupPlan && !backendSpawnedStartup
+            ? {
+                startup: {
+                  command: startupPlan.launchCommand,
+                  ...(startupPlan.env ? { env: startupPlan.env } : {}),
+                  ...(tuiAgent === 'command-code' && submitStartupPrompt.trim().length > 0
+                    ? {
+                        initialAgentStatus: {
+                          agent: tuiAgent,
+                          prompt: submitStartupPrompt.trim()
+                        }
+                      }
+                    : {}),
+                  telemetry: composerTelemetry
+                }
+              }
+            : {})
         })
+        if (startupPlan && !backendSpawnedStartup) {
+          void ensureAgentStartupInTerminal({
+            worktreeId: worktree.id,
+            primaryTabId: activation === false ? null : activation.primaryTabId,
+            startup: startupPlan
+          })
+        }
+        setSidebarOpen(true)
+        if (persistDraft) {
+          clearNewWorkspaceDraft()
+        }
+        onCreated?.()
+        queueNewWorkspaceTerminalFocus(worktree.id, activation)
+      } catch (error) {
+        const formattedError = formatWorkspaceCreateError(error)
+        setCreateError(formattedError)
+        toast.error(getWorkspaceCreateErrorToastMessage(formattedError))
+      } finally {
+        creatingRef.current = false
+        setCreating(false)
       }
-      setSidebarOpen(true)
-      if (persistDraft) {
-        clearNewWorkspaceDraft()
-      }
-      onCreated?.()
-      queueNewWorkspaceTerminalFocus(worktree.id, activation)
-    } catch (error) {
-      const formattedError = formatWorkspaceCreateError(error)
-      setCreateError(formattedError)
-      toast.error(getWorkspaceCreateErrorToastMessage(formattedError))
-    } finally {
-      setCreating(false)
-    }
-  }, [
-    agentPrompt,
-    attachmentPaths,
-    baseBranch,
-    branchNameOverride,
-    branchNameOverridePreservesNameEdits,
-    clearNewWorkspaceDraft,
-    createWorktree,
-    applyWorktreeMeta,
-    enableIssueAutomation,
-    issueCommandTemplate,
-    effectiveLinkedPR,
-    hasLoadedIssueCommand,
-    linkedGitLabIssue,
-    linkedGitLabMR,
-    linkedWorkItem,
-    name,
-    normalizedSparseDirectories,
-    note,
-    onCreated,
-    parsedLinkedIssueNumber,
-    persistDraft,
-    pushTarget,
-    repoId,
-    requiresExplicitSetupChoice,
-    resolvePendingSmartGitHubSubmit,
-    resolvedSetupDecision,
-    resolvedInitialWorkspaceStatus,
-    selectedRepo,
-    selectedRepoIsGit,
-    selectedRepoRequiresConnection,
-    settings?.agentCmdOverrides,
-    settings?.autoRenameBranchFromWork,
-    setSidebarOpen,
-    setupDecision,
-    sparseEnabled,
-    sparseError,
-    effectivePresetId,
-    telemetrySource,
-    fallbackDefaultAgent,
-    disabledTuiAgents,
-    tuiAgent,
-    shouldWaitForIssueAutomationCheck,
-    shouldWaitForSetupCheck,
-    workspaceSeedName
-  ])
+    },
+    [
+      agentPrompt,
+      attachmentPaths,
+      baseBranch,
+      branchNameOverride,
+      branchNameOverridePreservesNameEdits,
+      clearNewWorkspaceDraft,
+      createWorktree,
+      applyWorktreeMeta,
+      enableIssueAutomation,
+      issueCommandTemplate,
+      effectiveLinkedPR,
+      hasLoadedIssueCommand,
+      linkedGitLabIssue,
+      linkedGitLabMR,
+      linkedWorkItem,
+      name,
+      normalizedSparseDirectories,
+      note,
+      onCreated,
+      parsedLinkedIssueNumber,
+      persistDraft,
+      pushTarget,
+      repoId,
+      requiresExplicitSetupChoice,
+      resolvePendingSmartGitHubSubmit,
+      resolvedSetupDecision,
+      resolvedInitialWorkspaceStatus,
+      selectedRepo,
+      selectedRepoIsGit,
+      selectedRepoRequiresConnection,
+      settings?.agentCmdOverrides,
+      settings?.autoRenameBranchFromWork,
+      setSidebarOpen,
+      setupDecision,
+      sparseEnabled,
+      sparseError,
+      effectivePresetId,
+      telemetrySource,
+      fallbackDefaultAgent,
+      disabledTuiAgents,
+      tuiAgent,
+      shouldWaitForIssueAutomationCheck,
+      shouldWaitForSetupCheck,
+      workspaceSeedName
+    ]
+  )
 
   const submitQuick = useCallback(
-    async (requestedAgent: TuiAgent | null): Promise<void> => {
+    async (requestedAgent: TuiAgent | null, baseBranchOverride?: string): Promise<void> => {
+      lastComposerSubmitRef.current = { kind: 'quick', agent: requestedAgent }
       const agent =
         requestedAgent && isTuiAgentEnabled(requestedAgent, disabledTuiAgents)
           ? requestedAgent
@@ -2117,6 +2149,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       }
 
       setCreateError(null)
+      creatingRef.current = true
       setCreating(true)
       try {
         const smartGitHubResolution = await resolvePendingSmartGitHubSubmit()
@@ -2241,7 +2274,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         const result = await createWorktree(
           repoId,
           workspaceName,
-          selectedRepoIsGit ? baseBranch : undefined,
+          resolveComposerSubmitBaseBranch({ selectedRepoIsGit, baseBranch, baseBranchOverride }),
           effectiveSetupDecision,
           selectedRepoIsGit && sparseEnabled
             ? {
@@ -2328,6 +2361,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
         setCreateError(formattedError)
         toast.error(getWorkspaceCreateErrorToastMessage(formattedError))
       } finally {
+        creatingRef.current = false
         setCreating(false)
       }
     },
@@ -2376,6 +2410,32 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     ]
   )
 
+  // Why: the explicitly-labeled error-box button IS the confirmation —
+  // nothing runs automatically. The pending flag guards double-clicks; any
+  // call that slips through coalesces in the main process per-repo map.
+  const handleCreateInitialCommit = useCallback(async (): Promise<void> => {
+    const targetRepoId = repoIdRef.current
+    if (!targetRepoId || creatingInitialCommitRef.current) {
+      return
+    }
+    await runComposerInitialCommitAction({
+      sourceRepoId: targetRepoId,
+      createInitialCommit: () => createRuntimeRepoInitialCommit(settingsRef.current, targetRepoId),
+      getCurrentRepoId: () => repoIdRef.current,
+      isSubmitInFlight: () => creatingRef.current,
+      isCancelled: () => !mountedRef.current,
+      setPending: setCreatingInitialCommit,
+      setCreateError,
+      setBaseBranch,
+      resubmit: (baseRef) => {
+        const lastSubmit = lastComposerSubmitRef.current
+        return lastSubmit.kind === 'quick'
+          ? submitQuick(lastSubmit.agent, baseRef)
+          : submit(baseRef)
+      }
+    })
+  }, [submit, submitQuick])
+
   const createGateInput = {
     repoId,
     workspaceSeedName,
@@ -2388,9 +2448,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     sparseError
   }
   const createDisabled =
-    createGateMode === 'quick'
+    (createGateMode === 'quick'
       ? getQuickComposerCreateDisabled(createGateInput)
-      : getFullComposerCreateDisabled(createGateInput)
+      : getFullComposerCreateDisabled(createGateInput)) || creatingInitialCommit
   const cardProps: ComposerCardProps = {
     eligibleRepos,
     repoId,
@@ -2455,6 +2515,8 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     shouldWaitForSetupCheck,
     resolvedSetupDecision,
     createError,
+    createInitialCommitPending: creatingInitialCommit,
+    onCreateInitialCommit: () => void handleCreateInitialCommit(),
     canUseSparseCheckout: selectedRepoIsGit && !selectedRepo?.connectionId,
     sparsePresets,
     sparseSelectedPresetId,

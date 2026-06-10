@@ -375,6 +375,12 @@ import {
   getRecentDriftSubjects
 } from '../git/repo'
 import {
+  createInitialCommitSerialized,
+  GIT_IDENTITY_ERROR_PATTERN,
+  GIT_IDENTITY_GUIDANCE_MESSAGE
+} from '../git/initial-commit'
+import type { CreateInitialCommitResult } from '../../shared/types'
+import {
   listWorktrees,
   addWorktree,
   addSparseWorktree,
@@ -6113,14 +6119,8 @@ export class OrcaRuntimeService {
           await rm(join(targetPath, '.git'), { recursive: true, force: true }).catch(() => {})
         }
         const message = error instanceof Error ? error.message : String(error)
-        if (
-          step === 'commit' &&
-          /Please tell me who you are|user\.name|user\.email/i.test(message)
-        ) {
-          return {
-            error:
-              'Git author identity is not configured. Run `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`, then try again.'
-          }
+        if (step === 'commit' && GIT_IDENTITY_ERROR_PATTERN.test(message)) {
+          return { error: GIT_IDENTITY_GUIDANCE_MESSAGE }
         }
         const stepLabel =
           step === 'init'
@@ -6446,6 +6446,26 @@ export class OrcaRuntimeService {
       getRemoteCount(repo.path)
     ])
     return { defaultBaseRef, remoteCount }
+  }
+
+  async createInitialCommit(repoSelector: string): Promise<CreateInitialCommitResult> {
+    const repo = await this.resolveRepoSelector(repoSelector)
+    if (isFolderRepo(repo)) {
+      return { ok: false, error: 'Project is not a git repository.' }
+    }
+    // Why: mirror getRepoBaseRefDefault's connectionId branch — a relay-SSH
+    // repo held by the runtime host must run git on the remote box, or the
+    // double-hop case would commit against a remote-only path on the host.
+    if (repo.connectionId) {
+      const provider = getSshGitProvider(repo.connectionId)
+      if (!provider) {
+        return { ok: false, error: 'SSH connection for this project is unavailable.' }
+      }
+      return provider.createInitialCommit(repo.path)
+    }
+    return createInitialCommitSerialized(repo.id, (argv) =>
+      gitExecFileAsync(argv, { cwd: repo.path })
+    )
   }
 
   private async getRemoteRepoBaseRefDefault(

@@ -38,6 +38,7 @@ const {
   mockGitProvider: {
     isGitRepo: vi.fn().mockReturnValue(true),
     isGitRepoAsync: vi.fn().mockResolvedValue({ isRepo: true, rootPath: null }),
+    createInitialCommit: vi.fn().mockResolvedValue({ ok: true, baseRef: 'main' }),
     exec: vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
   },
   mockFilesystemProvider: {
@@ -115,6 +116,7 @@ vi.mock('./ssh', () => ({
 }))
 
 import { registerRepoHandlers } from './repos'
+import { gitExecFileAsync } from '../git/runner'
 
 describe('projectGroups IPC validation', () => {
   const handlers = new Map<string, (_event: unknown, args: unknown) => unknown>()
@@ -144,6 +146,8 @@ describe('projectGroups IPC validation', () => {
     mockFilesystemProvider.stat.mockRejectedValue(new Error('not found'))
     mockGitProvider.isGitRepoAsync.mockReset()
     mockGitProvider.isGitRepoAsync.mockResolvedValue({ isRepo: true, rootPath: null })
+    mockGitProvider.createInitialCommit.mockReset()
+    mockGitProvider.createInitialCommit.mockResolvedValue({ ok: true, baseRef: 'main' })
     vi.mocked(isGitRepo).mockReset()
     vi.mocked(isGitRepo).mockReturnValue(true)
     mockMultiplexer.notify.mockReset()
@@ -1722,6 +1726,53 @@ describe('repos:getBaseRefDefault envelope', () => {
     // the local path's getDefaultBaseRefAsync behavior.
     expect(result.defaultBaseRef).toBe('origin/master')
     expect(result.remoteCount).toBe(1)
+  })
+
+  it('routes createInitialCommit through local git for plain repos', async () => {
+    vi.mocked(gitExecFileAsync).mockReset()
+    vi.mocked(gitExecFileAsync).mockImplementation(async (argv: string[]) => {
+      if (argv[0] === 'symbolic-ref' && argv.includes('refs/remotes/origin/HEAD')) {
+        return { stdout: 'refs/remotes/origin/main\n', stderr: '' }
+      }
+      if (argv[0] === 'rev-parse' && argv.includes('refs/remotes/origin/main^{commit}')) {
+        return { stdout: 'abc123\n', stderr: '' }
+      }
+      throw new Error(`unexpected local git call: ${argv.join(' ')}`)
+    })
+    mockStore.getRepo.mockReturnValue({
+      id: 'r1',
+      path: '/local/repo',
+      kind: 'git'
+    })
+
+    const result = await handlers.get('repos:createInitialCommit')!(null, { repoId: 'r1' })
+
+    expect(result).toEqual({ ok: true, baseRef: 'origin/main' })
+    expect(gitExecFileAsync).toHaveBeenCalledWith(
+      ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'],
+      {
+        cwd: '/local/repo'
+      }
+    )
+    expect(mockGitProvider.exec).not.toHaveBeenCalled()
+  })
+
+  it('routes createInitialCommit through the SSH git provider for connection repos', async () => {
+    vi.mocked(gitExecFileAsync).mockReset()
+    mockGitProvider.createInitialCommit = vi.fn().mockResolvedValue({ ok: true, baseRef: 'main' })
+    mockStore.getRepo.mockReturnValue({
+      id: 'r1',
+      path: '/remote/repo',
+      connectionId: 'conn-1',
+      kind: 'git'
+    })
+
+    const result = await handlers.get('repos:createInitialCommit')!(null, { repoId: 'r1' })
+
+    expect(result).toEqual({ ok: true, baseRef: 'main' })
+    expect(mockGitProvider.createInitialCommit).toHaveBeenCalledWith('/remote/repo')
+    expect(mockGitProvider.exec).not.toHaveBeenCalled()
+    expect(gitExecFileAsync).not.toHaveBeenCalled()
   })
 })
 

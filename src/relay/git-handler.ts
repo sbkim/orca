@@ -43,6 +43,7 @@ import {
   removeSafeUntrackedDiscardTarget,
   removeSafeUntrackedDiscardTargets
 } from '../shared/git-discard-path-safety'
+import { createInitialCommitSerialized } from '../shared/git-initial-commit'
 
 const execFileAsync = promisify(execFile)
 const MAX_GIT_BUFFER = 10 * 1024 * 1024
@@ -63,6 +64,7 @@ export class GitHandler {
     this.dispatcher.onRequest('git.checkIgnored', (p) => this.checkIgnored(p))
     this.dispatcher.onRequest('git.history', (p) => this.history(p))
     this.dispatcher.onRequest('git.commit', (p) => this.commit(p))
+    this.dispatcher.onRequest('git.createInitialCommit', (p) => this.createInitialCommit(p))
     this.dispatcher.onRequest('git.diff', (p) => this.getDiff(p))
     this.dispatcher.onRequest('git.stage', (p) => this.stage(p))
     this.dispatcher.onRequest('git.unstage', (p) => this.unstage(p))
@@ -167,6 +169,11 @@ export class GitHandler {
     const worktreePath = params.worktreePath as string
     const message = params.message as string
     return commitChangesRelay(this.git.bind(this), worktreePath, message)
+  }
+
+  private async createInitialCommit(params: Record<string, unknown>) {
+    const worktreePath = params.worktreePath as string
+    return createInitialCommitSerialized(worktreePath, (argv) => this.git(argv, worktreePath))
   }
 
   private async unstage(params: Record<string, unknown>) {

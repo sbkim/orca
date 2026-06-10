@@ -13,6 +13,7 @@ import type {
   ProjectGroupImportResult,
   NestedRepoScanResult,
   BaseRefDefaultResult,
+  CreateInitialCommitResult,
   SparsePreset
 } from '../../shared/types'
 import { isFolderRepo } from '../../shared/repo-kind'
@@ -53,6 +54,11 @@ import {
   isForEachRefExcludeUnsupportedError,
   searchBaseRefDetails
 } from '../git/repo'
+import {
+  createInitialCommitSerialized,
+  GIT_IDENTITY_ERROR_PATTERN,
+  GIT_IDENTITY_GUIDANCE_MESSAGE
+} from '../git/initial-commit'
 import { getSshGitProvider } from '../providers/ssh-git-dispatch'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import { getSshGitUsername } from '../git/git-username'
@@ -447,6 +453,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
   ipcMain.removeHandler('repos:cloneAbort')
   ipcMain.removeHandler('repos:getGitUsername')
   ipcMain.removeHandler('repos:getBaseRefDefault')
+  ipcMain.removeHandler('repos:createInitialCommit')
   ipcMain.removeHandler('repos:searchBaseRefs')
   ipcMain.removeHandler('repos:searchBaseRefDetails')
   ipcMain.removeHandler('repos:addRemote')
@@ -971,14 +978,8 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
             await rm(join(targetPath, '.git'), { recursive: true, force: true }).catch(() => {})
           }
           const message = err instanceof Error ? err.message : String(err)
-          if (
-            step === 'commit' &&
-            /Please tell me who you are|user\.name|user\.email/i.test(message)
-          ) {
-            return {
-              error:
-                'Git author identity is not configured. Run `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"`, then try again.'
-            }
+          if (step === 'commit' && GIT_IDENTITY_ERROR_PATTERN.test(message)) {
+            return { error: GIT_IDENTITY_GUIDANCE_MESSAGE }
           }
           const stepLabel =
             step === 'init'
@@ -1526,6 +1527,30 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
         getRemoteCount(repo.path)
       ])
       return { defaultBaseRef, remoteCount }
+    }
+  )
+
+  ipcMain.handle(
+    'repos:createInitialCommit',
+    async (_event, args: { repoId: string }): Promise<CreateInitialCommitResult> => {
+      const repo = store.getRepo(args.repoId)
+      if (!repo || isFolderRepo(repo)) {
+        return { ok: false, error: 'Project is not a git repository.' }
+      }
+      // Why: relay-SSH repos are stored locally but their git data lives on
+      // the remote box — route git through the SSH provider exactly like
+      // repos:getBaseRefDefault, or the commit would run against a
+      // remote-only path on the local machine.
+      if (repo.connectionId) {
+        const provider = getSshGitProvider(repo.connectionId)
+        if (!provider) {
+          return { ok: false, error: 'SSH connection for this project is unavailable.' }
+        }
+        return provider.createInitialCommit(repo.path)
+      }
+      return createInitialCommitSerialized(repo.id, (argv) =>
+        gitExecFileAsync(argv, { cwd: repo.path })
+      )
     }
   )
 

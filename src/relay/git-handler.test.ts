@@ -40,6 +40,7 @@ describe('GitHandler', () => {
     expect(methods).toContain('git.checkIgnored')
     expect(methods).toContain('git.history')
     expect(methods).toContain('git.commit')
+    expect(methods).toContain('git.createInitialCommit')
     expect(methods).toContain('git.diff')
     expect(methods).toContain('git.stage')
     expect(methods).toContain('git.unstage')

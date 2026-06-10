@@ -36,6 +36,23 @@ export function resolveComposerBranchSelection(args: {
   }
 }
 
+/**
+ * Base branch passed to createWorktree on submit. The initial-commit retry
+ * supplies an explicit override - React state set during the recovery action
+ * is not visible to the in-flight submit closure, and re-probing the default
+ * would miss custom default-branch names.
+ */
+export function resolveComposerSubmitBaseBranch(args: {
+  selectedRepoIsGit: boolean
+  baseBranch: string | undefined
+  baseBranchOverride: string | undefined
+}): string | undefined {
+  if (!args.selectedRepoIsGit) {
+    return undefined
+  }
+  return args.baseBranchOverride ?? args.baseBranch
+}
+
 export function resolveComposerBranchNameOverrideForCreate(args: {
   branchNameOverride: string | undefined
   branchAutoName: string

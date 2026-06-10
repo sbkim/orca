@@ -13,7 +13,8 @@ import type {
   GitPushTarget,
   GitUpstreamStatus,
   GitWorktreeInfo,
-  RemoveWorktreeResult
+  RemoveWorktreeResult,
+  CreateInitialCommitResult
 } from '../../shared/types'
 import type { GitHistoryOptions, GitHistoryResult } from '../../shared/git-history'
 import { buildHostedRemoteFileUrl } from '../git/hosted-remote-url'
@@ -94,6 +95,12 @@ export class SshGitProvider implements IGitProvider {
       worktreePath,
       message
     })) as { success: boolean; error?: string }
+  }
+
+  async createInitialCommit(worktreePath: string): Promise<CreateInitialCommitResult> {
+    return (await this.mux.request('git.createInitialCommit', {
+      worktreePath
+    })) as CreateInitialCommitResult
   }
 
   async getStagedCommitContext(worktreePath: string): Promise<CommitMessageDraftContext | null> {
