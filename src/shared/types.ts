@@ -2191,6 +2191,11 @@ export type GlobalSettings = {
    *  does not surface commands from other worktrees. Defaults to true.
    *  Disable to revert to shared global shell history. */
   terminalScopeHistoryByWorktree: boolean
+  /** Kill switch for hidden terminal view parking — unmounting long-hidden
+   *  terminal panes while a pane-less watcher keeps PTY side effects alive.
+   *  Defaults to true; `false` disables parking entirely.
+   *  See docs/reference/terminal-hidden-view-parking.md. */
+  terminalHiddenViewParking?: boolean
   /** Which agent to pre-select in the new-workspace composer.
    *  - null: auto (first detected agent)
    *  - 'blank': blank terminal (no agent launched)

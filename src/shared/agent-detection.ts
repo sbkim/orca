@@ -216,14 +216,20 @@ export function clearWorkingIndicators(title: string): string {
 export function createAgentStatusTracker(
   onBecameIdle: (title: string) => void,
   onBecameWorking?: () => void,
-  onAgentExited?: () => void
+  onAgentExited?: () => void,
+  initialTitle?: string
 ): {
   handleTitle: (title: string) => void
   /** Clear accumulated status so a stale working→idle transition cannot fire
    *  after the owning transport is torn down. */
   reset: () => void
 } {
-  let lastStatus: AgentStatus | null = null
+  // Why: trackers that start mid-session (parked-tab byte watchers) must seed
+  // the last known status, or an agent that was working when its pane
+  // unmounted never produces a working→idle transition. Seeding sets state
+  // only — no callbacks fire.
+  let lastStatus: AgentStatus | null =
+    initialTitle !== undefined ? detectAgentStatusFromTitle(initialTitle) : null
 
   return {
     handleTitle(title: string): void {
