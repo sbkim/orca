@@ -4948,7 +4948,13 @@
           "2b6356e744": "Guardado",
           "81057d5f71": "Ahorro...",
           "da37d6f10e": "Copiar",
-          "3149964b66": "copiado"
+          "3149964b66": "copiado",
+          "56f9a4a1d0": "Using `orca.yaml`",
+          "623e0c9f31": "`orca.yaml` could not be parsed",
+          "5a67e4793d": "No `orca.yaml` detected",
+          "07ba35bc68": "Check the indentation under `scripts:`. Hook keys should use two spaces, and command lines should use four.",
+          "787ca433ef": "Define only the supported keys: `scripts`, `setup`, `archive`, and `issueCommand`.",
+          "ecc73d9125": "Compare your file against the working template below and copy that shape if needed."
         },
         "RepositoryIconPicker": {
           "2b7d27b93c": "Utilice el color del repositorio {{value0}}",
