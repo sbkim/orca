@@ -11,6 +11,10 @@ import type { NativeFileDropPayload } from '../shared/native-file-drop'
 import type { AppIdentity } from '../shared/app-identity'
 import type { TerminalPaneSplitSource } from '../shared/feature-education-telemetry'
 import type {
+  FolderWorkspacePathStatus,
+  FolderWorkspacePathStatusRequest
+} from '../shared/folder-workspace-path-status'
+import type {
   BaseRefDefaultResult,
   BaseRefSearchResult,
   BrowserCookieImportResult,
@@ -122,6 +126,7 @@ import type {
   PRRefreshOutcome,
   Repo,
   ProjectGroup,
+  FolderWorkspace,
   ProjectGroupImportResult,
   ProjectGroupImportMode,
   ShellHydrationFailureReason,
@@ -318,6 +323,7 @@ import type {
   OpenCodeUsageSnapshot,
   OpenCodeUsageSummary
 } from '../shared/opencode-usage-types'
+import type { AiVaultListArgs, AiVaultListResult } from '../shared/ai-vault-types'
 import type { TelemetryConsentState } from '../shared/telemetry-consent-types'
 import type { AgentKind, LaunchSource, RequestKind } from '../shared/telemetry-events'
 import type { AppStarSource } from '../shared/gh-star-source'
@@ -666,6 +672,10 @@ export type OpenCodeUsageApi = {
   }) => Promise<OpenCodeUsageSessionRow[]>
 }
 
+export type AiVaultApi = {
+  listSessions: (args?: AiVaultListArgs) => Promise<AiVaultListResult>
+}
+
 export type AppApi = {
   /** Returns the app identity currently exposed to native chrome and the titlebar. */
   getIdentity: () => Promise<AppIdentity>
@@ -782,6 +792,7 @@ export type PreloadApi = {
     create: (args: {
       name: string
       parentPath?: string | null
+      connectionId?: string | null
       parentGroupId?: string | null
       createdFrom?: ProjectGroup['createdFrom']
     }) => Promise<ProjectGroup>
@@ -813,6 +824,42 @@ export type PreloadApi = {
       scanId?: string
       mode: ProjectGroupImportMode
     }) => Promise<ProjectGroupImportResult>
+  }
+  folderWorkspaces: {
+    list: () => Promise<FolderWorkspace[]>
+    getPathStatus: (args: FolderWorkspacePathStatusRequest) => Promise<FolderWorkspacePathStatus>
+    create: (args: {
+      projectGroupId: string
+      name?: string
+      folderPath?: string | null
+      connectionId?: string | null
+      linkedTask?: FolderWorkspace['linkedTask']
+      createdWithAgent?: FolderWorkspace['createdWithAgent']
+      pendingFirstAgentMessageRename?: boolean
+    }) => Promise<FolderWorkspace>
+    update: (args: {
+      folderWorkspaceId: string
+      updates: Partial<
+        Pick<
+          FolderWorkspace,
+          | 'name'
+          | 'folderPath'
+          | 'linkedTask'
+          | 'comment'
+          | 'isArchived'
+          | 'isUnread'
+          | 'isPinned'
+          | 'sortOrder'
+          | 'manualOrder'
+          | 'workspaceStatus'
+          | 'createdWithAgent'
+          | 'pendingFirstAgentMessageRename'
+          | 'firstAgentMessageRenameError'
+          | 'lastActivityAt'
+        >
+      >
+    }) => Promise<FolderWorkspace | null>
+    delete: (args: { folderWorkspaceId: string }) => Promise<boolean>
   }
   sparsePresets: {
     list: (args: { repoId: string }) => Promise<SparsePreset[]>
@@ -1834,6 +1881,7 @@ export type PreloadApi = {
   claudeUsage: ClaudeUsageApi
   codexUsage: CodexUsageApi
   openCodeUsage: OpenCodeUsageApi
+  aiVault: AiVaultApi
   fs: {
     readDir: (args: { dirPath: string; connectionId?: string }) => Promise<DirEntry[]>
     readFile: (args: {
