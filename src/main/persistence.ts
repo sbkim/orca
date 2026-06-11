@@ -432,6 +432,20 @@ function normalizeRightSidebarTab(tab: unknown): PersistedState['ui']['rightSide
   return getDefaultUIState().rightSidebarTab
 }
 
+function normalizeRightSidebarExplorerView(
+  view: unknown,
+  tab?: unknown
+): PersistedState['ui']['rightSidebarExplorerView'] {
+  // Why: older builds persisted Search as a standalone activity tab.
+  if (tab === 'search') {
+    return 'search'
+  }
+  if (view === 'files' || view === 'search') {
+    return view
+  }
+  return getDefaultUIState().rightSidebarExplorerView
+}
+
 function normalizeNotificationSettings(value: unknown): NotificationSettings {
   const defaults = getDefaultNotificationSettings()
   const candidate =
@@ -3274,6 +3288,10 @@ export class Store {
       sortBy: normalizeSortBy(this.state.ui?.sortBy),
       projectOrderBy: normalizeProjectOrderBy(this.state.ui?.projectOrderBy),
       rightSidebarTab: normalizeRightSidebarTab(this.state.ui?.rightSidebarTab),
+      rightSidebarExplorerView: normalizeRightSidebarExplorerView(
+        this.state.ui?.rightSidebarExplorerView,
+        this.state.ui?.rightSidebarTab
+      ),
       worktreeCardProperties: normalizeWorktreeCardProperties(
         this.state.ui?.worktreeCardProperties
       ),
@@ -3303,6 +3321,22 @@ export class Store {
       ...getDefaultUIState(),
       ...stripMainOwnedTelemetryMarkerFromUI(this.state.ui)
     }
+    const nextRightSidebarTab =
+      sanitizedUpdates.rightSidebarTab !== undefined
+        ? normalizeRightSidebarTab(sanitizedUpdates.rightSidebarTab)
+        : normalizeRightSidebarTab(this.state.ui?.rightSidebarTab)
+    const nextRightSidebarExplorerView =
+      sanitizedUpdates.rightSidebarExplorerView !== undefined
+        ? normalizeRightSidebarExplorerView(
+            sanitizedUpdates.rightSidebarExplorerView,
+            nextRightSidebarTab
+          )
+        : sanitizedUpdates.rightSidebarTab === 'search'
+          ? 'search'
+          : normalizeRightSidebarExplorerView(
+              this.state.ui?.rightSidebarExplorerView,
+              nextRightSidebarTab
+            )
     this.state.ui = {
       ...currentUI,
       ...sanitizedUpdates,
@@ -3315,10 +3349,8 @@ export class Store {
       projectOrderBy: updates.projectOrderBy
         ? normalizeProjectOrderBy(updates.projectOrderBy)
         : normalizeProjectOrderBy(this.state.ui?.projectOrderBy),
-      rightSidebarTab:
-        sanitizedUpdates.rightSidebarTab !== undefined
-          ? normalizeRightSidebarTab(sanitizedUpdates.rightSidebarTab)
-          : normalizeRightSidebarTab(this.state.ui?.rightSidebarTab),
+      rightSidebarTab: nextRightSidebarTab,
+      rightSidebarExplorerView: nextRightSidebarExplorerView,
       worktreeCardProperties:
         sanitizedUpdates.worktreeCardProperties !== undefined
           ? normalizeWorktreeCardProperties(sanitizedUpdates.worktreeCardProperties)
