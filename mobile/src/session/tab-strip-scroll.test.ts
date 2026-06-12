@@ -28,7 +28,6 @@ describe('resolveTabStripScrollOffset', () => {
   })
 
   it('scrolls right to reveal a tab off the right edge', () => {
-    // tabEnd = 640 + 128 = 768; needs offset 768 + 12 - 360 = 420.
     expect(
       resolveTabStripScrollOffset({
         tabX: 640,

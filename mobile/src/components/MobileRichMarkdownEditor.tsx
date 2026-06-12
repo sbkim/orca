@@ -19,6 +19,7 @@ import {
 } from 'lucide-react-native'
 import WebView, { type WebViewMessageEvent } from 'react-native-webview'
 import { colors, radii, spacing } from '../theme/mobile-theme'
+import { normalizeMobileRichMarkdownKeyboardInset } from './mobile-rich-markdown-editor-keyboard-inset-script'
 import {
   buildMobileRichMarkdownEditorHtml,
   escapeInjectedJavaScriptString
@@ -198,7 +199,10 @@ function MobileRichMarkdownEditorInner({
         return
       }
       if (editorMessage.type === 'keyboardInset' && typeof editorMessage.bottom === 'number') {
-        onKeyboardInsetChange?.(editorMessage.bottom)
+        const bottom = normalizeMobileRichMarkdownKeyboardInset(editorMessage.bottom)
+        if (bottom !== null) {
+          onKeyboardInsetChange?.(bottom)
+        }
       }
     },
     [applyContent, applyEditable, content, editable, onChange, onKeyboardInsetChange]

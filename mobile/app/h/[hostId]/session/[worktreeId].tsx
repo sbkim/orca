@@ -3933,6 +3933,9 @@ export default function SessionScreen() {
                     onLayout={(e) => {
                       const { x, width } = e.nativeEvent.layout
                       tabLayoutsRef.current.set(t.id, { x, width })
+                      if (t.id === activeSessionTabIdRef.current) {
+                        scrollActiveTabIntoView(t.id, false)
+                      }
                     }}
                     onPress={() => switchSessionTab(t)}
                     onLongPress={() => {
