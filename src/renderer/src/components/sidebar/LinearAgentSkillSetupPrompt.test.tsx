@@ -682,6 +682,45 @@ describe('LinearAgentSkillSetupPrompt', () => {
     expect(document.body.textContent).not.toContain('Linear ticket access is ready')
   })
 
+  it('accepts same-context prerequisite CLI status callbacks after a newer Re-check', async () => {
+    let reportHostCliStatus: ((status: CliInstallStatus) => void) | null = null
+    let resolveEnsureCli: () => void = () => {}
+    mocks.ensureCli.mockImplementationOnce(
+      async (options?: { onStatusChange?: (status: CliInstallStatus) => void }) => {
+        reportHostCliStatus = options?.onStatusChange ?? null
+        await new Promise<void>((resolve) => {
+          resolveEnsureCli = resolve
+        })
+        return null
+      }
+    )
+    await renderPrompt({ linked: true, remote: false, surface: 'modal' })
+
+    await act(async () => {
+      findBodyButton('Mock install')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+
+    mocks.getCliStatus.mockResolvedValue(
+      cliStatus({ state: 'not_installed', pathConfigured: false })
+    )
+    await act(async () => {
+      findBodyButton('Re-check')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await settleRender()
+
+    await act(async () => {
+      reportHostCliStatus?.(cliStatus({}))
+      resolveEnsureCli()
+    })
+    await settleRender()
+
+    expect(document.body.textContent).toContain(
+      'Enable agents to read and edit the attached Linear ticket.'
+    )
+    expect(document.body.textContent).toContain('Linear agent skill is missing.')
+    expect(document.body.textContent).not.toContain('Orca CLI is missing.')
+  })
+
   it('ignores older same-context CLI refreshes that finish after a newer Re-check', async () => {
     const rendered = await renderPrompt({ linked: true, remote: false })
     const recheckButton = Array.from(rendered.querySelectorAll('button')).find(

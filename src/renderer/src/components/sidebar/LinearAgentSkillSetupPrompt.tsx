@@ -134,6 +134,12 @@ export function LinearAgentSkillSetupPrompt({
     []
   )
 
+  const writeCliStatusForIdentity = useCallback((requestIdentity: string, write: () => void) => {
+    if (currentSetupCheckIdentityRef.current === requestIdentity) {
+      write()
+    }
+  }, [])
+
   const refreshCliStatus = useCallback(async (): Promise<void> => {
     const requestIdentity = setupCheckIdentity
     const requestGeneration = ++cliRefreshGenerationRef.current
@@ -280,9 +286,8 @@ export function LinearAgentSkillSetupPrompt({
       }
       onBeforeOpenTerminal={async () => {
         const requestIdentity = setupCheckIdentity
-        const requestGeneration = ++cliRefreshGenerationRef.current
         const writeIfCurrent = (write: () => void): void => {
-          writeCliStatusIfCurrent(requestIdentity, requestGeneration, write)
+          writeCliStatusForIdentity(requestIdentity, write)
         }
         const nextStatus =
           agentRuntime.runtime === 'wsl'
