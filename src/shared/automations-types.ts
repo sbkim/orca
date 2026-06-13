@@ -81,12 +81,17 @@ export type Automation = {
   prompt: string
   precheck: AutomationPrecheck | null
   agentId: TuiAgent
-  /** Why: projectId is still the legacy repo id during migration; runContext
-   *  carries the logical project + host setup identity for multi-host projects. */
+  /** Why: runContext carries the logical project + host setup identity for
+   *  multi-host projects; projectId remains only as the legacy repo-id storage
+   *  field for pre-host-context automations.
+   *  @deprecated Use runContext.projectId/runContext.repoId or
+   *  getAutomationRunRepoId(). */
   runContext?: WorkspaceRunContext | null
   /** Why: task/provider data can come from a different host/account than the
    *  workspace run target, so automations persist it separately. */
   sourceContext?: TaskSourceContext | null
+  /** @deprecated Legacy repo-id compatibility field. New code should persist
+   *  runContext and use getAutomationRunRepoId() for fallback reads. */
   projectId: string
   executionTargetType: AutomationExecutionTargetType
   executionTargetId: string
@@ -139,6 +144,8 @@ export type AutomationCreateInput = {
   agentId: TuiAgent
   runContext?: WorkspaceRunContext | null
   sourceContext?: TaskSourceContext | null
+  /** @deprecated Legacy repo-id compatibility field required for older stored
+   *  automations and clients. Pair it with runContext for new writes. */
   projectId: string
   workspaceMode: AutomationWorkspaceMode
   workspaceId?: string | null
