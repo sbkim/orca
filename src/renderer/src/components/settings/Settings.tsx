@@ -2,7 +2,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { toast } from 'sonner'
 import type { GlobalSettings, OrcaHooks } from '../../../../shared/types'
-import type { SkillDiscoveryTarget } from '../../../../shared/skills'
 import type { SpeechModelState } from '../../../../shared/speech-types'
 import type {
   SourceControlAiSettings,
@@ -17,7 +16,7 @@ import { applyDocumentTheme } from '@/lib/document-theme'
 import { useConfirmationDialog } from '@/components/confirmation-dialog'
 import { SCROLLBACK_PRESETS_MB, getFallbackTerminalFonts } from './SettingsConstants'
 import { DEFAULT_APP_FONT_FAMILY, getDefaultVoiceSettings } from '../../../../shared/constants'
-import { GeneralPane, getDesktopPlatformFromUserAgent } from './GeneralPane'
+import { GeneralPane } from './GeneralPane'
 import { BrowserPane } from './BrowserPane'
 import { AppearancePane } from './AppearancePane'
 import { InputPane } from './InputPane'
@@ -86,60 +85,33 @@ import {
   getRuntimeTargetIdentity
 } from './settings-load-performance'
 import { translate } from '@/i18n/i18n'
-import {
-  getSelectedAgentRuntime,
-  getSkillDiscoveryTargetForRuntime,
-  type LocalAgentRuntime
-} from './CliSkillRuntimeSetup'
 
 const SETTINGS_NAV_GROUPS = [
   {
     id: 'capabilities',
-    get title() {
-      return translate('auto.components.settings.Settings.23c6874fdf', 'AI Capabilities')
-    }
+    title: translate('auto.components.settings.Settings.23c6874fdf', 'AI Capabilities')
   },
-  {
-    id: 'setup',
-    get title() {
-      return translate('auto.components.settings.Settings.9abb9be3bc', 'Set Up')
-    }
-  },
+  { id: 'setup', title: translate('auto.components.settings.Settings.9abb9be3bc', 'Set Up') },
   {
     id: 'workflows',
-    get title() {
-      return translate('auto.components.settings.Settings.e1578cd4bc', 'Workflows')
-    }
+    title: translate('auto.components.settings.Settings.e1578cd4bc', 'Workflows')
   },
   {
     id: 'interface',
-    get title() {
-      return translate('auto.components.settings.Settings.8bd117d669', 'Interface')
-    }
+    title: translate('auto.components.settings.Settings.8bd117d669', 'Interface')
   },
   {
     id: 'remote',
-    get title() {
-      return translate('auto.components.settings.Settings.23931df7e8', 'Remote Access')
-    }
+    title: translate('auto.components.settings.Settings.23931df7e8', 'Remote Access')
   },
   {
     id: 'security',
-    get title() {
-      return translate('auto.components.settings.Settings.084d8fac5b', 'Privacy & Security')
-    }
+    title: translate('auto.components.settings.Settings.084d8fac5b', 'Privacy & Security')
   },
-  {
-    id: 'advanced',
-    get title() {
-      return translate('auto.components.settings.Settings.1c87f8d024', 'Advanced')
-    }
-  },
+  { id: 'advanced', title: translate('auto.components.settings.Settings.1c87f8d024', 'Advanced') },
   {
     id: 'experimental',
-    get title() {
-      return translate('auto.components.settings.Settings.8b017f2506', 'Experimental')
-    }
+    title: translate('auto.components.settings.Settings.8b017f2506', 'Experimental')
   }
 ] as const
 
@@ -165,19 +137,6 @@ function getSkillNavInstallStatus(skill: {
     return 'checking'
   }
   return skill.installed ? 'installed' : 'install'
-}
-
-function getSettingsAgentSkillRuntime(args: {
-  settings: GlobalSettings | null
-  isWindows: boolean
-}): LocalAgentRuntime {
-  if (!args.settings) {
-    return {
-      runtime: 'host',
-      label: translate('auto.components.settings.Settings.thisDevice', 'This device')
-    }
-  }
-  return getSelectedAgentRuntime(args.settings, args.isWindows, args.isWindows, false)
 }
 
 function hasReadyVoiceModel(
@@ -275,21 +234,10 @@ function Settings(): React.JSX.Element {
   const isMac = isMacUserAgent()
   const isWebClient = isWebClientLocation()
   const showDesktopOnlySettings = !isWebClient
-  const currentPlatform = getDesktopPlatformFromUserAgent(navigator.userAgent)
-  const agentSkillRuntime = useMemo(
-    () => getSettingsAgentSkillRuntime({ settings, isWindows }),
-    [settings, isWindows]
-  )
-  const agentSkillDiscoveryTarget = useMemo<SkillDiscoveryTarget | undefined>(
-    () => getSkillDiscoveryTargetForRuntime(agentSkillRuntime),
-    [agentSkillRuntime]
-  )
   const orchestrationSkill = useInstalledAgentSkill(ORCHESTRATION_SKILL_NAME, {
-    discoveryTarget: agentSkillDiscoveryTarget,
     sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
   })
   const computerUseSkill = useInstalledAgentSkill(COMPUTER_USE_SKILL_NAME, {
-    discoveryTarget: agentSkillDiscoveryTarget,
     enabled: showDesktopOnlySettings,
     sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
   })
@@ -976,8 +924,8 @@ function Settings(): React.JSX.Element {
       className="settings-view-shell flex min-h-0 flex-1 overflow-hidden bg-background"
     >
       <SettingsSidebar
-        activeSectionId={activeSectionId}
         settings={settings}
+        activeSectionId={activeSectionId}
         generalGroups={generalNavGroups}
         repoSections={repoNavSections}
         hasRepos={repos.length > 0}
@@ -1072,15 +1020,7 @@ function Settings(): React.JSX.Element {
                   )}
                   searchEntries={getSectionSearchEntries('orchestration')}
                 >
-                  {isSectionMounted('orchestration') ? (
-                    <OrchestrationPane
-                      currentPlatform={currentPlatform}
-                      settings={settings}
-                      wslSupportedPlatform={wslSupportedPlatform}
-                      wslAvailable={windowsTerminalCapabilities.wslAvailable}
-                      wslCapabilitiesLoading={windowsTerminalCapabilities.isLoading}
-                    />
-                  ) : null}
+                  {isSectionMounted('orchestration') ? <OrchestrationPane /> : null}
                 </SettingsSection>
 
                 {showDesktopOnlySettings ? (
@@ -1097,15 +1037,7 @@ function Settings(): React.JSX.Element {
                       )}
                       searchEntries={getSectionSearchEntries('computer-use')}
                     >
-                      {isSectionMounted('computer-use') ? (
-                        <ComputerUsePane
-                          currentPlatform={currentPlatform}
-                          settings={settings}
-                          wslSupportedPlatform={wslSupportedPlatform}
-                          wslAvailable={windowsTerminalCapabilities.wslAvailable}
-                          wslCapabilitiesLoading={windowsTerminalCapabilities.isLoading}
-                        />
-                      ) : null}
+                      {isSectionMounted('computer-use') ? <ComputerUsePane /> : null}
                     </SettingsSection>
 
                     <SettingsSection

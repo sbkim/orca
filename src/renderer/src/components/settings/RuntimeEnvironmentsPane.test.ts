@@ -5,7 +5,9 @@ import {
 } from '../../../../shared/protocol-version'
 import {
   evaluateHostDetails,
+  getHostDetailsDescription,
   getHostDetailsSummary,
+  getRuntimeCapabilitiesSummary,
   type RuntimeHostDetails
 } from './RuntimeEnvironmentsPane'
 
@@ -77,5 +79,52 @@ describe('RuntimeEnvironmentsPane host details', () => {
         minCompatibleMobileVersion: 0
       })
     ).toMatchObject({ kind: 'blocked', reason: 'server-too-old' })
+  })
+
+  it('explains blocked runtime compatibility with required protocol versions', () => {
+    expect(
+      getHostDetailsDescription(
+        details({
+          compatibility: {
+            kind: 'blocked',
+            reason: 'server-too-old',
+            clientProtocolVersion: RUNTIME_PROTOCOL_VERSION,
+            serverProtocolVersion: MIN_COMPATIBLE_RUNTIME_SERVER_VERSION - 1,
+            requiredServerProtocolVersion: MIN_COMPATIBLE_RUNTIME_SERVER_VERSION
+          }
+        })
+      )
+    ).toContain('client requires server protocol')
+  })
+
+  it('summarizes runtime capabilities by name with overflow count', () => {
+    expect(
+      getRuntimeCapabilitiesSummary({
+        runtimeId: 'runtime',
+        rendererGraphEpoch: 1,
+        graphStatus: 'ready',
+        authoritativeWindowId: 1,
+        liveTabCount: 0,
+        liveLeafCount: 0,
+        capabilities: ['runtime.environments.v1', 'terminal.multiplex.v1']
+      })
+    ).toBe('runtime.environments.v1, terminal.multiplex.v1')
+
+    expect(
+      getRuntimeCapabilitiesSummary({
+        runtimeId: 'runtime',
+        rendererGraphEpoch: 1,
+        graphStatus: 'ready',
+        authoritativeWindowId: 1,
+        liveTabCount: 0,
+        liveLeafCount: 0,
+        capabilities: [
+          'runtime.environments.v1',
+          'browser.screencast.v1',
+          'terminal.multiplex.v1',
+          'project-host-setup.v1'
+        ]
+      })
+    ).toBe('runtime.environments.v1, browser.screencast.v1, terminal.multiplex.v1 +1')
   })
 })

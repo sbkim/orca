@@ -9,6 +9,7 @@ import type {
   Project,
   Repo,
   ProjectGroup,
+  ProjectHostSetup,
   FolderWorkspace,
   ProjectGroupImportResult,
   NestedRepoScanResult,
@@ -22,6 +23,11 @@ import type {
   ProjectHostSetupUpdateArgs,
   ProjectHostSetupUpdateResult
 } from '../../../../shared/types'
+import {
+  projectHostSetupProjectionFromRepos,
+  type ProjectHostSetupProjection
+} from '../../../../shared/project-host-setup-projection'
+import { PROJECT_HOST_SETUP_RUNTIME_CAPABILITY } from '../../../../shared/protocol-version'
 import {
   FOLDER_WORKSPACE_PATH_STATUS_TTL_MS,
   type FolderWorkspacePathStatus,
@@ -42,10 +48,16 @@ import {
   getActiveRuntimeTarget
 } from '../../runtime/runtime-rpc-client'
 import { toRuntimeWorktreeSelector } from '../../runtime/runtime-worktree-selector'
-import { buildDismissedOnboardingFolderAgentStartup } from '../../lib/onboarding-folder-agent-startup'
-import { markOnboardingProjectAdded } from '../../lib/onboarding-project-checklist'
-import { filterSetupScriptPromptDismissalsToValidRepos } from '../../lib/setup-script-prompt'
-import { translate } from '../../i18n/i18n'
+import { buildDismissedOnboardingFolderAgentStartup } from '@/lib/onboarding-folder-agent-startup'
+import { markOnboardingProjectAdded } from '@/lib/onboarding-project-checklist'
+import { filterSetupScriptPromptDismissalsToValidRepos } from '@/lib/setup-script-prompt'
+import { translate } from '@/i18n/i18n'
+import {
+  getRepoExecutionHostId,
+  LOCAL_EXECUTION_HOST_ID,
+  parseExecutionHostId,
+  toRuntimeExecutionHostId
+} from '../../../../shared/execution-host'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
 import { formatFolderWorkspaceCreateError } from '../../lib/folder-workspace-path-status'
 
@@ -161,6 +173,189 @@ function getKnownRepoWorktreeIds(state: AppState, projectId: string): string[] {
     ids.add(worktree.id)
   }
   return [...ids]
+}
+
+function getRuntimeTargetHostId(
+  target: ReturnType<typeof getActiveRuntimeTarget>
+): ReturnType<typeof toRuntimeExecutionHostId> | typeof LOCAL_EXECUTION_HOST_ID {
+  return target.kind === 'environment'
+    ? toRuntimeExecutionHostId(target.environmentId)
+    : LOCAL_EXECUTION_HOST_ID
+}
+
+function getProjectSetupRuntimeTarget(
+  hostId: ProjectHostSetupExistingFolderArgs['hostId']
+): ReturnType<typeof getActiveRuntimeTarget> {
+  const parsedHost = parseExecutionHostId(hostId)
+  return parsedHost?.kind === 'runtime'
+    ? { kind: 'environment', environmentId: parsedHost.environmentId }
+    : { kind: 'local' }
+}
+
+function repoWithFetchedOwner(repo: Repo, target: ReturnType<typeof getActiveRuntimeTarget>): Repo {
+  if (repo.connectionId) {
+    return { ...repo, executionHostId: getRepoExecutionHostId(repo) }
+  }
+  return { ...repo, executionHostId: getRuntimeTargetHostId(target) }
+}
+
+function setupWithFetchedOwner(
+  setup: ProjectHostSetup,
+  target: ReturnType<typeof getActiveRuntimeTarget>
+): ProjectHostSetup {
+  const hostId = getRuntimeTargetHostId(target)
+  if (target.kind !== 'environment' || setup.hostId !== LOCAL_EXECUTION_HOST_ID) {
+    return setup
+  }
+  return {
+    ...setup,
+    hostId,
+    executionHostId: hostId
+  }
+}
+
+async function fetchProjectHostSetupCompatibility(
+  target: ReturnType<typeof getActiveRuntimeTarget>,
+  repos: readonly Repo[]
+): Promise<ProjectHostSetupProjection> {
+  try {
+    if (target.kind === 'local') {
+      const projectsApi = (
+        window.api as typeof window.api & {
+          projects?: {
+            list?: () => Promise<Project[]>
+            listHostSetups?: () => Promise<ProjectHostSetup[]>
+          }
+        }
+      ).projects
+      if (!projectsApi?.list || !projectsApi.listHostSetups) {
+        throw new Error('projects_api_unavailable')
+      }
+      return {
+        projects: await projectsApi.list(),
+        setups: await projectsApi.listHostSetups()
+      }
+    }
+    await assertProjectHostSetupRuntimeCapability(target)
+    const [projectResponse, setupResponse] = await Promise.all([
+      callRuntimeRpc<{ projects: Project[] }>(target, 'project.list', undefined, {
+        timeoutMs: 15_000
+      }),
+      callRuntimeRpc<{ setups: ProjectHostSetup[] }>(target, 'projectHostSetup.list', undefined, {
+        timeoutMs: 15_000
+      })
+    ])
+    return {
+      projects: projectResponse.projects,
+      setups: setupResponse.setups.map((setup) => setupWithFetchedOwner(setup, target))
+    }
+  } catch {
+    // Why: newer clients must still hydrate against older runtimes/preloads
+    // that only know `repo.list`; derive the transitional model locally.
+    return projectHostSetupProjectionFromRepos(repos)
+  }
+}
+
+async function assertProjectHostSetupRuntimeCapability(
+  target: ReturnType<typeof getActiveRuntimeTarget>
+): Promise<void> {
+  if (target.kind !== 'environment') {
+    return
+  }
+  await assertRuntimeEnvironmentCapability(
+    target.environmentId,
+    PROJECT_HOST_SETUP_RUNTIME_CAPABILITY,
+    'The selected Orca server does not support project host setup yet. Update Orca on the server and try again.',
+    15_000
+  )
+}
+
+function projectCompatibilityFromRepos(
+  repos: readonly Repo[]
+): Pick<RepoSlice, 'projects' | 'projectHostSetups'> {
+  const projection = projectHostSetupProjectionFromRepos(repos)
+  return {
+    projects: projection.projects,
+    projectHostSetups: projection.setups
+  }
+}
+
+function mergeProjectHostSetupCompatibility(
+  derived: Pick<RepoSlice, 'projects' | 'projectHostSetups'>,
+  fetched: ProjectHostSetupProjection
+): Pick<RepoSlice, 'projects' | 'projectHostSetups'> {
+  return {
+    projects: mergeById(derived.projects, fetched.projects),
+    projectHostSetups: mergeById(derived.projectHostSetups, fetched.setups)
+  }
+}
+
+function mergeById<T extends { id: string }>(base: readonly T[], overlay: readonly T[]): T[] {
+  const merged = [...base]
+  const indexById = new Map(merged.map((entry, index) => [entry.id, index]))
+  for (const entry of overlay) {
+    const index = indexById.get(entry.id)
+    if (index === undefined) {
+      indexById.set(entry.id, merged.length)
+      merged.push(entry)
+    } else {
+      merged[index] = entry
+    }
+  }
+  return merged
+}
+
+function mergeFetchedReposForHost(
+  previous: readonly Repo[],
+  fetched: Repo[],
+  hostId: string
+): Repo[] {
+  const fetchedIds = new Set(fetched.map((repo) => repo.id))
+  const preserved = previous.filter((repo) => {
+    const existingHostId = getRepoExecutionHostId(repo)
+    return existingHostId !== hostId || fetchedIds.has(repo.id)
+  })
+  const preservedById = new Map(preserved.map((repo) => [repo.id, repo]))
+  const merged = [...preserved]
+  for (const repo of fetched) {
+    const existingIndex = merged.findIndex((entry) => entry.id === repo.id)
+    if (existingIndex === -1) {
+      merged.push(repo)
+      continue
+    }
+    merged[existingIndex] = repo
+  }
+  return reconcileFetchedRepos(
+    previous,
+    merged.filter((repo) => preservedById.has(repo.id) || fetchedIds.has(repo.id))
+  )
+}
+
+function settingsForRepoOwner(state: Pick<AppState, 'repos' | 'settings'>, repoId: string) {
+  const repo = state.repos.find((entry) => entry.id === repoId)
+  if (!repo) {
+    return state.settings
+  }
+  if (!repo.executionHostId && !repo.connectionId) {
+    return state.settings
+  }
+  const parsed = parseExecutionHostId(getRepoExecutionHostId(repo))
+  if (parsed?.kind === 'runtime') {
+    return state.settings
+      ? { ...state.settings, activeRuntimeEnvironmentId: parsed.environmentId }
+      : ({ activeRuntimeEnvironmentId: parsed.environmentId } as AppState['settings'])
+  }
+  if (parsed?.kind === 'local' && state.settings?.activeRuntimeEnvironmentId) {
+    return { ...state.settings, activeRuntimeEnvironmentId: null }
+  }
+  if (parsed?.kind !== 'ssh') {
+    return state.settings
+  }
+  // Why: SSH repos are owned through local IPC/SSH plumbing. Existing repo
+  // mutations must not follow whichever runtime server is currently focused.
+  return state.settings
+    ? { ...state.settings, activeRuntimeEnvironmentId: null }
+    : ({ activeRuntimeEnvironmentId: null } as AppState['settings'])
 }
 
 function getFolderWorkspacePathStatusScopeKey(request: FolderWorkspacePathStatusRequest): string {
@@ -416,6 +611,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
               )
         return {
           repos: reconciledRepos,
+          ...projectCompatibility,
           folderWorkspacePathStatuses: {},
           activeRepoId: s.activeRepoId && validRepoIds.has(s.activeRepoId) ? s.activeRepoId : null,
           filterRepoIds: s.filterRepoIds.filter((projectId) => validRepoIds.has(projectId)),
@@ -882,8 +1078,9 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       if (!moved) {
         return false
       }
+      const ownedMoved = repoWithFetchedOwner(moved, target)
       set((s) => ({
-        repos: s.repos.map((repo) => (repo.id === projectId ? moved : repo)),
+        repos: s.repos.map((repo) => (repo.id === projectId ? ownedMoved : repo)),
         folderWorkspacePathStatuses: {}
       }))
       return true
@@ -936,7 +1133,12 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         if (s.repos.some((r) => r.id === repo.id)) {
           return s
         }
-        return { repos: [...s.repos, repo], folderWorkspacePathStatuses: {} }
+        const nextRepos = [...s.repos, repo]
+        return {
+          repos: nextRepos,
+          ...projectCompatibilityFromRepos(nextRepos),
+          folderWorkspacePathStatuses: {}
+        }
       })
       if (alreadyAdded) {
         toast.info(translate('auto.store.slices.repos.a8e4b3af5b', 'Project already added'), {
@@ -1418,9 +1620,13 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
               ...updatesWithoutSourceControlAi,
               ...(sourceControlAi !== undefined ? { sourceControlAi } : {})
             }
-          }),
-          folderWorkspacePathStatuses: {}
-        }))
+          })
+          return {
+            repos: nextRepos,
+            ...projectCompatibilityFromRepos(nextRepos),
+            folderWorkspacePathStatuses: {}
+          }
+        })
         return true
       } catch (err) {
         console.error('Failed to update repo:', err)
@@ -1461,7 +1667,11 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
       // Caller passed a non-permutation — refuse to apply locally.
       return
     }
-    set({ repos: next, folderWorkspacePathStatuses: {} })
+    set({
+      repos: next,
+      ...projectCompatibilityFromRepos(next),
+      folderWorkspacePathStatuses: {}
+    })
     try {
       // Why: each host persists only its own repos and rejects non-permutations,
       // so split the cross-host order into per-host permutations and dispatch one

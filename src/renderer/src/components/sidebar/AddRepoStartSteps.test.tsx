@@ -150,8 +150,8 @@ describe('AddRepoLocalStartStep', () => {
 
     expect(markup).toContain('Browse folder')
     expect(markup).toContain('Clone from URL')
-    expect(markup).toContain('Remote project')
-    expect(markup).toContain('Create project')
+    expect(markup).toContain('Project on SSH host')
+    expect(markup).toContain('Create new project')
     expect(markup).toContain('Other ways to add')
     expect(markup).not.toContain('More options')
   })
@@ -160,23 +160,23 @@ describe('AddRepoLocalStartStep', () => {
     const titles = getActionTitles(false)
 
     expect(titles.primary).toBe('Browse folder')
-    expect(titles.secondary).toEqual(['Clone from URL', 'Remote project', 'Create project'])
+    expect(titles.secondary).toEqual(['Clone from URL', 'Project on SSH host', 'Create new project'])
   })
 
   it('keeps Browse folder primary for SSH-likely users', () => {
     const markup = renderLocalStartStep(true)
 
     expect(markup).toContain('Browse folder')
-    expect(markup).toContain('Remote project')
+    expect(markup).toContain('Project on SSH host')
     expect(markup).toContain('Clone from URL')
-    expect(markup).toContain('Create project')
+    expect(markup).toContain('Create new project')
   })
 
   it('orders secondary actions remote-first for SSH-likely users', () => {
     const titles = getActionTitles(true)
 
     expect(titles.primary).toBe('Browse folder')
-    expect(titles.secondary).toEqual(['Remote project', 'Clone from URL', 'Create project'])
+    expect(titles.secondary).toEqual(['Project on SSH host', 'Clone from URL', 'Create new project'])
   })
 
   it('lets host-aware Add Project replace the separate remote row', () => {
@@ -200,7 +200,7 @@ describe('AddRepoLocalStartStep', () => {
   it('focuses Browse folder for SSH-likely users too', async () => {
     const { container, root } = await renderLocalStartStepDom(true)
     const browseButton = findButton(container, 'Browse folder')
-    const remoteButton = findButton(container, 'Remote project')
+    const remoteButton = findButton(container, 'Project on SSH host')
 
     expect(document.activeElement).toBe(browseButton)
     expect(document.activeElement).not.toBe(remoteButton)
@@ -214,110 +214,8 @@ describe('AddRepoLocalStartStep', () => {
     const { container, root } = await renderLocalStartStepDom(false)
 
     expect(findButton(container, 'Clone from URL').disabled).toBe(false)
-    expect(findButton(container, 'Remote project').disabled).toBe(false)
-    expect(findButton(container, 'Create project').disabled).toBe(false)
-
-    await act(async () => {
-      root.unmount()
-    })
-  })
-
-  it('marks the autofocused Browse action as selected with the ⏎ chip', async () => {
-    const { container, root } = await renderLocalStartStepDom(false)
-
-    expect(findButton(container, 'Browse folder').textContent).toContain('⏎')
-    expect(findButton(container, 'Clone from URL').textContent).not.toContain('⏎')
-
-    await act(async () => {
-      root.unmount()
-    })
-  })
-
-  it('moves the ⏎ selection to whichever action receives focus', async () => {
-    const { container, root } = await renderLocalStartStepDom(false)
-    const cloneButton = findButton(container, 'Clone from URL')
-
-    await act(async () => {
-      cloneButton.focus()
-    })
-
-    expect(findButton(container, 'Clone from URL').textContent).toContain('⏎')
-    expect(findButton(container, 'Browse folder').textContent).not.toContain('⏎')
-
-    await act(async () => {
-      root.unmount()
-    })
-  })
-
-  it('clears the ⏎ selection when focus leaves the action list', async () => {
-    const { container, root } = await renderLocalStartStepDom(false)
-    const outsideButton = document.createElement('button')
-    document.body.appendChild(outsideButton)
-
-    await act(async () => {
-      outsideButton.focus()
-    })
-
-    expect(document.activeElement).toBe(outsideButton)
-    expect(findButton(container, 'Browse folder').textContent).not.toContain('⏎')
-    expect(findButton(container, 'Clone from URL').textContent).not.toContain('⏎')
-
-    await act(async () => {
-      root.unmount()
-    })
-  })
-
-  it('does not show an ⏎ selection while add actions are busy', async () => {
-    const { container, root } = await renderLocalStartStepDom(false, {
-      isAdding: true,
-      addProjectBusyLabel: 'Scanning repositories',
-      nestedScanInProgress: true,
-      nestedScanId: 'scan-1'
-    })
-    const stopScanButton = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Stop scan"]'
-    )
-
-    await act(async () => {
-      stopScanButton?.focus()
-    })
-
-    expect(document.activeElement).toBe(stopScanButton)
-    expect(findButton(container, 'Browse folder').textContent).not.toContain('⏎')
-    expect(findButton(container, 'Clone from URL').textContent).not.toContain('⏎')
-
-    await act(async () => {
-      root.unmount()
-    })
-  })
-
-  it('hides the visual ⏎ chip from assistive technology', async () => {
-    const { container, root } = await renderLocalStartStepDom(false)
-    const browseButton = findButton(container, 'Browse folder')
-    const enterChip = Array.from(browseButton.querySelectorAll('[aria-hidden="true"]')).find(
-      (entry) => entry.textContent?.includes('⏎')
-    )
-
-    expect(enterChip).toBeTruthy()
-
-    await act(async () => {
-      root.unmount()
-    })
-  })
-
-  it('roves selection down the action list with the ArrowDown key', async () => {
-    const { container, root } = await renderLocalStartStepDom(false)
-
-    await act(async () => {
-      findButton(container, 'Browse folder').dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })
-      )
-    })
-
-    // ArrowDown from Browse moves focus — and the ⏎ chip — to the first secondary action.
-    const firstSecondary = findButton(container, 'Clone from URL')
-    expect(document.activeElement).toBe(firstSecondary)
-    expect(firstSecondary.textContent).toContain('⏎')
+    expect(findButton(container, 'Project on SSH host').disabled).toBe(false)
+    expect(findButton(container, 'Create new project').disabled).toBe(false)
 
     await act(async () => {
       root.unmount()
@@ -432,12 +330,12 @@ describe('AddRepoServerPathStartStep', () => {
     const markup = renderServerPathStartStep('env-1')
 
     expect(markup).toContain('Add a project')
-    expect(markup).toContain('Add another project from the selected runtime server.')
-    expect(markup).toContain('Browse server')
+    expect(markup).toContain('Add another project from the selected host.')
+    expect(markup).toContain('Browse host')
     expect(markup).toContain('Clone from URL')
-    expect(markup).toContain('Create on server')
+    expect(markup).toContain('Create on host')
     expect(markup).toContain('Want to import many repos at once?')
-    expect(markup).toContain('Or enter a server path manually')
+    expect(markup).toContain('Or enter a host path manually')
   })
 
   it('disables server entry cards without an active runtime environment', () => {

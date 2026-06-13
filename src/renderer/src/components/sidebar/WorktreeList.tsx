@@ -14,6 +14,7 @@ import {
   FolderInput,
   FolderPlus,
   FolderX,
+  Loader2,
   Plus,
   Server,
   ServerOff,
@@ -128,7 +129,6 @@ import {
   SCROLL_TO_CURRENT_WORKSPACE_REVEAL_REQUEST_EVENT,
   type ScrollToCurrentWorkspaceRevealRequestDetail
 } from '@/lib/scroll-to-current-workspace-status'
-import { getSidebarOrderedRepoHeaderIdsByBucket } from './project-header-drop'
 import { isRepoHeaderActionTarget, useRepoHeaderDrag } from './project-header-drag'
 import {
   buildManualOrderUpdatesForGroupDrop,
@@ -181,7 +181,15 @@ import {
   pruneWorktreeSelection,
   updateWorktreeSelection
 } from './worktree-multi-selection'
-import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import { callRuntimeRpc } from '@/runtime/runtime-rpc-client'
+import { splitWorktreeSortOrderByHost } from '@/lib/worktree-sort-order-host-split'
+import {
+  ALL_EXECUTION_HOSTS_SCOPE,
+  getRepoExecutionHostId,
+  getSettingsFocusedExecutionHostId,
+  type ExecutionHostId,
+  parseExecutionHostId
+} from '../../../../shared/execution-host'
 import { getRepoHeaderCreateState } from './repo-header-create-state'
 import type { PendingSidebarWorktreeReveal } from '@/store/slices/ui'
 import { getRepositoryIconSectionId } from '@/components/settings/repository-settings-targets'
@@ -209,6 +217,11 @@ import {
   getWorktreeCardContentIndent,
   getWorktreeCardSurfaceInset
 } from './worktree-list-indentation'
+import { addHostSectionRows, type HostHeaderRow, type HostSectionRow } from './host-section-rows'
+import { orderHostSectionOptions } from './host-section-order'
+import { useHostHeaderDrag } from './host-header-drag'
+import { buildSidebarHostOptions } from './sidebar-host-options'
+import { HostSectionHeaderMenu } from './HostSectionHeaderMenu'
 import { toast } from 'sonner'
 import { translate } from '@/i18n/i18n'
 import { folderWorkspaceKey } from '../../../../shared/workspace-scope'
@@ -463,8 +476,8 @@ type VirtualizedWorktreeViewportProps = {
   scrollAnchorRef: React.MutableRefObject<VirtualizedScrollAnchor>
 }
 
-type WorktreeItemRow = Extract<Row, { type: 'item' }>
-type FolderWorkspaceItemRow = Extract<Row, { type: 'folder-workspace' }>
+type WorktreeItemRow = Extract<HostSectionRow, { type: 'item' }>
+type FolderWorkspaceItemRow = Extract<HostSectionRow, { type: 'folder-workspace' }>
 
 function formatSectionActivityLabel(count: number, label: string): string {
   return `${count} ${label}${count === 1 ? '' : 's'}`
@@ -489,6 +502,141 @@ function SectionMetricsBadge({ count }: { count: number }): React.JSX.Element {
         </TooltipContent>
       </Tooltip>
     </span>
+  )
+}
+
+function HostHeaderHealthIcon({
+  health
+}: {
+  health: HostHeaderRow['health']
+}): React.JSX.Element | null {
+  // Why: healthy is the default state — indicating it adds noise. Only states
+  // needing active attention get a separate mark.
+  if (health === 'connecting') {
+    return <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />
+  }
+  if (health === 'blocked' || health === 'error') {
+    return <AlertTriangle className="size-3 shrink-0 text-destructive" />
+  }
+  return null
+}
+
+function getHostHeaderDetail(row: HostHeaderRow): { text: string; isWarning: boolean } | null {
+  // Why: a blocked compatibility verdict gets a compact warning treatment so one
+  // skewed host stands out without altering how its siblings render.
+  if (row.health === 'blocked') {
+    return {
+      text: translate('auto.components.sidebar.WorktreeList.7a8b9c0d1e', 'Update required'),
+      isWarning: true
+    }
+  }
+  // Why: auth-expired SSH hosts must say so in words — the plan requires a clear
+  // auth-needed status, and the health icon alone doesn't explain the fix.
+  if (row.connectionStatus === 'auth-failed') {
+    return {
+      text: translate(
+        'auto.components.sidebar.WorktreeList.hostAuthNeeded',
+        'Authentication needed'
+      ),
+      isWarning: true
+    }
+  }
+  if (row.health === 'disconnected') {
+    return {
+      text: translate('auto.components.sidebar.WorktreeList.hostDisconnected', 'Disconnected'),
+      isWarning: false
+    }
+  }
+  // Why: the transport suffix only earns space on remote hosts; "This
+  // computer" on Local Mac is noise.
+  if (row.kind !== 'local') {
+    return { text: row.detail, isWarning: false }
+  }
+  return null
+}
+
+function HostSectionHeader({
+  row,
+  onToggle,
+  onDragPointerDown,
+  dragging
+}: {
+  row: HostHeaderRow
+  onToggle: () => void
+  onDragPointerDown?: (event: React.PointerEvent<HTMLElement>) => void
+  dragging?: boolean
+}): React.JSX.Element {
+  const isBlocked = row.health === 'blocked'
+  const isDisconnected = row.health === 'disconnected'
+  const detail = getHostHeaderDetail(row)
+  return (
+    <div className="px-2 pt-1">
+      {/* Why: hosts are machines, not just groups — the outlined card with a
+          server glyph keeps that distinction visible. Status stays quiet: a
+          mark renders only when the host needs attention. */}
+      <div
+        role="button"
+        tabIndex={0}
+        data-host-header-drag-id={row.hostId}
+        aria-expanded={!row.collapsed}
+        className={cn(
+          'group/host-header flex h-8 w-full cursor-pointer items-center gap-2 rounded-md border px-2 text-left transition-all',
+          onDragPointerDown && 'cursor-grab active:cursor-grabbing',
+          isBlocked
+            ? 'border-destructive/40 bg-destructive/10'
+            : isDisconnected
+              ? 'border-worktree-sidebar-border/70 bg-worktree-sidebar-accent/35 text-muted-foreground'
+              : 'border-worktree-sidebar-border bg-worktree-sidebar-accent/70',
+          dragging && 'pointer-events-none opacity-0'
+        )}
+        onPointerDown={onDragPointerDown}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggle()
+          }
+        }}
+      >
+        {isDisconnected ? (
+          <ServerOff className="size-3.5 shrink-0 text-muted-foreground/80" />
+        ) : (
+          <Server className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <HostHeaderHealthIcon health={row.health} />
+        {/* Why: the badge hugs the label like repo headers do — anchoring it
+            right would leave it floating beside the hover-only controls. */}
+        <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
+          <span
+            className={cn(
+              'min-w-0 truncate text-[12px] font-semibold leading-none',
+              isDisconnected ? 'text-muted-foreground' : 'text-foreground'
+            )}
+          >
+            {row.label}
+          </span>
+          {detail ? (
+            <span
+              className={cn(
+                'shrink-0 truncate text-[10px] leading-none',
+                detail.isWarning ? 'text-destructive' : 'text-muted-foreground/70'
+              )}
+            >
+              {detail.text}
+            </span>
+          ) : null}
+          <SectionMetricsBadge count={row.count} />
+        </div>
+        <div className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/60 opacity-0 transition-opacity group-hover/host-header:opacity-100">
+          <ChevronDown
+            className={cn('size-3.5 transition-transform', row.collapsed && '-rotate-90')}
+          />
+        </div>
+        <span data-host-header-action="">
+          <HostSectionHeaderMenu row={row} />
+        </span>
+      </div>
+    </div>
   )
 }
 
@@ -733,6 +881,7 @@ export function getWorktreeDragGroups(rows: HostSectionRow[]): WorktreeDragGroup
       continue
     }
     if (
+      row.type === 'host-header' ||
       row.type === 'imported-worktrees-card' ||
       row.type === 'pending-creation' ||
       row.type === 'folder-workspace'
@@ -904,8 +1053,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   )
   const suppressWorktreeClickUntilRef = useRef(0)
   const hasProjectGroups = projectGroups.length > 0
-  const canReorderRepoHeaders = groupBy === 'repo' && projectOrderBy === 'manual'
-  const moveProjectToGroup = useAppStore((s) => s.moveProjectToGroup)
+  const canReorderRepoHeaders =
+    groupBy === 'repo' && projectOrderBy === 'manual' && !hasProjectGroups
   const lastVisibleRefreshKeyRef = useRef('')
   const reportVisibleGitHubPRRefreshCandidates = useAppStore(
     (s) => s.reportVisibleGitHubPRRefreshCandidates
@@ -948,6 +1097,29 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     },
     [reorderRepos]
   )
+  // Drag is only meaningful when repo headers are using manual order. The
+  // controller is still constructed for hook order stability when inert.
+  const repoDrag = useRepoHeaderDrag({
+    orderedRepoIds: allRepoIds,
+    onCommit: commitRepoReorder,
+    getScrollContainer: () => scrollRef.current
+  })
+  const orderedHostIds = useMemo(
+    () =>
+      rows
+        .filter((row): row is HostHeaderRow => row.type === 'host-header')
+        .map((row) => row.hostId),
+    [rows]
+  )
+  const hostDrag = useHostHeaderDrag({
+    orderedHostIds,
+    onCommit: onReorderHostSections,
+    getScrollContainer: () => scrollRef.current
+  })
+  useEffect(() => {
+    onHostDragActiveChange(hostDrag.state.draggingHostId !== null)
+  }, [hostDrag.state.draggingHostId, onHostDragActiveChange])
+  useEffect(() => () => onHostDragActiveChange(false), [onHostDragActiveChange])
   const worktreeDragGroups = useMemo(() => getWorktreeDragGroups(rows), [rows])
   const worktreeDragUnitGroups = useMemo(() => getWorktreeDragUnitGroups(rows), [rows])
   const worktreeLineageDragRows = useMemo(
@@ -1057,45 +1229,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     [computeWorktreeDropForGroup]
   )
   const renderRows = useMemo(() => buildRenderableRows(rows), [rows])
-  const sidebarRepoHeaderIdsByBucket = useMemo(
-    () => getSidebarOrderedRepoHeaderIdsByBucket(rows),
-    [rows]
-  )
-  const repoHeaderIndexByRepoId = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const repoIds of sidebarRepoHeaderIdsByBucket.values()) {
-      repoIds.forEach((repoId, index) => {
-        map.set(repoId, index)
-      })
-    }
-    return map
-  }, [sidebarRepoHeaderIdsByBucket])
-  const repoHeaderBucketByRepoId = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const [bucketKey, repoIds] of sidebarRepoHeaderIdsByBucket) {
-      for (const repoId of repoIds) {
-        map.set(repoId, bucketKey)
-      }
-    }
-    return map
-  }, [sidebarRepoHeaderIdsByBucket])
-  const commitProjectGroupOrder = useCallback(
-    (repoId: string, projectGroupId: string | null, order: number) => {
-      void moveProjectToGroup(repoId, projectGroupId, order)
-    },
-    [moveProjectToGroup]
-  )
-  // Drag is only meaningful when repo headers are using manual order. The
-  // controller is still constructed for hook order stability when inert.
-  const repoDrag = useRepoHeaderDrag({
-    orderedRepoIds: allRepoIds,
-    sidebarRepoHeaderIdsByBucket,
-    repoById: repoMap,
-    usesProjectGroupOrdering: hasProjectGroups,
-    onCommitRepoOrder: commitRepoReorder,
-    onCommitProjectGroupOrder: commitProjectGroupOrder,
-    getScrollContainer: () => scrollRef.current
-  })
   const firstHeaderIndex = useMemo(
     () => renderRows.findIndex((row) => row.type === 'header' || row.type === 'host-header'),
     [renderRows]
@@ -3036,21 +3169,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               const isRepoHeader = groupBy === 'repo' && row.repo !== undefined
               const isProjectGroupHeader = groupBy === 'repo' && row.projectGroup !== undefined
               const projectIdForHeader = isRepoHeader ? row.repo!.id : undefined
-              const repoHeaderIndex =
-                projectIdForHeader !== undefined
-                  ? repoHeaderIndexByRepoId.get(projectIdForHeader)
-                  : undefined
-              const repoHeaderBucketKey =
-                projectIdForHeader !== undefined
-                  ? repoHeaderBucketByRepoId.get(projectIdForHeader)
-                  : undefined
-              const isDraggableRepoHeader = Boolean(
-                canReorderRepoHeaders &&
-                isRepoHeader &&
-                projectIdForHeader &&
-                repoHeaderBucketKey &&
-                (sidebarRepoHeaderIdsByBucket.get(repoHeaderBucketKey)?.length ?? 0) > 1
-              )
               const isDraggingThis =
                 canReorderRepoHeaders &&
                 repoDrag.state.draggingRepoId !== null &&
@@ -3104,7 +3222,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                   data-worktree-virtual-row-key={String(vItem.key)}
                   data-worktree-sticky-header=""
                   data-worktree-sticky-header-active={isActiveStickyHeader ? '' : undefined}
-                  data-worktree-virtual-row-start={vItem.start}
                   data-index={vItem.index}
                   ref={measureVirtualRowElement}
                   className={cn(
@@ -3129,8 +3246,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     role="button"
                     tabIndex={0}
                     data-repo-header-id={projectIdForHeader}
-                    data-repo-header-index={repoHeaderIndex}
-                    data-repo-header-bucket={repoHeaderBucketKey}
                     data-workspace-status-drop-target={headerWorkspaceStatus ? '' : undefined}
                     data-workspace-status={headerWorkspaceStatus ?? undefined}
                     data-workspace-pin-drop-target={isPinnedHeader ? '' : undefined}
@@ -3148,6 +3263,16 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                       row.repo && 'overflow-hidden'
                     )}
                     style={{ paddingLeft: headerPaddingLeft }}
+                    // Why: arm project-header drag from anywhere on the row, not
+                    // just the icon — users grab the name to reorder. The hook
+                    // ignores presses on nested buttons (+/chevron) and only
+                    // promotes to a drag past a 4px threshold, so a plain click
+                    // still toggles collapse via onClick.
+                    onPointerDown={
+                      canReorderRepoHeaders && isRepoHeader && projectIdForHeader
+                        ? (e) => repoDrag.onHandlePointerDown(e, projectIdForHeader)
+                        : undefined
+                    }
                     onDragOver={
                       isPinnedHeader
                         ? handleWorkspacePinDragOver
@@ -3205,18 +3330,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
 
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-1.5">
-                        <div
-                          data-repo-header-drag-handle=""
-                          className={cn(
-                            'min-w-0 truncate text-[13px] font-semibold leading-none',
-                            isDraggableRepoHeader && 'cursor-grab'
-                          )}
-                          onPointerDown={
-                            isDraggableRepoHeader && projectIdForHeader
-                              ? (event) => repoDrag.onHandlePointerDown(event, projectIdForHeader)
-                              : undefined
-                          }
-                        >
+                        <div className="min-w-0 truncate text-[13px] font-semibold leading-none">
                           {row.label}
                         </div>
                         <RepoForkIndicator upstream={row.repo?.upstream} />
@@ -3726,7 +3840,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                 childNodes.push(renderWorktreeRow(child, true, childLineageChildren))
                 cursor = nextSiblingIndex
               }
-
               return childNodes.length > 0 ? childNodes : undefined
             }
 
@@ -4524,7 +4637,8 @@ const WorktreeList = React.memo(function WorktreeList({
         placeholderRepoIds,
         importedWorktreesByRepo,
         pendingCreations,
-        folderWorkspaces
+        projectGrouping,
+        visibleFolderWorkspacesForRows
       ),
     [
       groupBy,
@@ -4543,8 +4657,7 @@ const WorktreeList = React.memo(function WorktreeList({
       visibleFolderWorkspacesForRows,
       placeholderRepoIds,
       importedWorktreesByRepo,
-      pendingCreations,
-      folderWorkspaces
+      pendingCreations
     ]
   )
   const hostOptions = useMemo(
@@ -4619,7 +4732,7 @@ const WorktreeList = React.memo(function WorktreeList({
   // positions when grouping is active.
   const renderedWorktrees = useMemo(
     () =>
-      rows.flatMap((row) => {
+      sectionRows.flatMap((row) => {
         if (row.type === 'item') {
           return [row.worktree]
         }
@@ -4628,7 +4741,7 @@ const WorktreeList = React.memo(function WorktreeList({
         }
         return []
       }),
-    [rows]
+    [sectionRows]
   )
   const renderedWorktreeIds = useMemo(
     () => renderedWorktrees.map((worktree) => worktree.id),

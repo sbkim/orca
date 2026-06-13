@@ -3,6 +3,8 @@ import { CircleX, FolderTree, List, Pin } from 'lucide-react'
 import type React from 'react'
 import type {
   DetectedWorktree,
+  Project,
+  ProjectHostSetup,
   FolderWorkspace,
   Repo,
   ProjectGroup,
@@ -27,8 +29,9 @@ import { cloneDefaultWorkspaceStatuses } from '../../../../shared/workspace-stat
 import type { AppState } from '../../store/types'
 import { getGitHubPRCacheKey, getLegacyGitHubPRCacheKey } from '../../store/slices/github-cache-key'
 import { UNGROUPED_PROJECT_GROUP_KEY } from '../../../../shared/project-groups'
-import { getRepoDisplayLabelsByPath } from '../../lib/repo-display-labels'
-import { translate } from '../../i18n/i18n'
+import { getRepoDisplayLabelsByPath } from '@/lib/repo-display-labels'
+import { translate } from '@/i18n/i18n'
+import { getExecutionHostLabel, getRepoExecutionHostId } from '../../../../shared/execution-host'
 
 export { branchName }
 
@@ -183,30 +186,22 @@ export const PR_GROUP_META: Record<
   }
 > = {
   done: {
-    get label() {
-      return translate('auto.components.sidebar.worktree.list.groups.5076efc3d2', 'Done')
-    },
+    label: translate('auto.components.sidebar.worktree.list.groups.5076efc3d2', 'Done'),
     icon: ConductorDoneIcon,
     tone: 'text-[#c7a594]'
   },
   'in-review': {
-    get label() {
-      return translate('auto.components.sidebar.worktree.list.groups.6798dc7c94', 'In review')
-    },
+    label: translate('auto.components.sidebar.worktree.list.groups.6798dc7c94', 'In review'),
     icon: ConductorReviewIcon,
     tone: 'text-[#16a34a]'
   },
   'in-progress': {
-    get label() {
-      return translate('auto.components.sidebar.worktree.list.groups.7c2f009786', 'In progress')
-    },
+    label: translate('auto.components.sidebar.worktree.list.groups.7c2f009786', 'In progress'),
     icon: ConductorProgressIcon,
     tone: 'text-[#d4a300]'
   },
   closed: {
-    get label() {
-      return translate('auto.components.sidebar.worktree.list.groups.682ed5d551', 'Closed')
-    },
+    label: translate('auto.components.sidebar.worktree.list.groups.682ed5d551', 'Closed'),
     icon: CircleX,
     tone: 'text-zinc-600 dark:text-zinc-300'
   }
@@ -224,9 +219,7 @@ export function getProjectGroupHeaderKey(groupId: string | null): string {
 export const PINNED_GROUP_KEY = 'pinned'
 
 export const PINNED_GROUP_META = {
-  get label() {
-    return translate('auto.components.sidebar.worktree.list.groups.4aeefc5996', 'Pinned')
-  },
+  label: translate('auto.components.sidebar.worktree.list.groups.4aeefc5996', 'Pinned'),
   tone: 'text-foreground',
   icon: Pin
 } as const
@@ -234,9 +227,7 @@ export const PINNED_GROUP_META = {
 export const ALL_GROUP_KEY = 'all'
 
 export const ALL_GROUP_META = {
-  get label() {
-    return translate('auto.components.sidebar.worktree.list.groups.0ed04075b8', 'All')
-  },
+  label: translate('auto.components.sidebar.worktree.list.groups.0ed04075b8', 'All'),
   tone: 'text-foreground',
   icon: List
 } as const
@@ -670,6 +661,7 @@ export function buildRows(
   placeholderRepoIds: ReadonlySet<string> = new Set(),
   importedWorktreesByRepo: ReadonlyMap<string, ImportedWorktreesCardCandidate> = new Map(),
   pendingCreations: readonly PendingCreationRef[] = [],
+  projectGrouping?: ProjectGroupingModel,
   folderWorkspaces: readonly FolderWorkspace[] = []
 ): Row[] {
   const result: Row[] = []
@@ -953,27 +945,20 @@ export function buildRows(
         compareRecentRank(recentRankForEntry(left), recentRankForEntry(right))
       )
     }
-    const manualFallbackRank = new Map(
-      entries.map((entry) => [entry[0], manualRankForEntry(entry, repoOrder)])
-    )
-    // Why: legacy grouped projects may not have projectGroupOrder yet. Falling
-    // back to manual rank keeps one-project drag writes able to land between
-    // old siblings instead of any finite order jumping ahead of all missing ones.
+    // Manual: within a Project Group, projects order by their per-group rank
+    // (projectGroupOrder), not the global repoOrder.
     return [...entries].sort((left, right) => {
       const leftOrder = left[1].repo?.projectGroupOrder
       const rightOrder = right[1].repo?.projectGroupOrder
       const leftRank =
         typeof leftOrder === 'number' && Number.isFinite(leftOrder)
           ? leftOrder
-          : (manualFallbackRank.get(left[0]) ?? Number.POSITIVE_INFINITY) * 1000
+          : Number.POSITIVE_INFINITY
       const rightRank =
         typeof rightOrder === 'number' && Number.isFinite(rightOrder)
           ? rightOrder
-          : (manualFallbackRank.get(right[0]) ?? Number.POSITIVE_INFINITY) * 1000
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank
-      }
-      return left[1].label.localeCompare(right[1].label)
+          : Number.POSITIVE_INFINITY
+      return leftRank - rightRank
     })
   }
 

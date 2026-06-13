@@ -9,7 +9,7 @@ import { translate } from '@/i18n/i18n'
 import { extractIpcErrorMessage } from '@/lib/ipc-error'
 import { upsertAddedRepoWithProjectHostSetup } from './add-repo-store-upsert'
 
-// ── Remote project hook ─────────────────────────────────────────────
+// ── SSH host project hook ───────────────────────────────────────────
 
 export function useRemoteRepo(
   fetchWorktrees: (
@@ -195,7 +195,7 @@ export function useRemoteRepo(
         return
       }
       toast.success(
-        translate('auto.components.sidebar.AddRepoSteps.df8b0e6c22', 'Remote project added'),
+        translate('auto.components.sidebar.AddRepoSteps.df8b0e6c22', 'Project added on SSH host'),
         { description: repo.displayName }
       )
       // Why: the repo is already persisted here; if SSH refresh is temporarily

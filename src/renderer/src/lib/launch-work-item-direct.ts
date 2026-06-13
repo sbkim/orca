@@ -39,6 +39,11 @@ import type {
   LaunchWorkItemDirectArgs
 } from '@/lib/launch-work-item-direct-types'
 import { resolveSourceControlLaunchPlatform } from '@/lib/source-control-launch-platform'
+import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
+
+// Why: bracketed paste markers and ready-wait grace timing live in
+// agent-paste-draft.ts so the new-workspace and "Use" flows share one
+// definition of "type into the agent's input as a non-submitted draft".
 
 async function getDirectDraftContent(
   item: LaunchableWorkItem,

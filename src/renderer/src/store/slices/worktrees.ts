@@ -40,6 +40,12 @@ import { branchName } from '@/lib/git-utils'
 import { markInputQuietSchedulerInput, scheduleAfterInputQuiet } from '@/lib/input-quiet-scheduler'
 import { showLocalBaseRefUpdateSuggestionToast } from '@/components/sidebar/local-base-ref-suggestion-toast'
 import { translate } from '@/i18n/i18n'
+import {
+  getRepoExecutionHostId,
+  getSettingsFocusedExecutionHostId,
+  parseExecutionHostId,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../../shared/constants'
 import {
   folderWorkspaceKey,
@@ -378,28 +384,23 @@ function applyDetectedWorktreeUpdates(
   worktreeId: string,
   updates: Partial<WorktreeMeta>
 ): AppState['detectedWorktreesByRepo'] {
-  const repoId = getRepoIdFromWorktreeId(worktreeId)
-  const result = detectedWorktreesByRepo[repoId]
-  if (!result) {
-    return detectedWorktreesByRepo
-  }
-
   let changed = false
-  const nextWorktrees = result.worktrees.map((worktree) => {
-    if (worktree.id !== worktreeId) {
-      return worktree
-    }
-    changed = true
-    return { ...worktree, ...updates }
-  })
-  if (!changed) {
-    return detectedWorktreesByRepo
+  const nextByRepo: AppState['detectedWorktreesByRepo'] = {}
+
+  for (const [repoId, result] of Object.entries(detectedWorktreesByRepo)) {
+    let repoChanged = false
+    const nextWorktrees = result.worktrees.map((worktree) => {
+      if (worktree.id !== worktreeId) {
+        return worktree
+      }
+      repoChanged = true
+      changed = true
+      return { ...worktree, ...updates }
+    })
+    nextByRepo[repoId] = repoChanged ? { ...result, worktrees: nextWorktrees } : result
   }
 
-  return {
-    ...detectedWorktreesByRepo,
-    [repoId]: { ...result, worktrees: nextWorktrees }
-  }
+  return changed ? nextByRepo : detectedWorktreesByRepo
 }
 
 function findKnownWorktreeById(

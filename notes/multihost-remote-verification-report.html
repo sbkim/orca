@@ -1,0 +1,278 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Host Context / SSH Verification</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #0b0d10;
+        color: #e6e8eb;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: 32px;
+        line-height: 1.5;
+      }
+      main {
+        max-width: 1180px;
+        margin: auto;
+      }
+      h1,
+      h2 {
+        line-height: 1.15;
+      }
+      section {
+        border: 1px solid #29313a;
+        border-radius: 8px;
+        padding: 20px;
+        margin: 20px 0;
+        background: #12161b;
+      }
+      code {
+        background: #20262e;
+        padding: 2px 5px;
+        border-radius: 4px;
+      }
+      ul {
+        padding-left: 22px;
+      }
+      .pass {
+        color: #8ee6a1;
+      }
+      .fix {
+        color: #ffd38a;
+      }
+      .warn {
+        color: #ffaaa5;
+      }
+      figure {
+        margin: 18px 0;
+        border: 1px solid #29313a;
+        border-radius: 8px;
+        overflow: hidden;
+        background: #07090b;
+      }
+      img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      figcaption {
+        padding: 10px 12px;
+        color: #b8c0cc;
+        font-size: 13px;
+        border-top: 1px solid #29313a;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Host Context / SSH Verification</h1>
+      <p>
+        Run on 2026-06-12 against the isolated dev app at <code>CDP 9336</code>,
+        renderer <code>127.0.0.1:5176</code>, profile
+        <code>/tmp/orca-dev-host-context-1781302330</code>, and Docker SSH target
+        <code>orca-ssh-test</code> on <code>127.0.0.1:2222</code>.
+      </p>
+
+      <section>
+        <h2>Fixes From This Pass</h2>
+        <ul>
+          <li class="fix">
+            Legacy repos whose GitHub <code>upstream</code> is missing now use GitHub repo-icon
+            slug metadata as a provider identity fallback, so local and SSH copies of the same
+            GitHub repo collapse into one logical project.
+          </li>
+          <li class="fix">
+            Worktree discovery now repairs stale repo-scoped project IDs to provider-backed logical
+            project IDs when the project-host setup is the same, including SSH metadata fallback rows.
+          </li>
+          <li class="fix">
+            Add Project copy now uses host-language for SSH/remote-host create and browse flows:
+            <code>host folder</code>, <code>host path</code>, and
+            <code>Browse host filesystem</code>.
+          </li>
+          <li class="fix">
+            Tasks no longer crashes from a same-key GitHub metadata render loop; repo-owner
+            runtime settings selectors are shallow-stable and cached slug metadata avoids no-op
+            state writes.
+          </li>
+          <li class="fix">
+            Switching <code>Run on</code> inside the New Workspace modal now preserves the selected
+            GitHub/GitLab task source when the user is only moving execution to another host setup
+            for the same logical project.
+          </li>
+          <li class="fix">
+            Automations SSH-source unavailable states no longer ask the user to
+            <code>Connect SSH</code> when the SSH host is already connected; the UI now says
+            <code>Source unavailable</code> and offers <code>Retry source</code>.
+          </li>
+          <li class="fix">
+            Add Project host selection now keeps disconnected SSH hosts visible but disabled,
+            and falls back to Local Mac instead of selecting a host that cannot be used.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Flows Verified</h2>
+        <ul>
+          <li class="pass">
+            Linked local <code>/tmp/orca-host-context-local-project</code> and SSH
+            <code>/home/orca/orca-host-context-remote-project</code> copies into one logical
+            <code>github:stablyai/orca</code> project.
+          </li>
+          <li class="pass">
+            Created an SSH workspace from the multi-host project:
+            <code>/home/orca/host-context-ssh-workspace</code>.
+          </li>
+          <li class="pass">
+            Created a local workspace from the same multi-host project:
+            <code>/Users/jinwoohong/orca/workspaces/orca-host-context-local-project/host-context-local-workspace</code>.
+          </li>
+          <li class="pass">
+            Disconnected SSH and verified metadata fallback keeps SSH workspaces visible with repaired
+            logical project ownership, while the UI shows <code>SSH Disconnected</code> and disables
+            project create controls.
+          </li>
+          <li class="pass">
+            Cloned a throwaway Git repo through Add Project on SSH into
+            <code>/home/orca/add-project-clones/host-context-clone-source</code>; verified remote
+            filesystem and Orca project-host setup state.
+          </li>
+          <li class="pass">
+            Created a new Git project through Add Project on SSH at
+            <code>/home/orca/add-project-created/host-context-created-project</code>; verified
+            <code>.git</code> exists and Orca added it as an SSH project-host setup.
+          </li>
+          <li class="pass">
+            Opened Tasks in the multi-host project profile without a recoverable React error, with
+            the task source list rendering local and SSH-backed project contexts.
+          </li>
+          <li class="pass">
+            Started work from GitHub issue <code>#5200</code>, changed <code>Run on</code> from
+            Local Mac to SSH, confirmed the issue source card stayed selected, then created
+            <code>/home/orca/task-ssh-source-local-163115</code> on the SSH host with sidebar
+            metadata showing <code>Linked issue #5200</code>.
+          </li>
+          <li class="pass">
+            Opened Automations with the SSH host connected and Hermes unavailable on the remote
+            PATH; verified the UI reports <code>Source unavailable</code> with a
+            <code>Retry source</code> action rather than a misleading SSH connection prompt.
+          </li>
+          <li class="pass">
+            Simulated the SSH target as disconnected in the live renderer store, opened Add Project,
+            and verified the Host picker shows the SSH host as a disabled row while Local Mac remains
+            selected. Restored the SSH status to connected afterward so the app is ready for manual
+            inspection.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Validation</h2>
+        <ul>
+          <li class="pass">
+            <code>pnpm vitest run --config config/vitest.config.ts src/main/ipc/worktrees.test.ts</code>
+            passed: 126 tests.
+          </li>
+          <li class="pass">
+            Focused Add Project/sidebar tests passed: 4 files, 35 tests.
+          </li>
+          <li class="pass"><code>pnpm run typecheck</code> passed.</li>
+          <li class="pass">
+            <code>pnpm vitest run --config config/vitest.config.ts src/renderer/src/hooks/useGitHubSlugMetadata.test.tsx src/renderer/src/lib/repo-runtime-owner.test.ts</code>
+            passed: 9 tests.
+          </li>
+          <li class="pass">
+            Continued verification added focused Add Project host-selector tests, Automations
+            branch-routing tests, shared host-model tests, and another full
+            <code>pnpm run typecheck</code> pass.
+          </li>
+          <li class="warn">
+            Docker/SSH verification intentionally used throwaway paths under <code>/home/orca</code>
+            and an isolated Orca profile; evidence images are uncommitted.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Screenshots</h2>
+        <figure>
+          <img src="artifacts/host-context-sidebar-after-link.png" alt="Linked local and SSH project" />
+          <figcaption>One logical project after local + SSH setup linking.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-live-after-worktree-meta-repair.png" alt="Live metadata repair" />
+          <figcaption>Live app after stale SSH worktree metadata repaired to the logical project ID.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-new-workspace-run-on-options-repaired.png" alt="Run on host options" />
+          <figcaption>New Workspace: Run on shows exactly Local Mac and the SSH project setup.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-new-workspace-local-selected.png" alt="Local run host selected" />
+          <figcaption>Selecting Local Mac re-enables local-only sparse checkout controls.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-local-workspace-created.png" alt="Local workspace created" />
+          <figcaption>Local workspace created from the same multi-host project.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-disconnected-ssh-metadata-fallback.png" alt="Disconnected SSH fallback" />
+          <figcaption>Disconnected SSH state: visible fallback rows, disabled create control, reconnect dialog.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-add-project-ssh-selected.png" alt="Add Project SSH selected" />
+          <figcaption>Add Project uses one Host selector for SSH.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-add-project-disconnected-host-disabled.png" alt="Disconnected SSH host disabled in Add Project host picker" />
+          <figcaption>Disconnected SSH hosts stay visible in the Add Project Host picker, but are disabled and muted.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-add-project-ssh-clone-screen.png" alt="SSH clone screen" />
+          <figcaption>SSH clone screen has editable parent folder and no redundant SSH target field.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-add-project-ssh-clone-complete.png" alt="SSH clone complete" />
+          <figcaption>SSH clone flow completed and activated the cloned project.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-add-project-ssh-create-screen-host-copy.png" alt="SSH create screen host copy" />
+          <figcaption>Create Project copy now says host folder and Browse host filesystem.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-add-project-ssh-create-complete.png" alt="SSH create complete" />
+          <figcaption>SSH create-project flow completed and activated the new project.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-sidebar-after-add-project-flows.png" alt="Sidebar after Add Project flows" />
+          <figcaption>Sidebar after clone/create SSH projects plus the multi-host project.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-sidebar-calm-host-headers.png" alt="Calmer host section headers" />
+          <figcaption>Host grouping view after the host-header visual polish: quiet grouping rows, explicit SSH label, aligned counts.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-tasks-source-display.png" alt="Tasks source display" />
+          <figcaption>Tasks renders in the multi-host profile after the metadata/render-loop fix.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-task-start-worktree-modal.png" alt="Task start workspace modal" />
+          <figcaption>Start from task opens New Workspace with source item separate from Run on.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-task-start-run-on-ssh.png" alt="Task start workspace on SSH" />
+          <figcaption>Changing Run on to SSH preserves the GitHub issue source before creation.</figcaption>
+        </figure>
+        <figure>
+          <img src="artifacts/host-context-automations-ssh-source-unavailable.png" alt="Automations SSH source unavailable" />
+          <figcaption>Automations distinguishes a connected SSH host from an unavailable remote automation source.</figcaption>
+        </figure>
+      </section>
+    </main>
+  </body>
+</html>

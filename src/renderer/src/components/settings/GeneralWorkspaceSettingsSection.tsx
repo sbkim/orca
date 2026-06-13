@@ -28,50 +28,7 @@ export function GeneralWorkspaceSettingsSection({
         )}
       />
 
-      <SearchableSetting
-        title={translate(
-          'auto.components.settings.GeneralWorkspaceSettingsSection.0e9fc0eadc',
-          'Workspace Directory'
-        )}
-        description={translate(
-          'auto.components.settings.GeneralWorkspaceSettingsSection.a246f5ce6f',
-          'Root directory where workspace folders are created.'
-        )}
-        keywords={['workspace', 'folder', 'path', 'worktree']}
-        className="space-y-2"
-      >
-        <Label>
-          {translate(
-            'auto.components.settings.GeneralWorkspaceSettingsSection.0e9fc0eadc',
-            'Workspace Directory'
-          )}
-        </Label>
-        <div className="flex gap-2">
-          <Input
-            value={settings.workspaceDir}
-            onChange={(e) => updateSettings({ workspaceDir: e.target.value })}
-            className="flex-1 text-xs"
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleBrowseWorkspace}
-            className="shrink-0 gap-1.5"
-          >
-            <FolderOpen className="size-3.5" />
-            {translate(
-              'auto.components.settings.GeneralWorkspaceSettingsSection.5567191a6e',
-              'Browse'
-            )}
-          </Button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {translate(
-            'auto.components.settings.GeneralWorkspaceSettingsSection.a246f5ce6f',
-            'Root directory where workspace folders are created.'
-          )}
-        </p>
-      </SearchableSetting>
+      <WorkspaceDirectorySetting settings={settings} updateSettings={updateSettings} />
 
       <SearchableSetting
         title={translate(

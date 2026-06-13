@@ -9,6 +9,7 @@ import type { GlobalSettings } from '../../../../shared/types'
 import type { PublicKnownRuntimeEnvironment } from '../../../../shared/runtime-environments'
 import type { RuntimeStatus } from '../../../../shared/runtime-types'
 import {
+  describeRuntimeCompatBlock,
   evaluateRuntimeCompat,
   type RuntimeCompatVerdict
 } from '../../../../shared/protocol-compat'
@@ -81,6 +82,32 @@ export function getHostDetailsSummary(details: RuntimeHostDetails | undefined): 
       : translate('auto.components.settings.RuntimeEnvironmentsPane.86ed75bec8', 'Update server')
   }
   return translate('auto.components.settings.RuntimeEnvironmentsPane.9a91c4a0eb', 'Compatible')
+}
+
+export function getHostDetailsDescription(details: RuntimeHostDetails | undefined): string | null {
+  if (!details || details.status === 'loading') {
+    return null
+  }
+  if (details.status === 'error') {
+    return details.error
+  }
+  if (details.compatibility?.kind === 'blocked') {
+    return describeRuntimeCompatBlock(details.compatibility)
+  }
+  return null
+}
+
+export function getRuntimeCapabilitiesSummary(status: RuntimeStatus | null | undefined): string {
+  const capabilities = status?.capabilities ?? []
+  if (capabilities.length === 0) {
+    return translate(
+      'auto.components.settings.RuntimeEnvironmentsPane.4b5c6d7e8f',
+      'No capabilities reported'
+    )
+  }
+  const visibleCapabilities = capabilities.slice(0, 3).join(', ')
+  const hiddenCount = capabilities.length - 3
+  return hiddenCount > 0 ? `${visibleCapabilities} +${hiddenCount}` : visibleCapabilities
 }
 
 export function RuntimeEnvironmentsPane({
@@ -634,66 +661,69 @@ export function RuntimeEnvironmentsPane({
                   key={environment.id}
                   className="flex items-start justify-between gap-3 px-3 py-2"
                 >
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <div className="truncate text-sm font-medium">{environment.name}</div>
-                      {detailsByEnvironmentId[environment.id]?.compatibility?.kind === 'blocked' ? (
-                        <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
-                      ) : detailsByEnvironmentId[environment.id]?.status === 'ready' ? (
-                        <CheckCircle2 className="size-3.5 shrink-0 text-status-success" />
-                      ) : detailsByEnvironmentId[environment.id]?.status === 'loading' ? (
-                        <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                      ) : null}
-                    </div>
-                    <div className="truncate font-mono text-xs text-muted-foreground">
-                      {environment.endpoints[0]?.endpoint ??
-                        translate(
-                          'auto.components.settings.RuntimeEnvironmentsPane.6ef71985da',
-                          'No endpoint'
-                        )}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                      <span>{getHostDetailsSummary(detailsByEnvironmentId[environment.id])}</span>
-                      {detailsByEnvironmentId[environment.id]?.runtimeStatus ? (
-                        <>
-                          <span>
-                            {translate(
-                              'auto.components.settings.RuntimeEnvironmentsPane.0ef838094a',
-                              'Protocol {{value0}}',
-                              {
-                                value0:
-                                  detailsByEnvironmentId[environment.id].runtimeStatus
-                                    ?.runtimeProtocolVersion ??
-                                  detailsByEnvironmentId[environment.id].runtimeStatus
-                                    ?.protocolVersion ??
-                                  0
-                              }
-                            )}
-                          </span>
-                          {detailsByEnvironmentId[environment.id].runtimeStatus?.hostPlatform ? (
-                            <span>
-                              {detailsByEnvironmentId[environment.id].runtimeStatus?.hostPlatform}
-                            </span>
+                  {(() => {
+                    const details = detailsByEnvironmentId[environment.id]
+                    const detailsDescription = getHostDetailsDescription(details)
+                    return (
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="truncate text-sm font-medium">{environment.name}</div>
+                          {details?.compatibility?.kind === 'blocked' ? (
+                            <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+                          ) : details?.status === 'ready' ? (
+                            <CheckCircle2 className="size-3.5 shrink-0 text-status-success" />
+                          ) : details?.status === 'loading' ? (
+                            <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
                           ) : null}
-                          <span>
-                            {translate(
-                              'auto.components.settings.RuntimeEnvironmentsPane.f3a3d6d834',
-                              '{{value0}} capabilities',
-                              {
-                                value0:
-                                  detailsByEnvironmentId[environment.id].runtimeStatus?.capabilities
-                                    ?.length ?? 0
-                              }
+                        </div>
+                        <div className="truncate font-mono text-xs text-muted-foreground">
+                          {environment.endpoints[0]?.endpoint ??
+                            translate(
+                              'auto.components.settings.RuntimeEnvironmentsPane.6ef71985da',
+                              'No endpoint'
                             )}
-                          </span>
-                        </>
-                      ) : detailsByEnvironmentId[environment.id]?.error ? (
-                        <span className="truncate text-destructive">
-                          {detailsByEnvironmentId[environment.id]?.error}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
+                        </div>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                          <span>{getHostDetailsSummary(details)}</span>
+                          {details?.runtimeStatus ? (
+                            <>
+                              <span>
+                                {translate(
+                                  'auto.components.settings.RuntimeEnvironmentsPane.0ef838094a',
+                                  'Protocol {{value0}}',
+                                  {
+                                    value0:
+                                      details.runtimeStatus?.runtimeProtocolVersion ??
+                                      details.runtimeStatus?.protocolVersion ??
+                                      0
+                                  }
+                                )}
+                              </span>
+                              {details.runtimeStatus?.hostPlatform ? (
+                                <span>{details.runtimeStatus?.hostPlatform}</span>
+                              ) : null}
+                              <span>
+                                {translate(
+                                  'auto.components.settings.RuntimeEnvironmentsPane.5c6d7e8f9a',
+                                  'Capabilities: {{value0}}',
+                                  {
+                                    value0: getRuntimeCapabilitiesSummary(details.runtimeStatus)
+                                  }
+                                )}
+                              </span>
+                            </>
+                          ) : detailsDescription ? (
+                            <span className="truncate text-destructive">{detailsDescription}</span>
+                          ) : null}
+                        </div>
+                        {detailsDescription && details?.runtimeStatus ? (
+                          <div className="mt-1 max-w-xl text-[11px] text-muted-foreground">
+                            {detailsDescription}
+                          </div>
+                        ) : null}
+                      </div>
+                    )
+                  })()}
                   <Button
                     type="button"
                     variant="ghost"

@@ -35,6 +35,7 @@ import {
   ONBOARDING_FLOW_VERSION
 } from '../shared/constants'
 import { folderWorkspaceKey } from '../shared/workspace-scope'
+import { toSshExecutionHostId } from '../shared/execution-host'
 import { SshConnectionStore } from './ssh/ssh-connection-store'
 
 // Shared mutable state so the electron mock can reference a per-test directory
@@ -313,6 +314,87 @@ describe('Store', () => {
     const store = await createStore()
     expect(store.getRepos()).toEqual([])
   }, 15_000)
+
+  it('backfills project host setup compatibility records from legacy repos on load', async () => {
+    writeDataFile({
+      schemaVersion: 1,
+      repos: [
+        makeRepo({
+          id: 'local-repo',
+          path: '/Users/alice/orca',
+          displayName: 'Orca',
+          upstream: { owner: 'StablyAI', repo: 'Orca' }
+        }),
+        makeRepo({
+          id: 'remote-repo',
+          path: '/home/alice/orca',
+          displayName: 'orca',
+          connectionId: 'gpu-vm',
+          upstream: { owner: 'stablyai', repo: 'orca' }
+        })
+      ]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjects()).toEqual([
+      expect.objectContaining({
+        id: 'github:stablyai/orca',
+        sourceRepoIds: ['local-repo', 'remote-repo']
+      })
+    ])
+    expect(store.getProjectHostSetups()).toEqual([
+      expect.objectContaining({
+        id: 'local-repo',
+        projectId: 'github:stablyai/orca',
+        hostId: 'local',
+        path: '/Users/alice/orca'
+      }),
+      expect.objectContaining({
+        id: 'remote-repo',
+        projectId: 'github:stablyai/orca',
+        hostId: 'ssh:gpu-vm',
+        path: '/home/alice/orca'
+      })
+    ])
+
+    store.flush()
+    const persisted = readDataFile() as PersistedState
+    expect(persisted.projects).toEqual(store.getProjects())
+    expect(persisted.projectHostSetups).toEqual(store.getProjectHostSetups())
+  })
+
+  it('preserves independent project host setup records on load', async () => {
+    const independentProject = makeProject({
+      id: 'cloud-project',
+      displayName: 'Cloud Project'
+    })
+    const independentSetup = makeProjectHostSetup({
+      id: 'cloud-project::gpu-vm',
+      projectId: independentProject.id,
+      hostId: 'runtime:gpu-vm',
+      repoId: '',
+      path: '/srv/cloud-project',
+      displayName: 'GPU VM'
+    })
+    writeDataFile({
+      ...getDefaultPersistedState(testState.dir),
+      repos: [makeRepo({ id: 'r1', path: '/repo', displayName: 'Repo' })],
+      projects: [independentProject],
+      projectHostSetups: [independentSetup]
+    })
+
+    const store = await createStore()
+
+    expect(store.getProjects().map((project) => project.id)).toEqual(['repo:r1', 'cloud-project'])
+    expect(store.getProjectHostSetups().map((setup) => setup.id)).toEqual([
+      'r1',
+      'cloud-project::gpu-vm'
+    ])
+    store.flush()
+    const persisted = readDataFile() as PersistedState
+    expect(persisted.projectHostSetups).toContainEqual(independentSetup)
+  })
 
   it('returns default settings when no data file exists', async () => {
     const store = await createStore()
@@ -698,26 +780,6 @@ describe('Store', () => {
     expect(store.getUI().projectOrderBy).toBe('manual')
   })
 
-  it('shows the manual-default notice for upgraded profiles without projectOrderBy', async () => {
-    writeDataFile({
-      schemaVersion: 1,
-      repos: [{ id: 'repo-1', path: '/tmp/repo', displayName: 'Repo', badgeColor: '#000000' }],
-      ui: {}
-    })
-    const store = await createStore()
-    expect(store.getUI().projectOrderManualDefaultNoticeDismissed).toBe(false)
-  })
-
-  it('hides the manual-default notice for profiles that already chose recent', async () => {
-    writeDataFile({
-      schemaVersion: 1,
-      repos: [{ id: 'repo-1', path: '/tmp/repo', displayName: 'Repo', badgeColor: '#000000' }],
-      ui: { projectOrderBy: 'recent' }
-    })
-    const store = await createStore()
-    expect(store.getUI().projectOrderManualDefaultNoticeDismissed).toBe(true)
-  })
-
   // ── 2. Load from existing valid file ─────────────────────────────────
 
   it('reads repos from an existing data file', async () => {
@@ -1095,6 +1157,125 @@ describe('Store', () => {
     writeDataFile(persisted)
     const reloaded = await createStore()
     expect(reloaded.listAutomations()[0].reuseSession).toBe(false)
+  })
+
+  it('derives automation source and run contexts from the project host setup', async () => {
+    const store = await createStore()
+    store.addRepo(
+      makeRepo({
+        upstream: { owner: 'stablyai', repo: 'orca' },
+        connectionId: 'builder'
+      })
+    )
+
+    const automation = store.createAutomation({
+      name: 'Nightly',
+      prompt: 'Run checks',
+      agentId: 'claude',
+      projectId: 'r1',
+      workspaceMode: 'new_per_run',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-13T00:00:00Z').getTime()
+    })
+
+    expect(automation.runContext).toMatchObject({
+      kind: 'workspace-run',
+      projectId: 'github:stablyai/orca',
+      hostId: toSshExecutionHostId('builder'),
+      projectHostSetupId: 'r1',
+      repoId: 'r1',
+      path: '/repo'
+    })
+    expect(automation.sourceContext).toMatchObject({
+      kind: 'task-source',
+      provider: 'github',
+      projectId: 'github:stablyai/orca',
+      hostId: toSshExecutionHostId('builder'),
+      projectHostSetupId: 'r1',
+      repoId: 'r1',
+      providerIdentity: { provider: 'github', owner: 'stablyai', repo: 'orca' }
+    })
+  })
+
+  it('snapshots automation contexts onto runs', async () => {
+    const store = await createStore()
+    store.addRepo(makeRepo({ upstream: { owner: 'stablyai', repo: 'orca' } }))
+    const automation = store.createAutomation({
+      name: 'Nightly',
+      prompt: 'Run checks',
+      agentId: 'claude',
+      projectId: 'r1',
+      workspaceMode: 'existing',
+      workspaceId: 'wt1',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-13T00:00:00Z').getTime()
+    })
+
+    const run = store.createAutomationRun(automation, new Date('2026-05-13T09:00:00Z').getTime())
+    store.updateAutomation(automation.id, { sourceContext: null, runContext: null })
+
+    expect(run.runContext).toEqual(automation.runContext)
+    expect(run.sourceContext).toEqual(automation.sourceContext)
+    expect(store.listAutomationRuns(automation.id)[0]).toMatchObject({
+      runContext: automation.runContext,
+      sourceContext: automation.sourceContext
+    })
+  })
+
+  it('backfills legacy automation contexts on load', async () => {
+    const store = await createStore()
+    store.addRepo(
+      makeRepo({
+        upstream: { owner: 'stablyai', repo: 'orca' },
+        connectionId: 'builder'
+      })
+    )
+    const automation = store.createAutomation({
+      name: 'Legacy nightly',
+      prompt: 'Run checks',
+      agentId: 'claude',
+      projectId: 'r1',
+      workspaceMode: 'new_per_run',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-13T00:00:00Z').getTime()
+    })
+    const run = store.createAutomationRun(automation, new Date('2026-05-13T09:00:00Z').getTime())
+    const persisted = readDataFile() as {
+      automations: Record<string, unknown>[]
+      automationRuns: Record<string, unknown>[]
+    }
+    delete persisted.automations[0].runContext
+    delete persisted.automations[0].sourceContext
+    delete persisted.automationRuns[0].runContext
+    delete persisted.automationRuns[0].sourceContext
+    writeDataFile(persisted)
+
+    const reloaded = await createStore()
+    const migratedAutomation = reloaded.listAutomations().find((entry) => entry.id === automation.id)
+    const migratedRun = reloaded.listAutomationRuns(automation.id).find((entry) => entry.id === run.id)
+
+    expect(migratedAutomation?.runContext).toMatchObject({
+      kind: 'workspace-run',
+      projectId: 'github:stablyai/orca',
+      hostId: toSshExecutionHostId('builder'),
+      projectHostSetupId: 'r1',
+      repoId: 'r1',
+      path: '/repo'
+    })
+    expect(migratedAutomation?.sourceContext).toMatchObject({
+      kind: 'task-source',
+      provider: 'github',
+      projectId: 'github:stablyai/orca',
+      hostId: toSshExecutionHostId('builder'),
+      projectHostSetupId: 'r1',
+      repoId: 'r1',
+      providerIdentity: { provider: 'github', owner: 'stablyai', repo: 'orca' }
+    })
+    expect(migratedRun?.runContext).toEqual(migratedAutomation?.runContext)
+    expect(migratedRun?.sourceContext).toEqual(migratedAutomation?.sourceContext)
   })
 
   it('persists automation precheck config and run results', async () => {

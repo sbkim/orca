@@ -1877,6 +1877,8 @@ export class OrcaRuntimeService {
       prompt: input.prompt,
       precheck: input.precheck,
       agentId: input.agentId,
+      runContext: input.runContext,
+      sourceContext: input.sourceContext,
       projectId: target.projectId,
       workspaceMode: target.workspaceMode,
       workspaceId: target.workspaceId,
@@ -1907,6 +1909,12 @@ export class OrcaRuntimeService {
     }
     if (hasRuntimeAutomationUpdateValue(updates, 'agentId')) {
       patch.agentId = updates.agentId
+    }
+    if (hasRuntimeAutomationUpdateValue(updates, 'runContext')) {
+      patch.runContext = updates.runContext
+    }
+    if (hasRuntimeAutomationUpdateValue(updates, 'sourceContext')) {
+      patch.sourceContext = updates.sourceContext
     }
     if (hasRuntimeAutomationUpdateValue(updates, 'baseBranch')) {
       patch.baseBranch = updates.baseBranch
@@ -2825,8 +2833,6 @@ export class OrcaRuntimeService {
       throw new Error('tab_not_found')
     }
 
-    let activatedTab: RuntimeMobileSessionSnapshotTab = tab
-
     if (tab.type === 'terminal') {
       const publicTab = this.toMobileSessionTabsResult(snapshot!).tabs.find(
         (candidate) => candidate.type === 'terminal' && candidate.id === tab.id
@@ -2867,7 +2873,6 @@ export class OrcaRuntimeService {
             )
       const targetTab = activeSibling ?? tab
       this.notifier?.focusTerminal(targetTab.parentTabId, worktreeId, targetTab.leafId)
-      activatedTab = targetTab
     } else if (tab.type === 'browser') {
       // Why: browser mobile tabs are renderer-owned unified tabs; focusing the
       // session tab keeps desktop tab order/group state authoritative.
@@ -2875,54 +2880,7 @@ export class OrcaRuntimeService {
     } else {
       this.notifier?.focusEditorTab?.(tab.id, worktreeId)
     }
-
-    // Why: serve/headless snapshots have no renderer to re-publish focus, but
-    // merged epochs can still contain renderer-owned group state.
-    if (
-      !this.getAvailableAuthoritativeWindow() &&
-      this.isPureHeadlessMobileSessionPublication(snapshot!.publicationEpoch)
-    ) {
-      this.persistHeadlessMobileSessionActiveTab(worktreeId, snapshot!, activatedTab)
-    }
     return this.getMobileSessionTabsForWorktree(worktreeId)
-  }
-
-  private persistHeadlessMobileSessionActiveTab(
-    worktreeId: string,
-    snapshot: RuntimeMobileSessionTabsSnapshot,
-    activeTab: RuntimeMobileSessionSnapshotTab
-  ): void {
-    const alreadyActive =
-      snapshot.activeTabId === activeTab.id &&
-      snapshot.activeTabType === activeTab.type &&
-      snapshot.tabs.every((candidate) => candidate.isActive === (candidate.id === activeTab.id))
-    if (alreadyActive) {
-      // Why: re-activating the already-active tab must not bump snapshotVersion,
-      // or every redundant activation would force a remote re-render.
-      return
-    }
-    const tabs = snapshot.tabs.map((candidate) => ({
-      ...candidate,
-      isActive: candidate.id === activeTab.id
-    }))
-    const terminalTabs = tabs.filter(
-      (candidate): candidate is RuntimeMobileSessionTerminalTab => candidate.type === 'terminal'
-    )
-    const next: RuntimeMobileSessionTabsSnapshot = {
-      ...snapshot,
-      snapshotVersion: snapshot.snapshotVersion + 1,
-      activeTabId: activeTab.id,
-      activeTabType: activeTab.type,
-      tabGroups: this.buildHeadlessMobileSessionTabGroups(
-        worktreeId,
-        terminalTabs,
-        activeTab.type === 'terminal' ? activeTab : null,
-        snapshot.tabGroups
-      ),
-      tabs
-    }
-    this.mobileSessionTabsByWorktree.set(worktreeId, next)
-    this.notifyMobileSessionTabsChanged(worktreeId)
   }
 
   private shouldMaterializeHeadlessMobileSessionTab(
@@ -7316,7 +7274,7 @@ export class OrcaRuntimeService {
         } else if (code === 0) {
           resolve()
         } else {
-          reject(new Error(`Clone failed: ${getGitCloneFailureMessage(stderrTail)}`))
+          reject(new Error(`Clone failed: ${getGitCloneFailureMessage(stderrTail, { clonePath })}`))
         }
       }
       proc.on('error', (error) => {
@@ -13519,15 +13477,10 @@ export class OrcaRuntimeService {
     )
   }
 
-  private isPureHeadlessMobileSessionPublication(publicationEpoch: string): boolean {
-    return (
-      publicationEpoch.startsWith('headless:') || publicationEpoch.startsWith('headless-hydrated:')
-    )
-  }
-
   private isHeadlessMobileSessionPublication(publicationEpoch: string): boolean {
     return (
-      this.isPureHeadlessMobileSessionPublication(publicationEpoch) ||
+      publicationEpoch.startsWith('headless:') ||
+      publicationEpoch.startsWith('headless-hydrated:') ||
       publicationEpoch.includes(':headless-merge:')
     )
   }
@@ -15017,6 +14970,69 @@ export class OrcaRuntimeService {
     return link
   }
 
+  private async resolveWorktreeForContainedPath(cwd: string): Promise<ResolvedWorktree | null> {
+    const currentPath = resolve(cwd)
+    let best: ResolvedWorktree | null = null
+    for (const candidate of await this.listResolvedWorktrees()) {
+      if (!isPathInsideOrEqual(candidate.path, currentPath)) {
+        continue
+      }
+      if (!best || candidate.path.length > best.path.length) {
+        best = candidate
+      }
+    }
+    return best
+  }
+
+  linearListIssues(
+    filter?: LinearListFilter,
+    limit = 20,
+    workspaceId?: LinearWorkspaceSelection
+  ): ReturnType<typeof listLinearIssues> {
+    return listLinearIssues(filter, clampLinearIssueListLimit(limit), workspaceId)
+  }
+
+  linearCreateIssue(
+    teamId: string,
+    title: string,
+    description?: string,
+    workspaceId?: string,
+    parentIssueId?: string,
+    projectId?: string | null,
+    options?: {
+      stateId?: string
+      priority?: number
+      assigneeId?: string | null
+      labelIds?: string[]
+    }
+  ): ReturnType<typeof createLinearIssue> {
+    return createLinearIssue(teamId, title, description, workspaceId, {
+      parentId: parentIssueId,
+      projectId,
+      ...options
+    })
+  }
+
+  linearGetIssue(id: string, workspaceId?: string): ReturnType<typeof getLinearIssue> {
+    return getLinearIssue(id, workspaceId)
+  }
+
+  linearUpdateIssue(
+    id: string,
+    updates: LinearIssueUpdate,
+    workspaceId?: string
+  ): ReturnType<typeof updateLinearIssue> {
+    return updateLinearIssue(id, updates, workspaceId)
+  }
+
+  linearAddIssueComment(
+    issueId: string,
+    body: string,
+    workspaceId?: string
+  ): ReturnType<typeof addLinearIssueComment> {
+    return addLinearIssueComment(issueId, body, workspaceId)
+  }
+
   async linearIssueSetState(params: {
     input?: string
     current?: boolean
@@ -15871,69 +15887,6 @@ export class OrcaRuntimeService {
         workspaceId
       })
     }
-  }
-
-  private async resolveWorktreeForContainedPath(cwd: string): Promise<ResolvedWorktree | null> {
-    const currentPath = resolve(cwd)
-    let best: ResolvedWorktree | null = null
-    for (const candidate of await this.listResolvedWorktrees()) {
-      if (!isPathInsideOrEqual(candidate.path, currentPath)) {
-        continue
-      }
-      if (!best || candidate.path.length > best.path.length) {
-        best = candidate
-      }
-    }
-    return best
-  }
-
-  linearListIssues(
-    filter?: LinearListFilter,
-    limit = 20,
-    workspaceId?: LinearWorkspaceSelection
-  ): ReturnType<typeof listLinearIssues> {
-    return listLinearIssues(filter, clampLinearIssueListLimit(limit), workspaceId)
-  }
-
-  linearCreateIssue(
-    teamId: string,
-    title: string,
-    description?: string,
-    workspaceId?: string,
-    parentIssueId?: string,
-    projectId?: string | null,
-    options?: {
-      stateId?: string
-      priority?: number
-      assigneeId?: string | null
-      labelIds?: string[]
-    }
-  ): ReturnType<typeof createLinearIssue> {
-    return createLinearIssue(teamId, title, description, workspaceId, {
-      parentId: parentIssueId,
-      projectId,
-      ...options
-    })
-  }
-
-  linearGetIssue(id: string, workspaceId?: string): ReturnType<typeof getLinearIssue> {
-    return getLinearIssue(id, workspaceId)
-  }
-
-  linearUpdateIssue(
-    id: string,
-    updates: LinearIssueUpdate,
-    workspaceId?: string
-  ): ReturnType<typeof updateLinearIssue> {
-    return updateLinearIssue(id, updates, workspaceId)
-  }
-
-  linearAddIssueComment(
-    issueId: string,
-    body: string,
-    workspaceId?: string
-  ): ReturnType<typeof addLinearIssueComment> {
-    return addLinearIssueComment(issueId, body, workspaceId)
   }
 
   linearIssueComments(

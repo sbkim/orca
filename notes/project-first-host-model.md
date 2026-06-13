@@ -3,7 +3,8 @@
 Companion summary: see
 [`project-first-host-model-change-inventory.md`](./project-first-host-model-change-inventory.md)
 for the current discussion recap, change count, and branch implementation
-status.
+status. The live implementation tracker is
+[`host-context-implementation-checklist.md`](./host-context-implementation-checklist.md).
 
 ## Context
 
@@ -249,6 +250,44 @@ ownership rather than declared on the workspace/setup model.
 The new model should preserve the current runtime routing discipline while
 making host ownership explicit in the data model.
 
+### Task Source Context Is Separate From Run Host
+
+Tasks, provider metadata, issue/PR mutations, and automations add one more
+identity axis: where provider data comes from. This is not always the same as
+where a workspace or agent runs.
+
+The durable rule is:
+
+```text
+TaskSourceContext = provider/account/project source
+WorkspaceRunContext = project host setup used for execution
+```
+
+Examples:
+
+- A GitHub issue can be fetched with the local Mac GitHub credentials, while
+  the workspace for that issue runs on an SSH host.
+- A project can be available on Local Mac and a remote server, but Linear/Jira
+  account checks may still be owned by one selected account host.
+- An automation stores the issue/source context it was created from and the
+  run context it should execute on, so retries and audits do not depend on the
+  user's currently focused host.
+
+Implementation rules:
+
+- Provider list/fetch/mutation calls should carry explicit `TaskSourceContext`
+  when the UI knows it.
+- Workspace creation and automation dispatch should carry explicit
+  `WorkspaceRunContext` / project-host setup ownership.
+- Changing `Run on` in New Workspace must not erase the selected issue/PR/MR
+  source when the user is only changing execution host for the same logical
+  project.
+- Caches for provider data must include provider/source identity, not only
+  repo id or owner/repo slug, because two hosts may have different credentials
+  or reachable provider state.
+- UI diagnostics should show enough host/account/source metadata that the user
+  can explain why a list is empty, disconnected, or unavailable.
+
 ## Data Model Shape
 
 ### Project
@@ -355,10 +394,10 @@ Branch: feature/remote-hosts
 Run on: GPU VM 1
 
 This project is not set up on GPU VM 1.
-[Clone repo to host] [Import existing folder] [Cancel]
+[Add project on this host] [Cancel]
 ```
 
-### Set Up Project On A Host
+### Make A Project Available On A Host
 
 A project settings page should expose which hosts the project is available on:
 
@@ -368,14 +407,19 @@ Project: Orca
 Available on:
   Local Mac      Ready       /Users/me/orca
   GPU VM 1       Ready       /home/me/orca
-  Work Linux     Not set up  [Set up]
 ```
 
-Setup methods:
+Today, making a project available on another host is the same host-aware Add
+Project flow Orca already exposes:
 
-- clone from repo URL into a selected parent directory
-- import an existing folder on the host
-- future: provision cloud VM and clone automatically
+- browse/import an existing folder on the selected host
+- clone from a repo URL into a selected parent directory on the host
+- create a new project folder/repo on the host
+
+Orca should not imply that workspace creation will install dependencies,
+bootstrap the repo, or otherwise own the user's environment. Users can run their
+own setup scripts or configure dependencies manually after the project exists on
+that host.
 
 ### Add New Host / VM
 
@@ -392,7 +436,8 @@ Make projects available here:
   [ ] ML Runner    Clone to /mnt/work/ml-runner
 ```
 
-This is also the natural place for future cloud VM monetization:
+Future Orca cloud VM monetization belongs in host onboarding, not this PR's
+project-host implementation:
 
 1. provision host
 2. choose projects to materialize there
@@ -512,17 +557,16 @@ Concrete changes:
 Adding a project must distinguish:
 
 - create a new project identity
-- set up that project on this host
-- set up an existing project on another host
+- add/import/clone that project on this host
+- add/import/clone an existing project on another host
 
 This likely replaces a single "add repo" flow with a project-first setup flow.
 
 Concrete changes:
 
-- add "Set up on this host" flows for local paths, SSH paths, runtime hosts,
-  and future cloud VMs
-- support clone and import-existing-folder
-- support bulk setup when a new host is added
+- keep Add Project host-aware for local paths, SSH paths, and runtime hosts
+- support browse/import, clone, and create-project entry points
+- leave bulk setup and cloud VM provisioning for future host onboarding work
 - keep current add-repo flows as compatibility entry points during migration
 
 ### 6. Project Settings
@@ -627,11 +671,17 @@ host/setup key because two machines can have different refs, branches, worktree
 paths, installed agents, filesystem state, and server capabilities for the same
 project.
 
+Provider caches also need explicit source keys. GitHub, GitLab, Linear, and
+Jira data may be account- or host-owned; a cache keyed only by repo id,
+owner/repo, or the currently focused runtime can show stale or wrong-provider
+data after the user switches hosts.
+
 Concrete changes:
 
 - decide which caches are project-global versus host/setup-local
 - include host/setup ids in branch, worktree, status, filesystem, terminal, and
   remote capability cache keys
+- include task source identity in provider work-item/detail/project cache keys
 - keep request cancellation scoped to the host that owns the operation
 
 ### 12. Tests And Validation
@@ -815,6 +865,19 @@ Landed so far:
   selected runtime server, or preselected SSH target, and lets Clone from URL
   clone on local, runtime, or SSH hosts. The old separate "Remote project" start
   row is hidden in the host-aware flow.
+- Added shared `TaskSourceContext` and workspace run-context types so provider
+  source ownership and workspace execution host can be stored independently.
+- Threaded GitHub/GitLab task source context through task listing, detail
+  drawers, mutations, new-workspace handoff, and source-scoped caches.
+- Added Tasks source diagnostics and empty-state copy so users can see which
+  provider/host/account/project source is being used, and why a source is empty
+  or unavailable.
+- Added automation source/run context storage, run snapshots, dispatch
+  validation, run-target availability messages, session-reuse guards, and CLI/RPC
+  selectors so automations do not resume or run on the wrong host setup.
+- Verified the key source/run split in Electron: a GitHub issue sourced from
+  one project context can create a workspace on the SSH project-host setup while
+  preserving the linked issue metadata.
 - Added tests for local repos, SSH repos, same-provider multi-host grouping,
   no-identity same-name non-grouping, selector cache behavior, persistence
   backfill, repo mutation synchronization, renderer hydration, runtime RPC
@@ -848,11 +911,17 @@ Important limitation:
   first-class setup create/update/delete now exist for independent metadata and
   are exposed through the renderer store/settings, but actual provisioning
   execution and full UI flows are still future work.
-- Add Project is now host-aware for single-host Browse and Clone flows, but
-  multi-host setup rows are not yet implemented in the Add Project dialog. SSH
-  "Create new project" is visibly unavailable because the app still lacks a
-  first-class SSH create-project IPC/API equivalent; runtime create is already
-  handled through the existing runtime RPC path.
+- Add Project is now host-aware for Browse, Clone, and Create flows that target
+  Local Mac, SSH hosts, and runtime hosts through their existing repo
+  compatibility paths. Bulk setup and cloud VM provisioning are intentionally
+  future host-onboarding work, not requirements for this PR.
+- Provider source context has been threaded through the main GitHub/GitLab task
+  paths, but true two-account host verification is still outstanding. Linear
+  and Jira have source diagnostics and runtime-client context plumbing, but
+  their full account-selector UX still needs end-to-end validation.
+- Remote-server capability gating exists for project-host setup APIs, but the
+  user-facing version-skew UX is still not broad enough to explain every
+  unsupported source-context or host-context control.
 
 Remaining end-to-end work:
 
@@ -860,8 +929,6 @@ Remaining end-to-end work:
   toward bulk setup and newly added host onboarding
 - finish provisioning, bulk setup-on-host flows, and Add Project multi-host
   setup rows with per-host paths
-- add a first-class SSH create-project path so Create can target SSH hosts, not
-  just local and runtime hosts
 - add actual provisioning execution APIs instead of only recording independent
   setup/provisioning metadata and intent
 - split settings into explicit client, host, project, and project-host setup
@@ -875,8 +942,8 @@ Remaining end-to-end work:
 - add project-first CLI/API commands with compatibility aliases for existing
   repo/worktree commands
 - broaden version-skew UI/CLI coverage beyond the current runtime capability
-  guard, and validate migration, creation, settings, sidebar, SSH, and
-  version-skew flows end to end
+  guard, and validate migration, creation, settings, sidebar, SSH, provider
+  multi-account, automations, and version-skew flows end to end
 
 ## Recommendation
 

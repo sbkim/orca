@@ -33,6 +33,7 @@ import { isShellProcess } from '../../shared/shell-process-detection'
 
 const PANE_IDENTITY_ENV_KEYS = ['ORCA_PANE_KEY', 'ORCA_TAB_ID', 'ORCA_WORKTREE_ID'] as const
 const FOREGROUND_AGENT_CACHE_TTL_MS = 1000
+const PTY_SPAWN_HEALTH_TIMEOUT_MS = 2_000
 
 export type PtySubprocessOptions = {
   sessionId: string

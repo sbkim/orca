@@ -53,6 +53,7 @@ function renderStepContent(overrides: Partial<StepContentProps>): string {
     nestedGroupName: 'platform',
     createName: '',
     createParent: '',
+    createKind: 'git',
     createError: null,
     isCreating: false,
     createDefaultParent: '',
@@ -81,6 +82,7 @@ function renderStepContent(overrides: Partial<StepContentProps>): string {
     onImportNestedRepos: vi.fn(),
     onCreateNameChange: vi.fn(),
     onCreateParentChange: vi.fn(),
+    onCreateKindChange: vi.fn(),
     onPickCreateParent: vi.fn(),
     onCreate: vi.fn(),
     ...overrides
@@ -104,8 +106,8 @@ describe('AddRepoDialogStepContent nested imports', () => {
     const html = renderNestedStep(0)
 
     expect(html).toContain('Is this a monorepo?')
-    expect(html).toContain('aria-label="Group name"')
-    expect(html).toContain('Import as group')
+    expect(html).toContain('aria-label="Monorepo name"')
+    expect(html).toContain('Yes, import as monorepo')
     expect(html).toContain('No, import separately')
     expect(html).not.toContain('>Import</button>')
   })
@@ -114,25 +116,39 @@ describe('AddRepoDialogStepContent nested imports', () => {
     const html = renderNestedStep(1)
 
     expect(html).toContain('Is this a monorepo?')
-    expect(html).toContain('aria-label="Group name"')
-    expect(html).toContain('Import as group')
+    expect(html).toContain('aria-label="Monorepo name"')
+    expect(html).toContain('Yes, import as monorepo')
     expect(html).toContain('No, import separately')
     expect(html).not.toContain('>Import</button>')
   })
 
-  it('offers server browsing for remote create project locations', () => {
+  it('offers host browsing for remote create project locations', () => {
     const html = renderStepContent({
       step: 'create',
       isRuntimeEnvironmentActive: true,
       activeRuntimeEnvironmentId: 'env-1'
     })
 
-    expect(html).toContain('Create project')
-    expect(html).toContain('Choose or enter a server parent folder before creating.')
-    expect(html).toContain('Browse')
+    expect(html).toContain('Create a new project')
+    expect(html).toContain('host folder not selected')
   })
 
-  it('offers server browsing for remote clone destinations', () => {
+  it('uses manual path entry for SSH create project locations', () => {
+    const html = renderStepContent({
+      step: 'create',
+      manualCreateParentEntry: true,
+      selectedSshTargetId: 'openclaw-2',
+      activeRuntimeEnvironmentId: null
+    })
+
+    expect(html).toContain('Create a new project')
+    expect(html).toContain('placeholder="/home/user/projects"')
+    expect(html).toContain('aria-label="Browse host filesystem"')
+    expect(html).not.toMatch(/<button[^>]*disabled=""[^>]*aria-label="Browse host filesystem"/)
+    expect(html).not.toContain('Choose parent folder')
+  })
+
+  it('offers host browsing for remote clone destinations', () => {
     const html = renderStepContent({
       step: 'clone',
       isRuntimeEnvironmentActive: true,
@@ -140,7 +156,7 @@ describe('AddRepoDialogStepContent nested imports', () => {
     })
 
     expect(html).toContain('Clone from URL')
-    expect(html).toContain('aria-label="Browse server filesystem"')
+    expect(html).toContain('aria-label="Browse host filesystem"')
   })
 
   it('offers SSH browsing for selected-host clone destinations', () => {
@@ -153,7 +169,7 @@ describe('AddRepoDialogStepContent nested imports', () => {
     expect(html).toContain('Clone from URL')
     expect(html).toContain('choose where to clone it on openclaw 2')
     expect(html).toContain('Parent folder')
-    expect(html).toContain('aria-label="Browse server filesystem"')
+    expect(html).toContain('aria-label="Browse host filesystem"')
     expect(html).not.toContain('aria-label="Choose folder"')
   })
 
@@ -192,9 +208,9 @@ describe('AddRepoDialogStepContent nested imports', () => {
       ]
     })
 
-    expect(html).toContain('Open remote project')
+    expect(html).toContain('Open project on SSH host')
     expect(html).toContain('openclaw 2')
-    expect(html).toContain('Remote path')
+    expect(html).toContain('Host path')
     expect(html).toContain('SSH target')
     expect(html).not.toContain('github.com')
     expect(html).not.toContain('Connect')
@@ -234,7 +250,7 @@ describe('AddRepoDialogStepContent nested imports', () => {
       browseHostKind: 'ssh'
     })
 
-    expect(html).toContain('Open SSH project')
+    expect(html).toContain('Open project on SSH host')
     expect(html).toContain('Existing Git repository or folder on this SSH host')
     expect(html).not.toContain('Local project, Git repo, or folder with many repos')
   })

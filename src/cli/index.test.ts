@@ -196,67 +196,6 @@ describe('orca root help', () => {
     expect(searchHelp).toContain('--query <text>        Text to search across Linear issues')
     expect(callMock).not.toHaveBeenCalled()
   })
-
-  it('progressively discloses Linear commands', async () => {
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
-
-    await main(['--help'], '/tmp/repo')
-
-    const rootHelp = String(logSpy.mock.calls[0][0])
-    expect(rootHelp).toContain('Linear:')
-    expect(rootHelp).toContain('linear                    Read Linear ticket context for agents')
-    expect(rootHelp).not.toContain('linear issue')
-    expect(rootHelp).not.toContain('linear search')
-    expect(rootHelp).not.toContain('linear status set')
-
-    logSpy.mockClear()
-    await main(['linear', '--help'], '/tmp/repo')
-
-    const groupHelp = String(logSpy.mock.calls[0][0])
-    expect(groupHelp).toContain('orca linear')
-    expect(groupHelp).toContain('issue')
-    expect(groupHelp).toContain('search')
-    expect(groupHelp).toContain('status set')
-    expect(groupHelp).toContain('comment add')
-    expect(groupHelp).toContain('attach')
-    expect(groupHelp).toContain('create')
-    expect(groupHelp).not.toContain('--comments')
-    expect(groupHelp).not.toContain('--attachments')
-
-    logSpy.mockClear()
-    await main(['linear', 'issue', '--help'], '/tmp/repo')
-
-    const issueHelp = String(logSpy.mock.calls[0][0])
-    expect(issueHelp).toContain('orca linear issue [<id>]')
-    expect(issueHelp).toContain('--comments             Include threaded Linear comments')
-    expect(issueHelp).toContain('--attachments          Include attachment metadata and URLs')
-    expect(issueHelp).toContain('--workspace <id>      Connected Linear workspace id')
-    expect(issueHelp).toContain('--id <id>             Linear issue key, id, or URL')
-
-    logSpy.mockClear()
-    await main(['linear', 'search', '--help'], '/tmp/repo')
-
-    const searchHelp = String(logSpy.mock.calls[0][0])
-    expect(searchHelp).toContain('orca linear search <query>')
-    expect(searchHelp).toContain('--workspace <id|all>  Connected Linear workspace id, or all')
-    expect(searchHelp).toContain('--query <text>        Text to search across Linear issues')
-
-    logSpy.mockClear()
-    await main(['linear', 'comment', 'add', '--help'], '/tmp/repo')
-
-    const commentHelp = String(logSpy.mock.calls[0][0])
-    expect(commentHelp).toContain('orca linear comment add [<id>]')
-    expect(commentHelp).toContain('--body-file <path|->  Read Linear body from a file or stdin')
-    expect(commentHelp).toContain('--write-id <uuid>     Retry id from linear_write_unconfirmed')
-
-    logSpy.mockClear()
-    await main(['linear', 'create', '--help'], '/tmp/repo')
-
-    const createHelp = String(logSpy.mock.calls[0][0])
-    expect(createHelp).toContain('orca linear create --title <title>')
-    expect(createHelp).toContain('--parent-current      Use the current linked issue as parent')
-    expect(callMock).not.toHaveBeenCalled()
-  })
 })
 
 describe('orca cli worktree awareness', () => {
@@ -2705,6 +2644,76 @@ describe('orca cli worktree awareness', () => {
       rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
       dtstart: expect.any(Number)
     })
+  })
+
+  it('resolves project and host flags for automation create', async () => {
+    queueFixtures(
+      callMock,
+      okFixture('req_project_setups', {
+        setups: [
+          {
+            id: 'setup-local',
+            projectId: 'github:stablyai/orca',
+            hostId: 'local',
+            repoId: 'repo-local',
+            path: '/tmp/orca',
+            displayName: 'Orca',
+            setupState: 'ready',
+            setupMethod: 'legacy-repo',
+            createdAt: 1,
+            updatedAt: 1
+          },
+          {
+            id: 'setup-gpu',
+            projectId: 'github:stablyai/orca',
+            hostId: 'runtime:gpu',
+            repoId: 'repo-gpu',
+            path: '/srv/orca',
+            displayName: 'Orca',
+            setupState: 'ready',
+            setupMethod: 'legacy-repo',
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      }),
+      okFixture('req_automation_create', {
+        automation: { id: 'auto-1', name: 'GPU review' }
+      })
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      [
+        'automations',
+        'create',
+        '--name',
+        'GPU review',
+        '--trigger',
+        'daily',
+        '--prompt',
+        'Review open changes',
+        '--provider',
+        'codex',
+        '--project',
+        'github:stablyai/orca',
+        '--host',
+        'runtime:gpu',
+        '--json'
+      ],
+      '/tmp/repo'
+    )
+
+    expect(callMock).toHaveBeenNthCalledWith(1, 'projectHostSetup.list')
+    expect(callMock).toHaveBeenNthCalledWith(
+      2,
+      'automation.create',
+      expect.objectContaining({
+        repo: 'id:repo-gpu',
+        workspace: undefined,
+        workspaceMode: 'new_per_run'
+      })
+    )
   })
 
   it('rejects invalid automation --day values before calling the runtime', async () => {

@@ -11,6 +11,7 @@ import React, {
   useSyncExternalStore
 } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useShallow } from 'zustand/react/shallow'
 import type { editor as monacoEditor } from 'monaco-editor'
 import {
   ArrowDown,
@@ -84,11 +85,6 @@ import {
 import type { DiffSection } from '@/components/editor/diff-section-types'
 import type { CombinedDiffFileTreeEntry } from '@/components/editor/combined-diff-file-tree-model'
 import { CHECK_COLOR, CHECK_ICON } from '@/components/right-sidebar/checks-panel-content'
-import {
-  REVIEW_ACTION_MERGE_BUTTON_CLASS,
-  REVIEW_ACTION_STATE_BUTTON_CLASS,
-  RIGHT_SIDEBAR_PRIMARY_BUTTON_LABEL_CLASS
-} from '@/components/right-sidebar/right-sidebar-primary-action-layout'
 import { SourceControlAgentActionDialog } from '@/components/right-sidebar/SourceControlAgentActionDialog'
 import {
   createGitHubChecksTabState,
@@ -138,8 +134,6 @@ import { useAllWorktrees } from '@/store/selectors'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { useRepoLabels, useRepoAssignees, useImmediateMutation } from '@/hooks/useIssueMetadata'
 import { useRepoLabelsBySlug, useRepoAssigneesBySlug } from '@/hooks/useGitHubSlugMetadata'
-import { GitHubWorkItemLabelPopoverContent } from '@/components/github/GitHubWorkItemLabelPopoverContent'
-import { GitHubWorkItemAssigneePopoverContent } from '@/components/github/GitHubWorkItemAssigneePopoverContent'
 import {
   getGitHubPRReviewerRows,
   normalizeGitHubReviewerLogins
@@ -203,25 +197,6 @@ function parseOwnerRepoFromItemUrl(url: string): GitHubOwnerRepo | null {
       return null
     }
     return { owner: segments[0], repo: segments[1] }
-  } catch {
-    return null
-  }
-}
-
-function getGitHubRepositoryLabelsUrl(itemUrl: string): string | null {
-  try {
-    const parsed = new URL(itemUrl)
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      return null
-    }
-    const segments = parsed.pathname.split('/').filter(Boolean)
-    if (segments.length < 2) {
-      return null
-    }
-    parsed.pathname = `/${segments[0]}/${segments[1]}/labels`
-    parsed.search = ''
-    parsed.hash = ''
-    return parsed.toString()
   } catch {
     return null
   }
@@ -549,8 +524,8 @@ function PRReviewersPanel({
   }))
   const patchWorkItem = useAppStore((s) => s.patchWorkItem)
   const settings = useAppStore((s) => s.settings)
-  const repoOwnerSettings = useAppStore((s) =>
-    getSettingsForRepoRuntimeOwner(s, item.repoId ?? null)
+  const repoOwnerSettings = useAppStore(
+    useShallow((s) => getSettingsForRepoRuntimeOwner(s, item.repoId ?? null))
   )
   const reviewerInputRef = useRef<HTMLInputElement | null>(null)
   const reviewerInputFocusFrameRef = useRef<number | null>(null)
@@ -3493,7 +3468,7 @@ function PRActionsPanel({
         <WorkItemStateBadge item={actionItem} />
       </div>
 
-      <div className="grid gap-2 justify-items-start">
+      <div className="grid gap-2">
         <DropdownMenu modal={false}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -3502,8 +3477,7 @@ function PRActionsPanel({
                   type="button"
                   size="sm"
                   className={cn(
-                    REVIEW_ACTION_MERGE_BUTTON_CLASS,
-                    'gap-2 bg-green-600 text-white hover:bg-green-700',
+                    'w-full justify-center gap-2 bg-green-600 text-white hover:bg-green-700',
                     'disabled:cursor-not-allowed disabled:opacity-50'
                   )}
                 >
@@ -3512,13 +3486,11 @@ function PRActionsPanel({
                   ) : (
                     <GitMerge className="size-3.5" />
                   )}
-                  <span className={RIGHT_SIDEBAR_PRIMARY_BUTTON_LABEL_CLASS}>
-                    {mergePresentation.autoMergeAction?.label ??
-                      (mergePresentation.directMergeAvailable
-                        ? mergeMethods.defaultLabel
-                        : mergePresentation.label)}
-                  </span>
-                  <ChevronDown className="size-3 shrink-0 opacity-60" />
+                  {mergePresentation.autoMergeAction?.label ??
+                    (mergePresentation.directMergeAvailable
+                      ? mergeMethods.defaultLabel
+                      : mergePresentation.label)}
+                  <ChevronDown className="size-3 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
             </TooltipTrigger>
@@ -3564,8 +3536,7 @@ function PRActionsPanel({
           variant={nextState === 'closed' ? 'outline' : 'secondary'}
           size="sm"
           className={cn(
-            REVIEW_ACTION_STATE_BUTTON_CLASS,
-            'gap-2',
+            'w-full justify-center gap-2',
             nextState === 'closed' &&
               'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50'
           )}
@@ -3579,11 +3550,9 @@ function PRActionsPanel({
           ) : (
             <CircleDot className="size-3.5" />
           )}
-          <span className={RIGHT_SIDEBAR_PRIMARY_BUTTON_LABEL_CLASS}>
-            {nextState === 'closed'
-              ? translate('auto.components.PullRequestPage.96d013ed28', 'Close pull request')
-              : translate('auto.components.PullRequestPage.9d5425918e', 'Reopen PR')}
-          </span>
+          {nextState === 'closed'
+            ? translate('auto.components.PullRequestPage.96d013ed28', 'Close pull request')
+            : translate('auto.components.PullRequestPage.9d5425918e', 'Reopen PR')}
         </Button>
       </div>
     </aside>
@@ -4992,7 +4961,6 @@ function GHEditSection({
   const patchWorkItem = useAppStore((s) => s.patchWorkItem)
   const patchProjectRowContent = useAppStore((s) => s.patchProjectRowContent)
   const { isPending, run } = useImmediateMutation()
-  const repositoryLabelsUrl = useMemo(() => getGitHubRepositoryLabelsUrl(item.url), [item.url])
   // Why: when the dialog opens from a Project view, mutations route through
   // *BySlug IPCs and we must keep `projectViewCache` in sync alongside
   // `workItemsCache` — `patchWorkItem` only walks the latter, so without this
@@ -5233,6 +5201,18 @@ function GHEditSection({
     return null
   }
 
+  const checkIcon = (
+    <svg className="size-2.5" viewBox="0 0 12 12" fill="none">
+      <path
+        d="M2 6l3 3 5-5"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border/60 px-4 py-2.5">
       {/* State */}
@@ -5302,16 +5282,34 @@ function GHEditSection({
           </button>
         </PopoverTrigger>
         <PopoverContent className="popover-scroll-content scrollbar-sleek w-52 p-1" align="start">
-          <GitHubWorkItemLabelPopoverContent
-            open={labelPopoverOpen}
-            labels={repoLabels.data}
-            selectedLabels={localLabels}
-            error={repoLabels.error}
-            loading={repoLabels.loading}
-            repositoryLabelsUrl={repositoryLabelsUrl}
-            onToggleLabel={handleLabelToggle}
-            onOpenSettingsLink={() => setLabelPopoverOpen(false)}
-          />
+          {repoLabels.error ? (
+            <div className="px-2 py-3 text-center text-[12px] text-destructive">
+              {repoLabels.error}
+            </div>
+          ) : (
+            <div>
+              {repoLabels.data.map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => handleLabelToggle(label)}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] hover:bg-accent"
+                >
+                  <span
+                    className={cn(
+                      'flex size-3.5 items-center justify-center rounded-sm border',
+                      localLabels.includes(label)
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-input'
+                    )}
+                  >
+                    {localLabels.includes(label) && checkIcon}
+                  </span>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
         </PopoverContent>
       </Popover>
 
@@ -5342,14 +5340,41 @@ function GHEditSection({
           </button>
         </PopoverTrigger>
         <PopoverContent className="popover-scroll-content scrollbar-sleek w-52 p-1" align="start">
-          <GitHubWorkItemAssigneePopoverContent
-            open={assigneePopoverOpen}
-            assignees={repoAssignees.data}
-            selectedLogins={localAssignees}
-            error={repoAssignees.error}
-            loading={repoAssignees.loading}
-            onToggleAssignee={handleAssigneeToggle}
-          />
+          {repoAssignees.error ? (
+            <div className="px-2 py-3 text-center text-[12px] text-destructive">
+              {repoAssignees.error}
+            </div>
+          ) : (
+            <div>
+              {repoAssignees.data.map((user) => (
+                <button
+                  key={user.login}
+                  type="button"
+                  onClick={() => handleAssigneeToggle(user.login)}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-[12px] hover:bg-accent"
+                >
+                  <span
+                    className={cn(
+                      'flex size-3.5 items-center justify-center rounded-sm border',
+                      localAssignees.includes(user.login)
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-input'
+                    )}
+                  >
+                    {localAssignees.includes(user.login) && checkIcon}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate">{user.login}</span>
+                    {user.name && (
+                      <span className="block truncate text-[11px] text-muted-foreground">
+                        {user.name}
+                      </span>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </PopoverContent>
       </Popover>
 

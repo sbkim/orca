@@ -2,9 +2,6 @@ import React, { useCallback, useState } from 'react'
 import { useAppStore } from '@/store'
 import { useRemoteRepo } from './AddRepoSteps'
 import { useCreateRepo } from './useCreateRepo'
-import { buildNestedRepoScanTelemetry } from '../../../../shared/nested-repo-telemetry'
-import type { AddRepoExistingWorkspaceSource } from '../../../../shared/telemetry-events'
-import { AddRepoStepIndicator } from './AddRepoStepIndicator'
 import { AddRepoDialogStepContent } from './AddRepoDialogStepContent'
 import type { AddRepoDialogStep } from './add-repo-dialog-types'
 import { useAddRepoNestedReviewState } from './useAddRepoNestedReviewState'
@@ -12,9 +9,13 @@ import { useAddRepoCloneFlow } from './useAddRepoCloneFlow'
 import { useAddRepoLocalFolderFlow } from './useAddRepoLocalFolderFlow'
 import { useAddRepoServerPathFlow } from './useAddRepoServerPathFlow'
 import { useAddRepoNestedImportFlow } from './useAddRepoNestedImportFlow'
-import { buildAddRepoExistingWorkspacesDetectedEvent } from './add-repo-existing-workspaces-telemetry'
-import { finishProjectAddWithDefaultCheckout } from './project-added-default-checkout'
+import { useAddRepoHostSelection } from './use-add-repo-host-selection'
+import { useCompleteGitRepoAdd } from './use-complete-git-repo-add'
 import { useCreateProjectDefaults } from './useCreateProjectDefaults'
+import { useAddRepoHostChangeReset } from './use-add-repo-host-change-reset'
+import { AddRepoDialogChrome } from './AddRepoDialogChrome'
+import { AddRepoHostSelectorSlot } from './AddRepoHostSelectorSlot'
+import { useAddRepoRemoteNestedScan } from './use-add-repo-remote-nested-scan'
 
 const AddRepoDialog = React.memo(function AddRepoDialog() {
   const activeModal = useAppStore((s) => s.activeModal)
@@ -62,27 +63,15 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
     setStep
   })
 
-  const completeGitRepoAdd = useCallback(
-    async (repoId: string, source: AddRepoExistingWorkspaceSource): Promise<void> => {
-      const worktrees = useAppStore.getState().worktreesByRepo[repoId] ?? []
-      const existingWorkspaceTelemetry = buildAddRepoExistingWorkspacesDetectedEvent(
-        source,
-        worktrees
-      )
-      if (existingWorkspaceTelemetry && !detectedTelemetryTrackedRef.current.has(repoId)) {
-        detectedTelemetryTrackedRef.current.add(repoId)
-        track('add_repo_existing_workspaces_detected', existingWorkspaceTelemetry)
-      }
-      await finishProjectAddWithDefaultCheckout({
-        repoId,
-        source,
-        closeModal,
-        setHideDefaultBranchWorkspace
-      })
-    },
-    [closeModal, setHideDefaultBranchWorkspace]
-  )
-
+  const hostSelection = useAddRepoHostSelection({ isOpen: activeModal === 'add-repo', setStep })
+  const selectedRuntimeEnvironmentId =
+    hostSelection.selectedParsedHost?.kind === 'runtime'
+      ? hostSelection.selectedParsedHost.environmentId
+      : null
+  const { showRemoteNestedRepoReview, trackRemoteNestedScanResult } = useAddRepoRemoteNestedScan({
+    setActiveNestedScanId,
+    showNestedRepoReview
+  })
   const {
     sshTargets,
     selectedTargetId,
@@ -111,10 +100,12 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
   const {
     createName,
     createParent,
+    createKind,
     createError,
     isCreating,
     setCreateName,
     setCreateParent,
+    setCreateKind,
     setCreateError,
     resetCreateState,
     handlePickParent,
@@ -136,12 +127,15 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
     createRuntimeParentStatus,
     createParentDefaultPending,
     resetCreateDefaultState,
-    markCreateParentTouched
+    markCreateParentTouched,
+    markCreateKindTouched
   } = useCreateProjectDefaults({
     step,
-    activeRuntimeEnvironmentId: settings?.activeRuntimeEnvironmentId,
+    activeRuntimeEnvironmentId: selectedRuntimeEnvironmentId,
+    sshTargetId: hostSelection.selectedSshTargetId,
     createParent,
-    setCreateParent
+    setCreateParent,
+    setCreateKind
   })
 
   const {
@@ -296,108 +290,123 @@ const AddRepoDialog = React.memo(function AddRepoDialog() {
       onBack={handleBack}
       onOpenChange={handleOpenChange}
     >
-      <DialogContent
-        className={`min-w-0 overflow-hidden sm:max-w-lg [&>*]:min-w-0 ${
-          step === 'nested' ? 'max-h-[calc(100vh-2rem)] grid-rows-[auto_auto_minmax(0,1fr)]' : ''
-        }`}
-      >
-        <AddRepoStepIndicator step={step} isAdding={isAdding} onBack={handleBack} />
-        <AddRepoDialogStepContent
-          step={step}
-          isRuntimeEnvironmentActive={isRuntimeEnvironmentActive}
-          activeRuntimeEnvironmentId={settings?.activeRuntimeEnvironmentId}
-          isSshLikely={isSshLikely}
-          repoCount={repos.length}
-          isAdding={isAdding}
-          addProjectBusyLabel={addProjectBusyLabel}
-          nestedScanInProgress={nestedScanInProgress}
-          nestedScanId={nestedScanId}
-          serverPath={serverPath}
-          isAddingServerPath={isAddingServerPath}
-          cloneUrl={cloneUrl}
-          cloneDestination={cloneDestination}
-          cloneError={cloneError}
-          cloneProgress={cloneProgress}
-          isCloning={isCloning}
-          sshTargets={sshTargets}
-          selectedTargetId={selectedTargetId}
-          remotePath={remotePath}
-          remoteError={remoteError}
-          isAddingRemote={isAddingRemote}
-          isScanningRemoteNested={isScanningRemoteNested}
-          nestedScan={nestedScan}
-          nestedSelectedPaths={nestedSelectedPaths}
-          nestedGroupName={nestedGroupName}
-          createName={createName}
-          createParent={createParent}
-          createError={createError}
-          isCreating={isCreating}
-          createDefaultParent={createDefaultParent}
-          createGitAvailability={createGitAvailability}
-          createRuntimeParentStatus={createRuntimeParentStatus}
-          createParentDefaultPending={createParentDefaultPending}
-          onBrowse={handleBrowse}
-          onOpenCloneStep={() => {
-            setCloneError(null)
-            setStep('clone')
-          }}
-          onOpenCreateStep={() => {
-            setCreateError(null)
-            setStep('create')
-          }}
-          onOpenRemoteStep={handleOpenRemoteStep}
-          onStopNestedScan={handleStopNestedScan}
-          onServerPathChange={setServerPath}
-          onAddServerPath={(kind) => void handleAddServerPath(kind)}
-          onSelectTarget={(id) => {
-            setSelectedTargetId(id)
-            setRemoteError(null)
-          }}
-          onRemotePathChange={(value) => {
-            setRemotePath(value)
-            setRemoteError(null)
-          }}
-          onAddRemoteRepo={handleAddRemoteRepo}
-          onOpenSshSettings={() => {
-            closeModal()
-            openSettingsTarget({ pane: 'ssh', repoId: null, sectionId: 'ssh' })
-            openSettingsPage()
-          }}
-          onConnectTarget={handleConnectTarget}
-          onStopRemoteNestedScan={stopRemoteNestedScan}
-          onCloneUrlChange={(value) => {
-            setCloneUrl(value)
-            setCloneError(null)
-          }}
-          onCloneDestinationChange={(value) => {
-            setCloneDestination(value)
-            setCloneError(null)
-          }}
-          onPickCloneDestination={handlePickDestination}
-          onClone={handleClone}
-          onNestedGroupNameChange={setNestedGroupName}
-          onNestedSelectedPathsChange={setNestedSelectedPaths}
-          onImportNestedRepos={(mode) => void handleImportNestedRepos(mode)}
-          onCreateNameChange={(value) => {
-            setCreateName(value)
-            setCreateError(null)
-          }}
-          onCreateParentChange={(value) => {
-            markCreateParentTouched(value)
-            setCreateParent(value)
-            setCreateError(null)
-          }}
-          onPickCreateParent={() => {
-            void handlePickParent().then((dir) => {
-              if (dir) {
-                markCreateParentTouched(dir)
-              }
-            })
-          }}
-          onCreate={handleCreate}
-        />
-      </DialogContent>
-    </Dialog>
+      <AddRepoDialogStepContent
+        step={step}
+        isRuntimeEnvironmentActive={isRuntimeEnvironmentActive}
+        activeRuntimeEnvironmentId={selectedRuntimeEnvironmentId}
+        isSshLikely={false}
+        repoCount={repos.length}
+        isAdding={isAdding}
+        addProjectBusyLabel={addProjectBusyLabel}
+        nestedScanInProgress={nestedScanInProgress}
+        nestedScanId={nestedScanId}
+        serverPath={serverPath}
+        isAddingServerPath={isAddingServerPath}
+        cloneUrl={cloneUrl}
+        cloneDestination={cloneDestination}
+        cloneError={cloneError}
+        cloneProgress={cloneProgress}
+        isCloning={isCloning}
+        sshTargets={sshTargets}
+        selectedTargetId={selectedTargetId}
+        selectedSshTargetId={hostSelection.selectedSshTargetId}
+        selectedHostLabel={
+          hostSelection.hostOptions.find((host) => host.id === hostSelection.selectedHostId)
+            ?.label ?? hostSelection.selectedHostId
+        }
+        lockSshTargetSelection={hostSelection.selectedParsedHost?.kind === 'ssh'}
+        remotePath={remotePath}
+        remoteError={remoteError}
+        isAddingRemote={isAddingRemote}
+        isScanningRemoteNested={isScanningRemoteNested}
+        nestedScan={nestedScan}
+        nestedSelectedPaths={nestedSelectedPaths}
+        nestedGroupName={nestedGroupName}
+        createName={createName}
+        createParent={createParent}
+        createKind={createKind}
+        createError={createError}
+        isCreating={isCreating}
+        hostSelector={<AddRepoHostSelectorSlot hostSelection={hostSelection} />}
+        showRemoteAction={false}
+        browseHostKind={hostSelection.selectedParsedHost?.kind === 'ssh' ? 'ssh' : 'local'}
+        createDefaultParent={createDefaultParent}
+        createGitAvailability={createGitAvailability}
+        createRuntimeParentStatus={createRuntimeParentStatus}
+        createParentDefaultPending={createParentDefaultPending}
+        manualCreateParentEntry={
+          isRuntimeEnvironmentActive || hostSelection.selectedParsedHost?.kind === 'ssh'
+        }
+        onBrowse={
+          hostSelection.selectedParsedHost?.kind === 'ssh'
+            ? () => void handleOpenRemoteStep(hostSelection.selectedSshTargetId)
+            : handleBrowse
+        }
+        onOpenCloneStep={() => {
+          setCloneError(null)
+          setStep('clone')
+        }}
+        onOpenCreateStep={() => {
+          setCreateError(null)
+          setStep('create')
+        }}
+        onOpenRemoteStep={handleOpenRemoteStep}
+        onStopNestedScan={handleStopNestedScan}
+        onServerPathChange={setServerPath}
+        onAddServerPath={(kind) => void handleAddServerPath(kind)}
+        onSelectTarget={(id) => {
+          setSelectedTargetId(id)
+          setRemoteError(null)
+        }}
+        onRemotePathChange={(value) => {
+          setRemotePath(value)
+          setRemoteError(null)
+        }}
+        onAddRemoteRepo={handleAddRemoteRepo}
+        onOpenSshSettings={() => {
+          closeModal()
+          openSettingsTarget({ pane: 'ssh', repoId: null, sectionId: 'ssh' })
+          openSettingsPage()
+        }}
+        onConnectTarget={handleConnectTarget}
+        onStopRemoteNestedScan={stopRemoteNestedScan}
+        onCloneUrlChange={(value) => {
+          setCloneUrl(value)
+          setCloneError(null)
+        }}
+        onCloneDestinationChange={(value) => {
+          setCloneDestination(value)
+          setCloneError(null)
+        }}
+        onPickCloneDestination={handlePickDestination}
+        onClone={handleClone}
+        onNestedGroupNameChange={setNestedGroupName}
+        onNestedSelectedPathsChange={setNestedSelectedPaths}
+        onImportNestedRepos={(mode) => void handleImportNestedRepos(mode)}
+        onCreateNameChange={(value) => {
+          setCreateName(value)
+          setCreateError(null)
+        }}
+        onCreateParentChange={(value) => {
+          markCreateParentTouched(value)
+          setCreateParent(value)
+          setCreateError(null)
+        }}
+        onCreateKindChange={(kind) => {
+          markCreateKindTouched()
+          setCreateKind(kind)
+          setCreateError(null)
+        }}
+        onPickCreateParent={() => {
+          void handlePickParent().then((dir) => {
+            if (dir) {
+              markCreateParentTouched(dir)
+            }
+          })
+        }}
+        onCreate={handleCreate}
+      />
+    </AddRepoDialogChrome>
   )
 })
 

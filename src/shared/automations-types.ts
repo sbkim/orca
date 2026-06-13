@@ -1,4 +1,5 @@
 import type { TuiAgent } from './types'
+import type { TaskSourceContext, WorkspaceRunContext } from './task-source-context'
 
 export type AutomationWorkspaceMode = 'existing' | 'new_per_run'
 export type AutomationExecutionTargetType = 'local' | 'ssh'
@@ -80,6 +81,12 @@ export type Automation = {
   prompt: string
   precheck: AutomationPrecheck | null
   agentId: TuiAgent
+  /** Why: projectId is still the legacy repo id during migration; runContext
+   *  carries the logical project + host setup identity for multi-host projects. */
+  runContext?: WorkspaceRunContext | null
+  /** Why: task/provider data can come from a different host/account than the
+   *  workspace run target, so automations persist it separately. */
+  sourceContext?: TaskSourceContext | null
   projectId: string
   executionTargetType: AutomationExecutionTargetType
   executionTargetId: string
@@ -103,6 +110,8 @@ export type Automation = {
 export type AutomationRun = {
   id: string
   automationId: string
+  runContext?: WorkspaceRunContext | null
+  sourceContext?: TaskSourceContext | null
   title: string
   scheduledFor: number
   status: AutomationRunStatus
@@ -128,6 +137,8 @@ export type AutomationCreateInput = {
   prompt: string
   precheck?: AutomationPrecheck | null
   agentId: TuiAgent
+  runContext?: WorkspaceRunContext | null
+  sourceContext?: TaskSourceContext | null
   projectId: string
   workspaceMode: AutomationWorkspaceMode
   workspaceId?: string | null
@@ -147,6 +158,8 @@ export type AutomationUpdateInput = Partial<
     | 'prompt'
     | 'precheck'
     | 'agentId'
+    | 'runContext'
+    | 'sourceContext'
     | 'projectId'
     | 'workspaceMode'
     | 'workspaceId'

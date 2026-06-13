@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType, type Ref } from 'react'
+import { useEffect, useRef, useState, type ComponentType, type ReactNode, type Ref } from 'react'
 import { CircleStop, Loader2 } from 'lucide-react'
 import { DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -172,6 +172,7 @@ export function AddRepoLocalStartStep({
         onBlur={handleActionsBlur}
         onKeyDown={handleArrowNavigation}
       >
+        {hostSelector}
         <AddRepoPrimaryStartAction
           icon={primaryAction.icon}
           title={primaryAction.title}
@@ -198,7 +199,7 @@ export function AddRepoLocalStartStep({
                 icon={action.icon}
                 title={action.title}
                 description={action.description}
-                disabled={isAdding}
+                disabled={isAdding || Boolean(action.disabled)}
                 selected={selectedKind === action.kind}
                 onClick={action.onClick}
                 onFocus={() => setSelectedKind(action.kind)}

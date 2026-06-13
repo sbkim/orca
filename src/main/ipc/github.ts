@@ -14,6 +14,8 @@ import type {
   GitHubPRRefreshReason,
   PRRefreshOutcome
 } from '../../shared/types'
+import { getRepoExecutionHostId } from '../../shared/execution-host'
+import type { TaskSourceContext } from '../../shared/task-source-context'
 import type { Store } from '../persistence'
 import type { StatsCollector } from '../stats/collector'
 import {
@@ -130,7 +132,11 @@ function broadcastWorkItemMutated(
 
 // Why: returns the full Repo object instead of just the path string so that
 // callers have access to repo.id for stat tracking and other context.
-type RepoScopedArgs = { repoPath: string; repoId?: string }
+type RepoScopedArgs = {
+  repoPath: string
+  repoId?: string | null
+  sourceContext?: TaskSourceContext | null
+}
 
 function assertRegisteredRepo(args: string | RepoScopedArgs, store: Store): Repo {
   const repoPath = typeof args === 'string' ? args : args.repoPath
@@ -144,6 +150,13 @@ function assertRegisteredRepo(args: string | RepoScopedArgs, store: Store): Repo
   }
   if (repoId && resolve(repo.path) !== resolvedRepoPath) {
     throw new Error('Access denied: repository path does not match repo id')
+  }
+  if (
+    typeof args !== 'string' &&
+    args.sourceContext?.provider === 'github' &&
+    args.sourceContext.hostId !== getRepoExecutionHostId(repo)
+  ) {
+    throw new Error('Access denied: GitHub source host does not match repository host')
   }
   return repo
 }

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -25,8 +26,10 @@ function useRuntimeSettingsForSlug(owner: string, repo: string) {
     () => lookupSlug(`${owner}/${repo}`)[0] ?? null,
     [lookupSlug, owner, repo]
   )
-  return useAppStore((s) =>
-    matchedRepo ? getSettingsForRepoRuntimeOwner(s, matchedRepo.id) : s.settings
+  return useAppStore(
+    useShallow((s) =>
+      matchedRepo ? getSettingsForRepoRuntimeOwner(s, matchedRepo.id) : s.settings
+    )
   )
 }
 

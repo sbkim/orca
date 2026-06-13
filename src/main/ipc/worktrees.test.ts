@@ -3185,7 +3185,11 @@ describe('registerWorktreeHandlers', () => {
       })
     ])
     expect(store.getWorktreeMeta).not.toHaveBeenCalled()
-    expect(store.setWorktreeMeta).not.toHaveBeenCalled()
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith('repo-ssh::/remote/feature-wt', {
+      projectId: 'repo:repo-ssh',
+      hostId: 'ssh:conn-1',
+      projectHostSetupId: 'repo-ssh'
+    })
   })
 
   it('falls back to reconstructed SSH rows when provider listing throws', async () => {
@@ -3484,6 +3488,187 @@ describe('registerWorktreeHandlers', () => {
       hostId: 'local',
       projectHostSetupId: 'repo-1'
     })
+  })
+
+  it('repairs legacy project ids when discovery now resolves the same host setup to a logical project', async () => {
+    // Why: provider identity can become available after metadata was written.
+    // Existing workspaces should move from repo-scoped IDs to the logical
+    // project ID without losing activity ordering.
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/existing-wt',
+        head: 'abc123',
+        branch: 'refs/heads/feature',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    store.getProjectHostSetups.mockReturnValue([
+      {
+        id: 'repo-1',
+        projectId: 'github:stablyai/orca',
+        hostId: 'local',
+        repoId: 'repo-1',
+        path: '/workspace/repo',
+        displayName: 'repo',
+        setupState: 'ready',
+        setupMethod: 'legacy-repo',
+        createdAt: 0,
+        updatedAt: 0
+      }
+    ])
+    store.getWorktreeMeta.mockReturnValue({
+      displayName: '',
+      comment: '',
+      linkedIssue: null,
+      linkedPR: null,
+      instanceId: 'existing-instance',
+      projectId: 'repo:repo-1',
+      hostId: 'local',
+      projectHostSetupId: 'repo-1',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 42
+    })
+    store.setWorktreeMeta.mockReturnValue({
+      instanceId: 'existing-instance',
+      projectId: 'github:stablyai/orca',
+      hostId: 'local',
+      projectHostSetupId: 'repo-1',
+      lastActivityAt: 42
+    })
+
+    const listed = (await handlers['worktrees:list'](null, { repoId: 'repo-1' })) as {
+      id: string
+      lastActivityAt: number
+      projectId?: string
+      hostId?: string
+      projectHostSetupId?: string
+    }[]
+
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith('repo-1::/workspace/existing-wt', {
+      projectId: 'github:stablyai/orca'
+    })
+    expect(listed[0]).toMatchObject({
+      id: 'repo-1::/workspace/existing-wt',
+      projectId: 'github:stablyai/orca',
+      hostId: 'local',
+      projectHostSetupId: 'repo-1',
+      lastActivityAt: 42
+    })
+  })
+
+  it('does not repair ownership when discovery points at a different project-host setup', async () => {
+    listWorktreesMock.mockResolvedValue([
+      {
+        path: '/workspace/existing-wt',
+        head: 'abc123',
+        branch: 'refs/heads/feature',
+        isBare: false,
+        isMainWorktree: false
+      }
+    ])
+    store.getProjectHostSetups.mockReturnValue([
+      {
+        id: 'repo-1',
+        projectId: 'github:stablyai/orca',
+        hostId: 'local',
+        repoId: 'repo-1',
+        path: '/workspace/repo',
+        displayName: 'repo',
+        setupState: 'ready',
+        setupMethod: 'legacy-repo',
+        createdAt: 0,
+        updatedAt: 0
+      }
+    ])
+    store.getWorktreeMeta.mockReturnValue({
+      displayName: '',
+      comment: '',
+      linkedIssue: null,
+      linkedPR: null,
+      instanceId: 'existing-instance',
+      projectId: 'github:other/project',
+      hostId: 'ssh:ssh-target-1',
+      projectHostSetupId: 'repo-other-host',
+      isArchived: false,
+      isUnread: false,
+      isPinned: false,
+      sortOrder: 0,
+      lastActivityAt: 42
+    })
+
+    await handlers['worktrees:list'](null, { repoId: 'repo-1' })
+
+    expect(store.setWorktreeMeta).not.toHaveBeenCalled()
+  })
+
+  it('repairs legacy project ids when SSH worktree listing falls back to persisted metadata', async () => {
+    const repo = {
+      id: 'repo-ssh',
+      path: '/remote/orca',
+      displayName: 'orca',
+      badgeColor: '#000',
+      addedAt: 0,
+      connectionId: 'ssh-target-1'
+    }
+    store.getRepo.mockReturnValue(repo)
+    store.getAllWorktreeMeta.mockReturnValue({
+      'repo-ssh::/remote/orca': makeWorktreeMeta({
+        instanceId: 'existing-instance',
+        projectId: 'repo:repo-ssh',
+        hostId: 'ssh:ssh-target-1',
+        projectHostSetupId: 'repo-ssh',
+        lastActivityAt: 42
+      })
+    })
+    store.getProjectHostSetups.mockReturnValue([
+      {
+        id: 'repo-ssh',
+        projectId: 'github:stablyai/orca',
+        hostId: 'ssh:ssh-target-1',
+        repoId: 'repo-ssh',
+        path: '/remote/orca',
+        displayName: 'orca',
+        setupState: 'ready',
+        setupMethod: 'imported-existing-folder',
+        createdAt: 0,
+        updatedAt: 0
+      }
+    ])
+    store.setWorktreeMeta.mockReturnValue(
+      makeWorktreeMeta({
+        instanceId: 'existing-instance',
+        projectId: 'github:stablyai/orca',
+        hostId: 'ssh:ssh-target-1',
+        projectHostSetupId: 'repo-ssh',
+        lastActivityAt: 42
+      })
+    )
+
+    const listed = (await handlers['worktrees:list'](null, { repoId: 'repo-ssh' })) as {
+      id: string
+      projectId?: string
+      hostId?: string
+      projectHostSetupId?: string
+      lastActivityAt: number
+    }[]
+
+    expect(getSshGitProviderMock).toHaveBeenCalledWith('ssh-target-1')
+    expect(store.setWorktreeMeta).toHaveBeenCalledWith('repo-ssh::/remote/orca', {
+      projectId: 'github:stablyai/orca'
+    })
+    expect(listed).toEqual([
+      expect.objectContaining({
+        id: 'repo-ssh::/remote/orca',
+        projectId: 'github:stablyai/orca',
+        hostId: 'ssh:ssh-target-1',
+        projectHostSetupId: 'repo-ssh',
+        lastActivityAt: 42
+      })
+    ])
   })
 
   it('does not rewrite discovery metadata when instance and project-host ownership already exist', async () => {

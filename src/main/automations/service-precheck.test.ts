@@ -105,6 +105,46 @@ describe('AutomationService prechecks', () => {
     })
   })
 
+  it('does not run scheduled prechecks when the selected host setup is stale', async () => {
+    vi.setSystemTime(new Date('2026-05-13T08:00:00Z'))
+    const store = await createStore()
+    store.addRepo(makeRepo({ path: '/repo/current' }))
+    const setup = store.getProjectHostSetups()[0]!
+    const automation = store.createAutomation({
+      name: 'Conditional check',
+      prompt: 'Check the repo',
+      precheck: {
+        command: 'test -f ready',
+        timeoutSeconds: 30
+      },
+      agentId: 'claude',
+      projectId: 'r1',
+      runContext: {
+        kind: 'workspace-run',
+        projectId: setup.projectId,
+        hostId: setup.hostId,
+        projectHostSetupId: setup.id,
+        repoId: setup.repoId,
+        path: '/repo/old'
+      },
+      workspaceMode: 'new_per_run',
+      timezone: 'UTC',
+      rrule: 'FREQ=DAILY;BYHOUR=9;BYMINUTE=0',
+      dtstart: new Date('2026-05-14T00:00:00Z').getTime()
+    })
+    const run = store.createAutomationRun(automation, Date.now(), 'scheduled')
+    const service = new AutomationService(store, { tickMs: 60_000 })
+
+    const result = await service.runPrecheck(automation.id, run.id)
+
+    expect(result).toMatchObject({
+      command: 'test -f ready',
+      exitCode: null,
+      error: 'Project path for the selected automation host has changed.'
+    })
+    expect(runAutomationPrecheckMock).not.toHaveBeenCalled()
+  })
+
   it('does not run prechecks for manual dispatches', async () => {
     vi.setSystemTime(new Date('2026-05-13T08:00:00Z'))
     const store = await createStore()

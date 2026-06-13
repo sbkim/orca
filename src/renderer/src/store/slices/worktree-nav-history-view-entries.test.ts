@@ -2,6 +2,7 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { AppState } from '../types'
 import type { GitHubWorkItem, Worktree } from '../../../../shared/types'
+import type { TaskSourceContext } from '../../../../shared/task-source-context'
 import {
   createWorktreeNavHistorySlice,
   findPrevLiveWorktreeHistoryIndex,
@@ -172,5 +173,39 @@ describe('worktree-nav-history slice: view entries', () => {
     store.getState().goForwardWorktree()
     expect(viewed).toEqual(['tasks', detail])
     expect(store.getState().worktreeNavHistoryIndex).toBe(2)
+  })
+
+  it('keeps same GitHub item details separate when the source host differs', () => {
+    const store = createHistoryStore(['a'])
+    const workItem = makeGitHubWorkItem()
+    const localSource: TaskSourceContext = {
+      kind: 'task-source',
+      provider: 'github',
+      projectId: 'project-1',
+      hostId: 'local',
+      repoId: 'repo-1',
+      providerIdentity: { provider: 'github', owner: 'acme', repo: 'repo' }
+    }
+    const sshSource: TaskSourceContext = {
+      ...localSource,
+      hostId: 'ssh:devbox',
+      projectHostSetupId: 'setup-ssh'
+    }
+
+    store.getState().recordViewVisit({
+      kind: 'task-detail',
+      source: 'github',
+      workItem,
+      sourceContext: localSource
+    })
+    store.getState().recordViewVisit({
+      kind: 'task-detail',
+      source: 'github',
+      workItem,
+      sourceContext: sshSource
+    })
+
+    expect(store.getState().worktreeNavHistory).toHaveLength(2)
+    expect(store.getState().worktreeNavHistoryIndex).toBe(1)
   })
 })

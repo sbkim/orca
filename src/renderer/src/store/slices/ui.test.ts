@@ -19,6 +19,7 @@ import type { FeatureInteractionState } from '../../../../shared/feature-interac
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { buildAgentNotificationId } from '../../../../shared/agent-notification-id'
 import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
+import type { TaskSourceContext } from '../../../../shared/task-source-context'
 
 const mocks = vi.hoisted(() => ({
   sendBracketedPasteToRunningAgent: vi.fn(),
@@ -650,6 +651,106 @@ describe('createUISlice hydratePersistedUI', () => {
     expect(store.getState().rightSidebarExplorerView).toBe('search')
   })
 
+  it('hydrates a persisted workspace host scope', () => {
+    const store = createUIStore()
+
+    store.getState().hydratePersistedUI(makePersistedUI({ workspaceHostScope: 'ssh:win%20vm' }))
+
+    expect(store.getState().workspaceHostScope).toBe('ssh:win%20vm')
+    expect(store.getState().visibleWorkspaceHostIds).toEqual(['ssh:win%20vm'])
+  })
+
+  it('hydrates a persisted visible workspace host set', () => {
+    const store = createUIStore()
+
+    store.getState().hydratePersistedUI(
+      makePersistedUI({
+        workspaceHostScope: 'ssh:win%20vm',
+        visibleWorkspaceHostIds: [
+          'local',
+          'ssh:win%20vm',
+          'bogus' as NonNullable<PersistedUIState['visibleWorkspaceHostIds']>[number],
+          'local'
+        ]
+      })
+    )
+
+    expect(store.getState().workspaceHostScope).toBe('ssh:win%20vm')
+    expect(store.getState().visibleWorkspaceHostIds).toEqual(['local', 'ssh:win%20vm'])
+  })
+
+  it('hydrates a persisted workspace host order', () => {
+    const store = createUIStore()
+
+    store.getState().hydratePersistedUI(
+      makePersistedUI({
+        workspaceHostOrder: [
+          'ssh:win%20vm',
+          'bogus' as NonNullable<PersistedUIState['workspaceHostOrder']>[number],
+          'local',
+          'ssh:win%20vm'
+        ]
+      })
+    )
+
+    expect(store.getState().workspaceHostOrder).toEqual(['ssh:win%20vm', 'local'])
+  })
+
+  it('falls back to all hosts for invalid persisted workspace host scopes', () => {
+    const store = createUIStore()
+
+    store
+      .getState()
+      .hydratePersistedUI(
+        makePersistedUI({ workspaceHostScope: 'bogus' as PersistedUIState['workspaceHostScope'] })
+      )
+
+    expect(store.getState().workspaceHostScope).toBe('all')
+    expect(store.getState().visibleWorkspaceHostIds).toBeNull()
+  })
+
+  it('persists workspace host scope changes', () => {
+    const setUI = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('window', { api: { ui: { set: setUI } } })
+    const store = createUIStore()
+
+    store.getState().setWorkspaceHostScope('runtime:env-1')
+
+    expect(store.getState().workspaceHostScope).toBe('runtime:env-1')
+    expect(store.getState().visibleWorkspaceHostIds).toEqual(['runtime:env-1'])
+    expect(setUI).toHaveBeenCalledWith({
+      workspaceHostScope: 'runtime:env-1',
+      visibleWorkspaceHostIds: ['runtime:env-1']
+    })
+  })
+
+  it('persists visible workspace host changes independently of focused host', () => {
+    const setUI = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('window', { api: { ui: { set: setUI } } })
+    const store = createUIStore()
+
+    store.getState().setWorkspaceHostScope('runtime:env-1')
+    store.getState().setVisibleWorkspaceHostIds(['local', 'runtime:env-1'])
+
+    expect(store.getState().workspaceHostScope).toBe('runtime:env-1')
+    expect(store.getState().visibleWorkspaceHostIds).toEqual(['local', 'runtime:env-1'])
+    expect(setUI).toHaveBeenLastCalledWith({
+      workspaceHostScope: 'runtime:env-1',
+      visibleWorkspaceHostIds: ['local', 'runtime:env-1']
+    })
+  })
+
+  it('persists workspace host order changes', () => {
+    const setUI = vi.fn(() => Promise.resolve())
+    vi.stubGlobal('window', { api: { ui: { set: setUI } } })
+    const store = createUIStore()
+
+    store.getState().setWorkspaceHostOrder(['ssh:win%20vm', 'bogus' as never, 'local'])
+
+    expect(store.getState().workspaceHostOrder).toEqual(['ssh:win%20vm', 'local'])
+    expect(setUI).toHaveBeenCalledWith({ workspaceHostOrder: ['ssh:win%20vm', 'local'] })
+  })
+
   it('hydrates persisted per-worktree dotfile visibility', () => {
     const store = createUIStore()
 
@@ -1273,9 +1374,59 @@ describe('createUISlice settings navigation', () => {
       'repo-1',
       '/repo',
       expect.any(Number),
-      'is:issue is:open'
+      'is:issue is:open',
+      { sourceContext: null }
     )
     expect(prefetchLinearIssues).not.toHaveBeenCalled()
+  })
+
+  it('prefetches direct GitHub task opens with their source context', () => {
+    const store = createUIStore()
+    const prefetchWorkItems = vi.fn()
+    const workItem = makeGitHubWorkItem()
+    const sourceContext: TaskSourceContext = {
+      kind: 'task-source',
+      provider: 'github',
+      projectId: 'project-1',
+      hostId: 'ssh:devbox',
+      projectHostSetupId: 'setup-1',
+      repoId: 'repo-1',
+      providerIdentity: { provider: 'github', owner: 'acme', repo: 'repo' }
+    }
+
+    store.setState({
+      repos: [
+        {
+          id: 'repo-1',
+          path: '/repo',
+          displayName: 'Repo',
+          badgeColor: 'blue',
+          addedAt: 1,
+          kind: 'git'
+        }
+      ],
+      settings: {
+        visibleTaskProviders: ['github'],
+        defaultTaskSource: 'github',
+        defaultTaskViewPreset: 'all'
+      } as unknown as AppState['settings'],
+      prefetchWorkItems
+    } as unknown as Partial<AppState>)
+
+    store.getState().openTaskPage({
+      taskSource: 'github',
+      preselectedRepoId: 'repo-1',
+      openGitHubWorkItem: workItem,
+      openGitHubSourceContext: sourceContext
+    })
+
+    expect(prefetchWorkItems).toHaveBeenCalledWith(
+      'repo-1',
+      '/repo',
+      expect.any(Number),
+      'is:issue is:open',
+      { sourceContext }
+    )
   })
 
   it('returns to the tasks page after visiting settings from an in-progress draft', () => {
@@ -1403,7 +1554,13 @@ describe('createUISlice page navigation history', () => {
     expect(store.getState().worktreeNavHistory).toEqual([
       'a',
       'tasks',
-      { kind: 'task-detail', source: 'github', workItem, initialTab: undefined }
+      {
+        kind: 'task-detail',
+        source: 'github',
+        workItem,
+        sourceContext: undefined,
+        initialTab: undefined
+      }
     ])
     expect(store.getState().worktreeNavHistoryIndex).toBe(2)
 
@@ -1427,6 +1584,34 @@ describe('createUISlice page navigation history', () => {
     expect(recordFeatureInteraction).toHaveBeenCalledWith('tasks')
     expect(recordFeatureInteraction).toHaveBeenCalledWith('github-tasks')
     expect(recordFeatureInteraction).toHaveBeenCalledWith('linear-tasks')
+  })
+
+  it('preserves GitHub task detail source context in navigation history', () => {
+    const store = createUIStore()
+    const workItem = makeGitHubWorkItem({ repoId: 'repo-remote' })
+    const sourceContext: TaskSourceContext = {
+      kind: 'task-source',
+      provider: 'github',
+      projectId: 'project-1',
+      hostId: 'ssh:devbox',
+      projectHostSetupId: 'setup-1',
+      repoId: 'repo-remote',
+      providerIdentity: { provider: 'github', owner: 'stablyai', repo: 'orca' }
+    }
+
+    store.getState().openTaskPage({
+      taskSource: 'github',
+      openGitHubWorkItem: workItem,
+      openGitHubSourceContext: sourceContext
+    })
+
+    expect(store.getState().worktreeNavHistory.at(-1)).toEqual({
+      kind: 'task-detail',
+      source: 'github',
+      workItem,
+      sourceContext,
+      initialTab: undefined
+    })
   })
 
   it('can suppress the Tasks surface interaction for in-page provider navigation', () => {
@@ -1465,7 +1650,13 @@ describe('createUISlice page navigation history', () => {
     expect(store.getState().worktreeNavHistory).toEqual([
       'a',
       'tasks',
-      { kind: 'task-detail', source: 'github', workItem, initialTab: undefined },
+      {
+        kind: 'task-detail',
+        source: 'github',
+        workItem,
+        sourceContext: undefined,
+        initialTab: undefined
+      },
       'tasks'
     ])
 

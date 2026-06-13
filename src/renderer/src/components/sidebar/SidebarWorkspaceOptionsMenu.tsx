@@ -39,15 +39,6 @@ type SidebarWorkspaceOptionsMenuProps = {
   onMenuOpenChange?: (open: boolean) => void
 }
 
-import {
-  AGENT_ACTIVITY_DISPLAY_OPTIONS,
-  CARD_LAYOUT_OPTIONS,
-  GROUP_BY_OPTIONS,
-  PROJECT_ORDER_OPTIONS,
-  PROPERTY_OPTIONS,
-  SORT_OPTIONS
-} from './sidebar-workspace-options-menu-options'
-
 const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsMenu({
   preserveWorkspaceBoardOpen = false,
   onMenuOpenChange
@@ -175,6 +166,18 @@ const SidebarWorkspaceOptionsMenu = React.memo(function SidebarWorkspaceOptionsM
         className="w-72 pb-2"
         data-workspace-board-preserve-open={preserveWorkspaceBoardOpen ? '' : undefined}
       >
+        {showHostScopeControls && (
+          <SidebarHostScopeMenuSection
+            hostOptionsCount={hostOptions.length}
+            hostVisibilityLabel={hostVisibilityLabel}
+            hostOptions={hostOptions}
+            preserveWorkspaceBoardOpen={preserveWorkspaceBoardOpen}
+            setWorkspaceHostScope={setWorkspaceHostScope}
+            visibleWorkspaceHostIds={visibleWorkspaceHostIds}
+            setVisibleWorkspaceHostIds={setVisibleWorkspaceHostIds}
+          />
+        )}
+
         <DropdownMenuLabel>
           {translate('auto.components.sidebar.SidebarWorkspaceOptionsMenu.dc0bb670bc', 'Group by')}
         </DropdownMenuLabel>

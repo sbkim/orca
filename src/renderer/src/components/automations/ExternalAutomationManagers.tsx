@@ -59,7 +59,7 @@ function getProviderLabel(manager: ExternalAutomationManager): string {
 }
 
 function getTargetKindLabel(manager: ExternalAutomationManager): string {
-  return manager.target.type === 'ssh' ? 'Remote SSH' : 'Local'
+  return manager.target.type === 'ssh' ? 'SSH host' : 'Local'
 }
 
 function ExternalActionButton({

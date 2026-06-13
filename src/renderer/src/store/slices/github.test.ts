@@ -26,6 +26,7 @@ import {
 } from '../../runtime/runtime-compatibility-test-fixture'
 import { clearRuntimeCompatibilityCacheForTests } from '../../runtime/runtime-rpc-client'
 import { getHostedReviewCacheKey } from './hosted-review-cache-identity'
+import { getTaskSourceCacheScope } from '../../../../shared/task-source-context'
 
 const runtimeEnvironmentCall = vi.fn()
 const runtimeEnvironmentTransportCall = vi.fn()
@@ -938,6 +939,62 @@ describe('createGitHubSlice.fetchPRComments', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('preserves cached checks when the checks IPC fails', async () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const branch = 'feature/test'
+    const checksCacheKey = `${repoPath}::pr-checks::12`
+    const cachedChecks = [
+      { name: 'build', status: 'completed', conclusion: 'failure', url: null } as const
+    ]
+
+    store.setState({
+      checksCache: {
+        [checksCacheKey]: {
+          data: cachedChecks,
+          fetchedAt: 1,
+          headSha: 'abc123head'
+        }
+      }
+    } as unknown as Partial<AppState>)
+    mockApi.gh.prChecks.mockRejectedValueOnce(new Error('rate limited'))
+
+    await expect(
+      store.getState().fetchPRChecks(repoPath, 12, branch, 'abc123head', null, { force: true })
+    ).resolves.toEqual(cachedChecks)
+
+    expect(store.getState().checksCache[checksCacheKey]?.data).toEqual(cachedChecks)
+    expect(store.getState().checksCache[checksCacheKey]?.fetchedAt).toBe(1)
+  })
+
+  it('does not return cached checks for a different requested head SHA after IPC failure', async () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const branch = 'feature/test'
+    const checksCacheKey = `${repoPath}::pr-checks::12`
+    const oldHeadChecks = [
+      { name: 'build', status: 'completed', conclusion: 'success', url: null } as const
+    ]
+
+    store.setState({
+      checksCache: {
+        [checksCacheKey]: {
+          data: oldHeadChecks,
+          fetchedAt: 1,
+          headSha: 'old-head'
+        }
+      }
+    } as unknown as Partial<AppState>)
+    mockApi.gh.prChecks.mockRejectedValueOnce(new Error('rate limited'))
+
+    await expect(
+      store.getState().fetchPRChecks(repoPath, 12, branch, 'new-head', null, { force: true })
+    ).resolves.toEqual([])
+
+    expect(store.getState().checksCache[checksCacheKey]?.data).toEqual(oldHeadChecks)
+    expect(store.getState().checksCache[checksCacheKey]?.headSha).toBe('old-head')
   })
 })
 
@@ -3647,6 +3704,116 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
     ).toMatchObject({ repoId: 'caller-repo-id', number: 17 })
   })
 
+  it('routes work item fetches through an explicit GitHub source context', async () => {
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-work-items-source-context',
+      ok: true,
+      result: {
+        items: [
+          { type: 'issue', number: 19, title: 'Source issue', url: 'https://example.test/19' }
+        ],
+        sources: { issues: { owner: 'up', repo: 'r' }, prs: { owner: 'up', repo: 'r' } }
+      },
+      _meta: { runtimeId: 'source-runtime' }
+    })
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'focused-runtime' },
+      repos: [
+        {
+          id: 'local-repo-id',
+          path: '/server/repo',
+          displayName: 'repo',
+          badgeColor: 'blue',
+          addedAt: 1
+        }
+      ]
+    } as Partial<AppState>)
+
+    const sourceContext = {
+      kind: 'task-source' as const,
+      provider: 'github' as const,
+      projectId: 'github:stablyai/orca',
+      hostId: 'runtime:source-runtime' as const,
+      projectHostSetupId: 'setup-1',
+      repoId: 'source-runtime-repo-id',
+      providerIdentity: { provider: 'github' as const, owner: 'stablyai', repo: 'orca' }
+    }
+
+    await store.getState().fetchWorkItems('caller-repo-id', '/server/repo', 24, 'is:open', {
+      sourceContext
+    })
+
+    expect(mockApi.gh.listWorkItems).not.toHaveBeenCalled()
+    expect(runtimeEnvironmentCall).toHaveBeenCalledWith({
+      selector: 'source-runtime',
+      method: 'github.listWorkItems',
+      params: {
+        repo: 'source-runtime-repo-id',
+        limit: 24,
+        query: 'is:open'
+      },
+      timeoutMs: 30_000
+    })
+    expect(
+      store.getState().workItemsCache[
+        workItemsCacheKey('caller-repo-id', 24, 'is:open', getTaskSourceCacheScope(sourceContext))
+      ]?.data?.[0]
+    ).toMatchObject({ repoId: 'caller-repo-id', number: 19 })
+    expect(
+      store.getState().workItemsCache[
+        workItemsCacheKey('caller-repo-id', 24, 'is:open', 'runtime:focused-runtime')
+      ]
+    ).toBeUndefined()
+  })
+
+  it('keeps explicit GitHub source identities in separate work-item cache buckets', async () => {
+    const store = createTestStore()
+    const firstSourceContext = {
+      kind: 'task-source' as const,
+      provider: 'github' as const,
+      projectId: 'project-1',
+      hostId: 'local' as const,
+      projectHostSetupId: 'setup-1',
+      repoId: 'repo-1',
+      providerIdentity: { provider: 'github' as const, owner: 'acme', repo: 'orca' }
+    }
+    const secondSourceContext = {
+      ...firstSourceContext,
+      providerIdentity: { provider: 'github' as const, owner: 'stablyai', repo: 'orca' }
+    }
+    mockApi.gh.listWorkItems
+      .mockResolvedValueOnce({
+        items: [{ type: 'issue', number: 1, title: 'Acme', url: 'https://example.test/1' }],
+        sources: { issues: { owner: 'acme', repo: 'orca' }, prs: { owner: 'acme', repo: 'orca' } }
+      })
+      .mockResolvedValueOnce({
+        items: [{ type: 'issue', number: 2, title: 'Stably', url: 'https://example.test/2' }],
+        sources: {
+          issues: { owner: 'stablyai', repo: 'orca' },
+          prs: { owner: 'stablyai', repo: 'orca' }
+        }
+      })
+
+    await store.getState().fetchWorkItems('repo-1', '/repo', 24, '', {
+      sourceContext: firstSourceContext
+    })
+    await store.getState().fetchWorkItems('repo-1', '/repo', 24, '', {
+      sourceContext: secondSourceContext
+    })
+
+    expect(
+      store.getState().workItemsCache[
+        workItemsCacheKey('repo-1', 24, '', getTaskSourceCacheScope(firstSourceContext))
+      ]?.data?.[0]?.number
+    ).toBe(1)
+    expect(
+      store.getState().workItemsCache[
+        workItemsCacheKey('repo-1', 24, '', getTaskSourceCacheScope(secondSourceContext))
+      ]?.data?.[0]?.number
+    ).toBe(2)
+  })
+
   it('routes SSH-owned work item fetches through local IPC when a runtime is focused', async () => {
     const store = createTestStore()
     mockApi.gh.listWorkItems.mockResolvedValueOnce({
@@ -4200,6 +4367,100 @@ describe('createGitHubSlice.fetchWorkItems source/error envelope', () => {
       },
       timeoutMs: 60_000
     })
+  })
+
+  it('keeps GitHub project view caches separate for runtime and local sources', async () => {
+    const store = createTestStore()
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' }
+    } as Partial<AppState>)
+    runtimeEnvironmentCall.mockResolvedValueOnce({
+      id: 'rpc-1',
+      ok: true,
+      result: {
+        ok: true,
+        data: {
+          project: {
+            id: 'project-remote',
+            owner: 'acme',
+            ownerType: 'organization',
+            number: 1,
+            title: 'Remote Roadmap',
+            url: 'https://github.com/orgs/acme/projects/1'
+          },
+          selectedView: {
+            id: 'view-1',
+            number: 1,
+            name: 'Table',
+            layout: 'TABLE_LAYOUT',
+            filter: '',
+            fields: [],
+            groupByFields: [],
+            sortByFields: []
+          },
+          rows: [],
+          totalCount: 0,
+          parentFieldDropped: false
+        }
+      },
+      _meta: { runtimeId: 'remote-runtime' }
+    })
+
+    await store.getState().fetchProjectViewTable({
+      owner: 'acme',
+      ownerType: 'organization',
+      projectNumber: 1,
+      viewId: 'view-1'
+    })
+
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: null }
+    } as Partial<AppState>)
+    mockApi.gh.getProjectViewTable.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        project: {
+          id: 'project-local',
+          owner: 'acme',
+          ownerType: 'organization',
+          number: 1,
+          title: 'Local Roadmap',
+          url: 'https://github.com/orgs/acme/projects/1'
+        },
+        selectedView: {
+          id: 'view-1',
+          number: 1,
+          name: 'Table',
+          layout: 'TABLE_LAYOUT',
+          filter: '',
+          fields: [],
+          groupByFields: [],
+          sortByFields: []
+        },
+        rows: [],
+        totalCount: 0,
+        parentFieldDropped: false
+      }
+    })
+
+    const localResult = await store.getState().fetchProjectViewTable({
+      owner: 'acme',
+      ownerType: 'organization',
+      projectNumber: 1,
+      viewId: 'view-1'
+    })
+
+    expect(localResult.ok).toBe(true)
+    expect(mockApi.gh.getProjectViewTable).toHaveBeenCalledTimes(1)
+    expect(
+      store.getState().projectViewCache[
+        projectViewCacheKey('organization', 'acme', 1, 'view-1', undefined, 'runtime:env-1')
+      ]?.data?.project.id
+    ).toBe('project-remote')
+    expect(
+      store.getState().projectViewCache[projectViewCacheKey('organization', 'acme', 1, 'view-1')]
+        ?.data?.project.id
+    ).toBe('project-local')
   })
 
   it('bounds project view table cache entries across many projects', async () => {

@@ -402,7 +402,7 @@ export function buildSettingsNavigationMetadata({
             title: translate('auto.hooks.useSettingsNavigationMetadata.94a5afe910', 'SSH Hosts'),
             description: translate(
               'auto.hooks.useSettingsNavigationMetadata.31e57d1c70',
-              'Remote SSH hosts for files, terminals, and git.'
+              'SSH host access for files, terminals, and git.'
             ),
             icon: Cable,
             searchEntries: getSshPaneSearchEntries(),

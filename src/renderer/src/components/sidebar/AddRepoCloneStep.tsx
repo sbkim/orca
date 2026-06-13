@@ -57,7 +57,7 @@ export function CloneStep({
           <DialogTitle>
             {translate(
               'auto.components.sidebar.AddRepoSteps.a93ef169b5',
-              'Browse server filesystem'
+              'Browse host filesystem'
             )}
           </DialogTitle>
           <DialogDescription>
@@ -165,7 +165,7 @@ export function CloneStep({
                 canBrowseRemoteDestination
                   ? translate(
                       'auto.components.sidebar.AddRepoSteps.a93ef169b5',
-                      'Browse server filesystem'
+                      'Browse host filesystem'
                     )
                   : translate('auto.components.sidebar.AddRepoSteps.569326d9cc', 'Choose folder')
               }
@@ -173,7 +173,7 @@ export function CloneStep({
                 canBrowseRemoteDestination
                   ? translate(
                       'auto.components.sidebar.AddRepoSteps.a93ef169b5',
-                      'Browse server filesystem'
+                      'Browse host filesystem'
                     )
                   : translate('auto.components.sidebar.AddRepoSteps.569326d9cc', 'Choose folder')
               }

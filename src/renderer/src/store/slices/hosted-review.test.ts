@@ -275,6 +275,7 @@ describe('hosted review slice', () => {
 
     expect(mockApi.hostedReview.create).toHaveBeenCalledWith({
       repoPath: '/repo',
+      repoId: 'repo-1',
       connectionId: null,
       provider: 'github',
       base: 'main',
@@ -307,6 +308,7 @@ describe('hosted review slice', () => {
 
     expect(mockApi.hostedReview.create).toHaveBeenCalledWith({
       repoPath: '/repo',
+      repoId: 'repo-1',
       connectionId: 'ssh-1',
       provider: 'github',
       base: 'main',
@@ -338,6 +340,7 @@ describe('hosted review slice', () => {
 
     expect(mockApi.hostedReview.getCreationEligibility).toHaveBeenCalledWith({
       repoPath: '/repo',
+      repoId: 'repo-1',
       connectionId: 'ssh-1',
       worktreePath: '/remote/worktree',
       branch: 'feature/create-pr',

@@ -21,8 +21,6 @@ const KILL_WAIT_MS = 3_000
 const KILL_POLL_MS = 100
 const START_TIME_TOLERANCE_MS = 1_500
 
-export type DaemonHealthCheckResult = 'healthy' | 'unhealthy' | 'pty-spawn-unhealthy'
-
 type ParsedDaemonPid = {
   pid: number
   startedAtMs: number | null
@@ -67,13 +65,10 @@ function canConnectSocket(socketPath: string): Promise<boolean> {
   })
 }
 
-export function checkDaemonHealth(
-  socketPath: string,
-  tokenPath: string
-): Promise<DaemonHealthCheckResult> {
+export function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (process.platform !== 'win32' && !existsSync(socketPath)) {
-      resolve('unhealthy')
+      resolve(false)
       return
     }
 
@@ -81,13 +76,13 @@ export function checkDaemonHealth(
     try {
       token = readFileSync(tokenPath, 'utf8').trim()
     } catch {
-      resolve('unhealthy')
+      resolve(false)
       return
     }
 
     let settled = false
     let sock: Socket | null = null
-    const settle = (result: DaemonHealthCheckResult): void => {
+    const settle = (result: boolean): void => {
       if (settled) {
         return
       }
@@ -102,7 +97,7 @@ export function checkDaemonHealth(
       sock?.off('connect', onConnect)
       sock?.off('data', onData)
     }
-    const onError = (): void => settle('unhealthy')
+    const onError = (): void => settle(false)
     const onConnect = (): void => {
       const hello: HelloMessage = {
         type: 'hello',
@@ -133,16 +128,19 @@ export function checkDaemonHealth(
         try {
           message = JSON.parse(line) as Record<string, unknown>
         } catch {
-          settle('unhealthy')
+          settle(false)
           return
         }
 
         if (message.type === 'hello') {
           if (!(message as HelloResponse).ok) {
-            settle('unhealthy')
+            settle(false)
             return
           }
-          sock?.write(encodeNdjson({ id: 'health-1', type: 'ping' }))
+          // Why: a protocol-live daemon with a stale cwd or node-pty helper
+          // will answer ping but cannot create terminals, so reuse must check
+          // the PTY spawn prerequisites too.
+          sock?.write(encodeNdjson({ id: 'health-1', type: 'ptySpawnHealth' }))
           continue
         }
 
@@ -152,7 +150,7 @@ export function checkDaemonHealth(
         }
       }
     }
-    const timer = setTimeout(() => settle('unhealthy'), HEALTH_CHECK_TIMEOUT_MS)
+    const timer = setTimeout(() => settle(false), HEALTH_CHECK_TIMEOUT_MS)
 
     sock = connect({ path: socketPath })
     sock.on('error', onError)
@@ -161,10 +159,6 @@ export function checkDaemonHealth(
     let buffer = ''
     sock.on('data', onData)
   })
-}
-
-export async function healthCheckDaemon(socketPath: string, tokenPath: string): Promise<boolean> {
-  return (await checkDaemonHealth(socketPath, tokenPath)) === 'healthy'
 }
 
 function isSystemResolverHealth(value: unknown): value is SystemResolverHealth {

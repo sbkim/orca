@@ -10,6 +10,7 @@ import {
 } from '@/lib/provider-runtime-context'
 import { useAppStore } from '@/store'
 import { IntegrationCardDetails, IntegrationCardShell } from './integration-card-shell'
+import { getProviderAccountScope } from './provider-account-scope'
 import { translate } from '@/i18n/i18n'
 
 type VerificationResult = { state: 'ok' | 'error'; error?: string }
@@ -33,6 +34,7 @@ export function JiraIntegrationCard(): React.JSX.Element {
   const connected = contextMatches && jiraStatus.connected
   const sites = jiraStatus.sites ?? []
   const siteCount = sites.length || (connected ? 1 : 0)
+  const accountScope = getProviderAccountScope(settings)
   const credentialCopy = hasRemoteProviderRuntime(settings)
     ? 'Connect a Jira Cloud site with your Atlassian email and an API token. Credentials are sent to the selected remote runtime and stored there with runtime-supported encryption.'
     : 'Connect a Jira Cloud site with your Atlassian email and an API token. Credentials are stored locally and encrypted when local runtime storage supports it.'
@@ -106,6 +108,16 @@ export function JiraIntegrationCard(): React.JSX.Element {
         ) : null
       }
     >
+      <div className="mt-3 rounded-md border border-border/40 bg-background/50 px-3 py-2 text-xs">
+        <div className="font-medium text-foreground">
+          {translate(
+            'auto.components.settings.task.tracker.integration.cards.account_scope',
+            'Account scope: {{value0}}',
+            { value0: accountScope.label }
+          )}
+        </div>
+        <div className="mt-0.5 text-muted-foreground">{accountScope.description}</div>
+      </div>
       {connected && sites.length > 0 ? (
         <div className="mt-3 space-y-2">
           {sites.map((site) => {

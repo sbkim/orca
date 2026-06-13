@@ -30,6 +30,11 @@ import {
 } from '../flags'
 import { RuntimeClientError } from '../runtime-client'
 import { getOptionalWorktreeSelector, resolveCurrentWorktreeSelector } from '../selectors'
+import {
+  assertWorkspaceTargetFlagsCompatible,
+  hasWorkspaceProjectTarget,
+  resolveProjectCreateRepoSelector
+} from '../worktree-project-target'
 
 type AutomationCreateParams = Omit<AutomationCreateInput, 'projectId' | 'timezone'> & {
   repo?: string
@@ -294,9 +299,20 @@ async function resolveDefaultTarget(
   cwd: string,
   client: Parameters<CommandHandler>[0]['client']
 ): Promise<{ repo?: string; workspace?: string }> {
+  assertWorkspaceTargetFlagsCompatible(flags)
   const repo = getOptionalStringFlag(flags, 'repo')
   if (repo && getOptionalStringFlag(flags, 'workspace')) {
     throw new RuntimeClientError('invalid_argument', 'Use either --repo or --workspace, not both.')
+  }
+  if (hasWorkspaceProjectTarget(flags) && getOptionalStringFlag(flags, 'workspace')) {
+    throw new RuntimeClientError(
+      'invalid_argument',
+      'Use either --workspace or project target flags, not both.'
+    )
+  }
+  const projectRepo = await resolveProjectCreateRepoSelector(flags, client)
+  if (projectRepo) {
+    return { repo: projectRepo }
   }
   const workspace = await getOptionalWorktreeSelector(flags, 'workspace', cwd, client)
   if (repo || workspace) {
@@ -317,9 +333,20 @@ async function getExplicitTarget(
   cwd: string,
   client: Parameters<CommandHandler>[0]['client']
 ): Promise<{ repo?: string; workspace?: string }> {
+  assertWorkspaceTargetFlagsCompatible(flags)
   const repo = getOptionalStringFlag(flags, 'repo')
   if (repo && getOptionalStringFlag(flags, 'workspace')) {
     throw new RuntimeClientError('invalid_argument', 'Use either --repo or --workspace, not both.')
+  }
+  if (hasWorkspaceProjectTarget(flags) && getOptionalStringFlag(flags, 'workspace')) {
+    throw new RuntimeClientError(
+      'invalid_argument',
+      'Use either --workspace or project target flags, not both.'
+    )
+  }
+  const projectRepo = await resolveProjectCreateRepoSelector(flags, client)
+  if (projectRepo) {
+    return { repo: projectRepo }
   }
   const workspace = await getOptionalWorktreeSelector(flags, 'workspace', cwd, client)
   return { repo, workspace }

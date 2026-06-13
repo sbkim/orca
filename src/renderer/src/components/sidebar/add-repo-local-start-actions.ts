@@ -37,14 +37,26 @@ export function getAddRepoLocalStartActions({
   const primaryAction = {
     kind: 'browse' as const,
     icon: FolderOpen,
-    title: translate(
-      'auto.components.sidebar.add.repo.local.start.actions.2281fdc8c7',
-      'Browse folder'
-    ),
-    description: translate(
-      'auto.components.sidebar.add.repo.local.start.actions.fb4fc5380e',
-      'Local project, Git repo, or folder with many repos'
-    ),
+    title:
+      browseHostKind === 'ssh'
+        ? translate(
+            'auto.components.sidebar.add.repo.local.start.actions.sshBrowseTitle',
+            'Open project on SSH host'
+          )
+        : translate(
+            'auto.components.sidebar.add.repo.local.start.actions.2281fdc8c7',
+            'Browse folder'
+          ),
+    description:
+      browseHostKind === 'ssh'
+        ? translate(
+            'auto.components.sidebar.add.repo.local.start.actions.sshBrowseDescription',
+            'Existing Git repository or folder on this SSH host'
+          )
+        : translate(
+            'auto.components.sidebar.add.repo.local.start.actions.fb4fc5380e',
+            'Local project, Git repo, or folder with many repos'
+          ),
     onClick: onBrowse
   }
 
@@ -53,11 +65,11 @@ export function getAddRepoLocalStartActions({
     icon: Monitor,
     title: translate(
       'auto.components.sidebar.add.repo.local.start.actions.3d162cc76f',
-      'Remote project'
+      'Project on SSH host'
     ),
     description: translate(
       'auto.components.sidebar.add.repo.local.start.actions.a6c20dca96',
-      'Open a project from an SSH target'
+      'Open a project folder from an SSH host'
     ),
     onClick: onOpenRemoteStep
   }
@@ -78,13 +90,19 @@ export function getAddRepoLocalStartActions({
     kind: 'create' as const,
     icon: Plus,
     title: translate(
-      'auto.components.sidebar.add.repo.local.start.actions.createProjectTitle',
-      'Create project'
+      'auto.components.sidebar.add.repo.local.start.actions.c709860596',
+      'Create new project'
     ),
-    description: translate(
-      'auto.components.sidebar.add.repo.local.start.actions.createGitProjectDescription',
-      'Create a local Git repository'
-    ),
+    description: canCreateProject
+      ? translate(
+          'auto.components.sidebar.add.repo.local.start.actions.d72789705e',
+          'Start from an empty folder'
+        )
+      : translate(
+          'auto.components.sidebar.add.repo.local.start.actions.sshCreateUnavailable',
+          'Not available for SSH hosts yet'
+        ),
+    disabled: !canCreateProject,
     onClick: onOpenCreateStep
   }
 

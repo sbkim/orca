@@ -171,7 +171,6 @@ function invalidateRuntimeWorktreeCaches(): void {
 type WebSettingsApi = NonNullable<PreloadApi['settings']>
 type WebKeybindingsApi = NonNullable<PreloadApi['keybindings']>
 type WebGitHubApi = NonNullable<PreloadApi['gh']>
-type WebStarNagApi = NonNullable<PreloadApi['starNag']>
 type WebGitHubResult<K extends keyof WebGitHubApi> = Awaited<ReturnType<WebGitHubApi[K]>>
 type WebGitHubRouteKey =
   | 'repoSlug'
@@ -560,7 +559,6 @@ function createWebPreloadApi(): Partial<PreloadApi> {
     browser: createBrowserApi(),
     emulator: createEmulatorApi(),
     gh: createGitHubApi(),
-    starNag: createStarNagApi(),
     gl: createGitLabApi(),
     hostedReview: createRuntimeNamespaceApi('hostedReview'),
     linear: createRuntimeNamespaceApi('linear'),
@@ -1589,18 +1587,6 @@ function createEmulatorApi(): NonNullable<Partial<PreloadApi>['emulator']> {
   } as unknown as NonNullable<Partial<PreloadApi>['emulator']>
 }
 
-function createStarNagApi(): WebStarNagApi {
-  return {
-    onShow: () => noopUnsubscribe,
-    dismiss: () => Promise.resolve(),
-    complete: () => Promise.resolve(),
-    disable: () => Promise.resolve(),
-    openWeb: () => Promise.resolve(),
-    starOrca: () => Promise.resolve(false),
-    forceShow: () => Promise.resolve()
-  }
-}
-
 function createGitHubApi(): WebGitHubApi {
   const route = <Result>(method: WebGitHubRuntimeMethod, args?: unknown): Promise<Result> =>
     callRuntimeResult<Result>(method, mapRepoPathArg(args))
@@ -2102,9 +2088,9 @@ function createCliApi(): NonNullable<Partial<PreloadApi>['cli']> {
     getInstallStatus: () => Promise.resolve(status),
     install: () => Promise.resolve(status),
     remove: () => Promise.resolve(status),
-    getWslInstallStatus: () => Promise.resolve(status),
-    installWsl: () => Promise.resolve(status),
-    removeWsl: () => Promise.resolve(status)
+    getWslInstallStatus: (_args?: { distro?: string | null }) => Promise.resolve(status),
+    installWsl: (_args?: { distro?: string | null }) => Promise.resolve(status),
+    removeWsl: (_args?: { distro?: string | null }) => Promise.resolve(status)
   } as NonNullable<Partial<PreloadApi>['cli']>
 }
 

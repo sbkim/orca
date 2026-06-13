@@ -43,6 +43,7 @@ import { useAllWorktrees, useRepoMap } from '@/store/selectors'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { getLocalPreflightContext, localPreflightContextKey } from '@/lib/local-preflight-context'
 import { getProviderRuntimeContextKey } from '@/lib/provider-runtime-context'
+import { getSettingsFocusedExecutionHostId } from '../../../shared/execution-host'
 import { Button } from '@/components/ui/button'
 import { ButtonGroup } from '@/components/ui/button-group'
 import { Input } from '@/components/ui/input'
@@ -89,6 +90,8 @@ import IssueSourceIndicator, { sameGitHubOwnerRepo } from '@/components/github/I
 import IssueSourceSelector, { issueSourceChipClass } from '@/components/github/IssueSourceSelector'
 import { LinearPriorityIcon } from '@/components/linear-priority-icon'
 import { reconcileLinearTeamSelection } from '@/components/task-page-linear-team-selection'
+import { getTaskSourceContextSummary } from './task-source-context-summary'
+import type { TaskSourceHostAvailability } from './task-source-context-summary'
 import { useConfirmationDialog } from '@/components/confirmation-dialog'
 import {
   getGitHubPRPrimaryReviewer,
@@ -119,6 +122,8 @@ import PullRequestPage from '@/components/PullRequestPage'
 import GitLabItemDialog from '@/components/GitLabItemDialog'
 import ProjectViewWrapper from '@/components/github-project/ProjectViewWrapper'
 import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
+import { buildExecutionHostRegistry } from '../../../shared/execution-host-registry'
+import { getHostDisplayLabelOverrides } from '../../../shared/host-setting-overrides'
 import LinearIssueWorkspace from '@/components/LinearIssueWorkspace'
 import {
   LinearCollectionNotice,
@@ -139,6 +144,13 @@ import {
 import type { LinkedWorkItemSummary } from '@/lib/new-workspace'
 import { buildLinearIssueLinkedWorkItem } from '@/lib/linear-linked-work-item'
 import { isGitRepoKind } from '../../../shared/repo-kind'
+import { getRepoExecutionHostId } from '../../../shared/execution-host'
+import { projectHostSetupProjectionFromRepos } from '../../../shared/project-host-setup-projection'
+import {
+  getTaskSourceCacheScope,
+  normalizeTaskSourceContext,
+  type TaskSourceContext
+} from '../../../shared/task-source-context'
 import { getLinearIssueWorkspaceName } from '../../../shared/workspace-name'
 import {
   buildTaskPageRepoSourceState,
@@ -155,6 +167,8 @@ import {
 } from '@/components/task-page-cache-selectors'
 import { shouldHideTaskPageListChrome } from '@/components/task-page-list-chrome-visibility'
 import { findTaskPageJiraIssue } from '@/components/task-page-jira-cache-selectors'
+import { getRepoBackedTaskEmptyState } from '@/components/task-page-empty-state'
+import { getDefaultTaskRepoSelection } from '@/components/task-page-default-repo-selection'
 import {
   createTaskPageGitHubStatusStateDraft,
   resolveTaskPageGitHubStatusStateDraft,
@@ -299,6 +313,46 @@ function getJiraIssueWorkspaceSeed(issue: JiraIssue): string {
       jiraIdentifier: issue.key
     })?.seedName ?? getLinkedWorkItemSuggestedName(issue)
   )
+}
+
+function getTaskPageRepoSourceContext(
+  repo: Repo | null | undefined,
+  provider: 'github' | 'gitlab'
+): TaskSourceContext | null {
+  if (!repo) {
+    return null
+  }
+  const projection = projectHostSetupProjectionFromRepos([repo])
+  const project = projection.projects[0]
+  const setup = projection.setups[0]
+  const providerIdentity =
+    provider === 'github' && project?.providerIdentity?.provider === 'github'
+      ? project.providerIdentity
+      : null
+  return normalizeTaskSourceContext({
+    provider,
+    projectId: setup?.projectId ?? project?.id ?? repo.id,
+    hostId: setup?.hostId ?? getRepoExecutionHostId(repo),
+    projectHostSetupId: setup?.id,
+    repoId: repo.id,
+    providerIdentity
+  })
+}
+
+function getTaskPageRepoCacheInput(repo: Repo): {
+  id: string
+  path: string
+  executionHostId?: string | null
+  sourceCacheScope?: string | null
+} {
+  const sourceContext = getTaskPageRepoSourceContext(repo, 'github')
+  return {
+    id: repo.id,
+    path: repo.path,
+    executionHostId: repo.executionHostId,
+    sourceCacheScope:
+      sourceContext?.provider === 'github' ? getTaskSourceCacheScope(sourceContext) : null
+  }
 }
 
 // Why: the row's px-3 left padding leaves a 12px gap between the scroll-viewport
@@ -846,7 +900,9 @@ function GHStatusCell({
   repo: Repo | null
 }): React.JSX.Element {
   const patchWorkItem = useAppStore((s) => s.patchWorkItem)
-  const repoOwnerSettings = useAppStore((s) => getSettingsForRepoRuntimeOwner(s, repo?.id ?? null))
+  const repoOwnerSettings = useAppStore(
+    useShallow((s) => getSettingsForRepoRuntimeOwner(s, repo?.id ?? null))
+  )
   const [statusStateDraft, setStatusStateDraft] = useState(() =>
     createTaskPageGitHubStatusStateDraft(item)
   )
@@ -1278,7 +1334,9 @@ function GHAssigneesCell({
   repo: Repo | null
 }): React.JSX.Element {
   const patchWorkItem = useAppStore((s) => s.patchWorkItem)
-  const repoOwnerSettings = useAppStore((s) => getSettingsForRepoRuntimeOwner(s, repo?.id ?? null))
+  const repoOwnerSettings = useAppStore(
+    useShallow((s) => getSettingsForRepoRuntimeOwner(s, repo?.id ?? null))
+  )
   const [open, setOpen] = useState(false)
   const [pendingLogin, setPendingLogin] = useState<string | null>(null)
   const assignees = useMemo(() => item.assignees ?? [], [item.assignees])
@@ -1604,7 +1662,9 @@ function PRReviewCell({
   const [activeReviewerCursor, setActiveReviewerCursor] = useState({ resetKey: '', index: 0 })
   const [submitting, setSubmitting] = useState(false)
   const settings = useAppStore((s) => s.settings)
-  const repoOwnerSettings = useAppStore((s) => getSettingsForRepoRuntimeOwner(s, repo?.id ?? null))
+  const repoOwnerSettings = useAppStore(
+    useShallow((s) => getSettingsForRepoRuntimeOwner(s, repo?.id ?? null))
+  )
   const reviewerInputRef = useRef<HTMLInputElement | null>(null)
   const reviewerInputFocusFrameRef = useRef<number | null>(null)
 
@@ -2454,6 +2514,9 @@ export default function TaskPage(): React.JSX.Element {
   const closeTaskPage = useAppStore((s) => s.closeTaskPage)
   const activeModal = useAppStore((s) => s.activeModal)
   const repos = useAppStore((s) => s.repos)
+  const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
+  const sshTargetLabels = useAppStore((s) => s.sshTargetLabels)
+  const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
   const repoMap = useRepoMap()
   const allWorktrees = useAllWorktrees()
   const openModal = useAppStore((s) => s.openModal)
@@ -2532,10 +2595,10 @@ export default function TaskPage(): React.JSX.Element {
         return new Set(filtered)
       }
       // Why: empty after filtering (e.g. all persisted repos were removed)
-      // falls through to "all eligible" so the page never renders with an
-      // empty selection — see the multi-combobox invariant.
+      // falls through to the automatic default so the page never renders with
+      // an empty selection — see the multi-combobox invariant.
     }
-    return new Set(eligibleRepos.map((r) => r.id))
+    return getDefaultTaskRepoSelection(eligibleRepos)
   }, [eligibleRepos, pageData.preselectedRepoId, settings?.defaultRepoSelection])
 
   const [repoSelection, setRepoSelection] = useState<ReadonlySet<string>>(resolvedInitialSelection)
@@ -2566,7 +2629,7 @@ export default function TaskPage(): React.JSX.Element {
       return
     }
     if (pruned.size === 0 && eligibleIds.size > 0) {
-      setRepoSelection(new Set(eligibleIds))
+      setRepoSelection(getDefaultTaskRepoSelection(eligibleRepos))
       return
     }
     if (pruned.size !== repoSelection.size) {
@@ -2596,6 +2659,10 @@ export default function TaskPage(): React.JSX.Element {
   const jiraSites = jiraStatus.sites ?? []
   const selectedJiraSiteId =
     jiraStatus.selectedSiteId ?? jiraStatus.activeSiteId ?? jiraSites[0]?.id ?? null
+  const selectedJiraSite =
+    selectedJiraSiteId && selectedJiraSiteId !== 'all'
+      ? (jiraSites.find((site) => site.id === selectedJiraSiteId) ?? null)
+      : null
   const preferredVisibleTaskProviders = useMemo(
     () => normalizeVisibleTaskProviders(settings?.visibleTaskProviders),
     [settings?.visibleTaskProviders]
@@ -2673,6 +2740,104 @@ export default function TaskPage(): React.JSX.Element {
   const [taskSource, setTaskSource] = useState<TaskProvider>(
     resolveVisibleTaskProvider(preferredTaskSource, visibleTaskProviders)
   )
+  const taskSourceRepoContexts = useMemo(
+    () =>
+      taskSource === 'github' || taskSource === 'gitlab'
+        ? selectedRepos
+            .map((repo) => getTaskPageRepoSourceContext(repo, taskSource))
+            .filter((context): context is TaskSourceContext => context !== null)
+        : [],
+    [selectedRepos, taskSource]
+  )
+  const hostRegistryById = useMemo(
+    () =>
+      new Map(
+        buildExecutionHostRegistry({
+          repos,
+          settings,
+          sshTargetLabels,
+          sshConnectionStates,
+          runtimeStatusByEnvironmentId,
+          hostLabelOverrides: getHostDisplayLabelOverrides(settings)
+        }).map((host) => [host.id, host])
+      ),
+    [repos, settings, sshConnectionStates, sshTargetLabels, runtimeStatusByEnvironmentId]
+  )
+  const taskSourceHostAvailability = useMemo<TaskSourceHostAvailability[]>(
+    () =>
+      taskSource === 'github' || taskSource === 'gitlab'
+        ? taskSourceRepoContexts.flatMap((context) => {
+            const host = hostRegistryById.get(context.hostId)
+            if (!host || (host.health === 'local' || host.health === 'available')) {
+              return []
+            }
+            return [
+              {
+                hostId: context.hostId,
+                health: host.health,
+                status: host.connectionStatus
+              }
+            ]
+          })
+        : [],
+    [hostRegistryById, taskSource, taskSourceRepoContexts]
+  )
+  const accountBackedTaskSourceHostId = useMemo(
+    () => getSettingsFocusedExecutionHostId(settings),
+    [settings]
+  )
+  const accountBackedTaskSourceHostAvailability = useMemo<TaskSourceHostAvailability[]>(() => {
+    if (taskSource !== 'linear' && taskSource !== 'jira') {
+      return []
+    }
+    const host = hostRegistryById.get(accountBackedTaskSourceHostId)
+    if (!host || host.health === 'local' || host.health === 'available') {
+      return []
+    }
+    return [
+      {
+        hostId: host.id,
+        health: host.health,
+        status: host.connectionStatus
+      }
+    ]
+  }, [accountBackedTaskSourceHostId, hostRegistryById, taskSource])
+  const taskSourceContextSummary = useMemo(() => {
+    const providerLabel =
+      sourceOptions.find((source) => source.id === taskSource)?.label ?? taskSource
+    return getTaskSourceContextSummary({
+      provider: taskSource,
+      providerLabel,
+      repoContexts: taskSourceRepoContexts,
+      hostAvailability:
+        taskSource === 'linear' || taskSource === 'jira'
+          ? accountBackedTaskSourceHostAvailability
+          : taskSourceHostAvailability,
+      accountHostId: accountBackedTaskSourceHostId,
+      selectedRepoCount: selectedRepos.length,
+      linearWorkspaceName:
+        selectedLinearWorkspace?.organizationName ?? selectedLinearWorkspace?.id ?? null,
+      jiraSiteName: selectedJiraSite?.displayName ?? selectedJiraSite?.siteUrl ?? null
+    })
+  }, [
+    selectedJiraSite,
+    selectedLinearWorkspace,
+    selectedRepos.length,
+    sourceOptions,
+    taskSource,
+    accountBackedTaskSourceHostAvailability,
+    accountBackedTaskSourceHostId,
+    taskSourceHostAvailability,
+    taskSourceRepoContexts
+  ])
+  const githubEmptyState = useMemo(
+    () =>
+      getRepoBackedTaskEmptyState({
+        provider: 'github',
+        selectedRepoCount: selectedRepos.length
+      }),
+    [selectedRepos.length]
+  )
   const taskSourceManuallyChangedRef = useRef(false)
   const lastPageTaskSourceRef = useRef(pageData.taskSource)
   const taskResumeAppliedRef = useRef(false)
@@ -2742,6 +2907,15 @@ export default function TaskPage(): React.JSX.Element {
   const [gitlabView, setGitlabView] = useState<'issues' | 'mrs' | 'todos'>('mrs')
   const [gitlabTodos, setGitlabTodos] = useState<GitLabTodo[]>([])
   const [gitlabTodosLoading, setGitlabTodosLoading] = useState(false)
+  const gitlabEmptyState = useMemo(
+    () =>
+      getRepoBackedTaskEmptyState({
+        provider: 'gitlab',
+        selectedRepoCount: selectedRepos.length,
+        gitlabView
+      }),
+    [gitlabView, selectedRepos.length]
+  )
 
   const gitlabFilterIsValid =
     gitlabView === 'issues'
@@ -2802,7 +2976,13 @@ export default function TaskPage(): React.JSX.Element {
     const trimmed = initialTaskQuery.trim()
     const merged: GitHubWorkItem[] = []
     for (const r of selectedRepos) {
-      const cached = getCachedWorkItems(r.id, PER_REPO_FETCH_LIMIT, trimmed, r.path)
+      const cached = getCachedWorkItems(
+        r.id,
+        PER_REPO_FETCH_LIMIT,
+        trimmed,
+        r.path,
+        getTaskPageRepoSourceContext(r, 'github')
+      )
       if (cached) {
         merged.push(...cached)
       }
@@ -2847,7 +3027,7 @@ export default function TaskPage(): React.JSX.Element {
     useShallow((s) =>
       selectTaskPageWorkItemsCacheEntries(
         s.workItemsCache,
-        selectedRepos,
+        selectedRepos.map(getTaskPageRepoCacheInput),
         PER_REPO_FETCH_LIMIT,
         appliedWorkItemsCacheQuery
       )
@@ -2866,8 +3046,31 @@ export default function TaskPage(): React.JSX.Element {
   const dialogWorkItem = dialogWorkItemKey
     ? (cachedDialogWorkItem ?? githubTaskDrawerWorkItem)
     : null
-  const pageGitHubDetailWorkItem = pageData.openGitHubWorkItem ? dialogWorkItem : null
   const dialogRepoPath = dialogWorkItem ? (repoMap.get(dialogWorkItem.repoId)?.path ?? null) : null
+  const dialogSourceContext = useMemo(() => {
+    if (!dialogWorkItem) {
+      return null
+    }
+    if (
+      pageData.openGitHubSourceContext?.provider === 'github' &&
+      pageData.openGitHubWorkItem?.id === dialogWorkItem.id &&
+      pageData.openGitHubWorkItem.repoId === dialogWorkItem.repoId
+    ) {
+      return pageData.openGitHubSourceContext
+    }
+    return getTaskPageRepoSourceContext(repoMap.get(dialogWorkItem.repoId), 'github')
+  }, [dialogWorkItem, pageData.openGitHubSourceContext, pageData.openGitHubWorkItem, repoMap])
+  const gitlabDialogRepo = useMemo(
+    () =>
+      gitlabDialogItem
+        ? (selectedRepos.find((r) => r.id === gitlabDialogItem.repoId) ?? primaryRepo)
+        : null,
+    [gitlabDialogItem, primaryRepo, selectedRepos]
+  )
+  const gitlabDialogSourceContext = useMemo(
+    () => getTaskPageRepoSourceContext(gitlabDialogRepo, 'gitlab'),
+    [gitlabDialogRepo]
+  )
 
   const setDialogWorkItem = useCallback(
     (item: GitHubWorkItem | null, initialTab: ItemDialogTab = 'conversation') => {
@@ -2888,13 +3091,18 @@ export default function TaskPage(): React.JSX.Element {
 
   const openGitHubDetailPage = useCallback(
     (item: GitHubWorkItem, initialTab: ItemDialogTab = 'conversation') => {
-      // Why: in-list opens should float over the Tasks list. Direct opens
-      // from outside Tasks still pass `openGitHubWorkItem` through page state.
-      useAppStore.getState().recordFeatureInteraction('github-tasks')
-      setGithubMode('items')
-      setDialogWorkItem(item, initialTab)
+      openTaskPage(
+        {
+          taskSource: 'github',
+          preselectedRepoId: item.repoId,
+          openGitHubWorkItem: item,
+          openGitHubSourceContext: getTaskPageRepoSourceContext(repoMap.get(item.repoId), 'github'),
+          openGitHubInitialTab: initialTab
+        },
+        { recordTasksInteraction: false }
+      )
     },
-    [setDialogWorkItem]
+    [openTaskPage, repoMap]
   )
 
   const patchTaskPageWorkItemRows = useCallback(
@@ -3151,6 +3359,7 @@ export default function TaskPage(): React.JSX.Element {
       taskPageData: {
         ...s.taskPageData,
         openGitHubWorkItem: undefined,
+        openGitHubSourceContext: undefined,
         openGitHubInitialTab: undefined,
         openLinearIssue: undefined
       }
@@ -3653,6 +3862,8 @@ export default function TaskPage(): React.JSX.Element {
             return window.api.gl
               .listIssues({
                 repoPath: repo.path,
+                repoId: repo.id,
+                sourceContext: getTaskPageRepoSourceContext(repo, 'gitlab'),
                 state: 'opened',
                 assignee: isAssignedToMe ? '@me' : undefined,
                 limit: 50
@@ -3673,6 +3884,8 @@ export default function TaskPage(): React.JSX.Element {
             window.api.gl
               .listMRs({
                 repoPath: repo.path,
+                repoId: repo.id,
+                sourceContext: getTaskPageRepoSourceContext(repo, 'gitlab'),
                 state: activeMRFilter ?? 'opened',
                 page: 1,
                 perPage: 50
@@ -3740,7 +3953,11 @@ export default function TaskPage(): React.JSX.Element {
     let stale = false
     setGitlabTodosLoading(true)
     void window.api.gl
-      .todos({ repoPath: primaryRepo.path })
+      .todos({
+        repoPath: primaryRepo.path,
+        repoId: primaryRepo.id,
+        sourceContext: getTaskPageRepoSourceContext(primaryRepo, 'gitlab')
+      })
       .then((todos) => {
         if (!stale) {
           setGitlabTodos(todos as GitLabTodo[])
@@ -3759,7 +3976,7 @@ export default function TaskPage(): React.JSX.Element {
     return () => {
       stale = true
     }
-  }, [taskSource, gitlabView, gitlabRefreshNonce, primaryRepo?.path])
+  }, [taskSource, gitlabView, gitlabRefreshNonce, primaryRepo])
 
   const defaultLinearTeamSelection = settings?.defaultLinearTeamSelection
   const [linearTeamSelection, setLinearTeamSelection] = useState<ReadonlySet<string>>(() => {
@@ -4859,7 +5076,12 @@ export default function TaskPage(): React.JSX.Element {
         return
       }
       const q = stripRepoQualifiers(appliedTaskSearch.trim())
-      const repoArgs = selectedRepos.map((r) => ({ repoId: r.id, path: r.path }))
+      const repoArgs = selectedRepos.map((r) => ({
+        repoId: r.id,
+        path: r.path,
+        executionHostId: r.executionHostId,
+        sourceContext: getTaskPageRepoSourceContext(r, 'github')
+      }))
       const requestGeneration = paginationGenerationRef.current
 
       const target = targetPage ?? pages.length
@@ -4975,7 +5197,13 @@ export default function TaskPage(): React.JSX.Element {
     let anyUncached = false
     let anyRepoCached = false
     for (const r of selectedRepos) {
-      const cached = getCachedWorkItems(r.id, PER_REPO_FETCH_LIMIT, q, r.path)
+      const cached = getCachedWorkItems(
+        r.id,
+        PER_REPO_FETCH_LIMIT,
+        q,
+        r.path,
+        getTaskPageRepoSourceContext(r, 'github')
+      )
       if (cached === null) {
         anyUncached = true
       } else {
@@ -5013,7 +5241,8 @@ export default function TaskPage(): React.JSX.Element {
     const repoArgs = selectedRepos.map((r) => ({
       repoId: r.id,
       path: r.path,
-      executionHostId: r.executionHostId
+      executionHostId: r.executionHostId,
+      sourceContext: getTaskPageRepoSourceContext(r, 'github')
     }))
     const landingRefreshKey = `${repoArgs.map((r) => `${r.repoId}:${r.path}`).join('|')}::${q}`
     const shouldProbeOnLanding =
@@ -5110,7 +5339,8 @@ export default function TaskPage(): React.JSX.Element {
       selectedRepos.map((r) => ({
         repoId: r.id,
         path: r.path,
-        executionHostId: r.executionHostId
+        executionHostId: r.executionHostId,
+        sourceContext: getTaskPageRepoSourceContext(r, 'github')
       })),
       q
     ).then((count) => {
@@ -5325,12 +5555,13 @@ export default function TaskPage(): React.JSX.Element {
       }
       openModal('new-workspace-composer', {
         linkedWorkItem,
+        taskSourceContext: getTaskPageRepoSourceContext(repoMap.get(item.repoId), 'github'),
         prefilledName: getGitHubWorkItemWorkspaceSeed(item),
         initialRepoId: item.repoId,
         telemetrySource: 'sidebar'
       })
     },
-    [openModal]
+    [openModal, repoMap]
   )
 
   const handleUseWorkItem = useCallback(
@@ -5391,12 +5622,13 @@ export default function TaskPage(): React.JSX.Element {
       }
       openModal('new-workspace-composer', {
         linkedWorkItem,
+        taskSourceContext: getTaskPageRepoSourceContext(repoMap.get(item.repoId), 'gitlab'),
         prefilledName: getGitLabWorkItemWorkspaceSeed(item),
         initialRepoId: item.repoId,
         telemetrySource: 'sidebar'
       })
     },
-    [openModal]
+    [openModal, repoMap]
   )
 
   const handleUseGitLabItem = useCallback(
@@ -6679,6 +6911,12 @@ export default function TaskPage(): React.JSX.Element {
                         </Tooltip>
                       )
                     })}
+                    <div
+                      className="hidden min-w-0 max-w-[min(420px,40vw)] items-center rounded-md border border-border/50 bg-muted/35 px-2 py-1 text-xs text-muted-foreground sm:flex"
+                      title={taskSourceContextSummary.title}
+                    >
+                      <span className="truncate">{taskSourceContextSummary.label}</span>
+                    </div>
                   </div>
                   {taskSource === 'linear' && linearConnected ? (
                     <div className="flex items-center gap-2">
@@ -7646,13 +7884,13 @@ export default function TaskPage(): React.JSX.Element {
             </section>
           </div>
 
-          {taskSource === 'github' && pageGitHubDetailWorkItem ? (
-            pageGitHubDetailWorkItem.type === 'pr' ? (
+          {taskSource === 'github' && dialogWorkItem ? (
+            dialogWorkItem.type === 'pr' ? (
               <PullRequestPage
-                workItem={pageGitHubDetailWorkItem}
+                workItem={dialogWorkItem}
                 initialTab={dialogInitialTab}
                 repoPath={dialogRepoPath}
-                repoId={pageGitHubDetailWorkItem.repoId}
+                repoId={dialogWorkItem.repoId}
                 backLabel="Pull requests"
                 onUse={(item) => {
                   setDialogWorkItem(null)
@@ -7663,10 +7901,10 @@ export default function TaskPage(): React.JSX.Element {
               />
             ) : (
               <GitHubItemDialog
-                workItem={pageGitHubDetailWorkItem}
+                workItem={dialogWorkItem}
                 initialTab={dialogInitialTab}
                 repoPath={dialogRepoPath}
-                repoId={pageGitHubDetailWorkItem.repoId}
+                repoId={dialogWorkItem.repoId}
                 variant="page"
                 backLabel="GitHub list"
                 onUse={(item) => {
@@ -7842,13 +8080,10 @@ export default function TaskPage(): React.JSX.Element {
                 perRepoSourceState.every((s) => !s.error) ? (
                   <div className="px-4 py-10 text-center">
                     <p className="text-base font-medium text-foreground">
-                      {translate('auto.components.TaskPage.d0e3c8f933', 'No matching GitHub work')}
+                      {githubEmptyState.title}
                     </p>
                     <p className="mt-2 text-sm text-muted-foreground">
-                      {translate(
-                        'auto.components.TaskPage.285bc21dc5',
-                        'Change the query or clear it.'
-                      )}
+                      {githubEmptyState.description}
                     </p>
                   </div>
                 ) : null}
@@ -8320,26 +8555,13 @@ export default function TaskPage(): React.JSX.Element {
                   </div>
                 ) : null}
                 {!gitlabLoading && displayedGitLabItems.length === 0 && !gitlabError ? (
-                  <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                    {primaryRepo
-                      ? gitlabView === 'issues'
-                        ? translate(
-                            'auto.components.TaskPage.a9f256ecea',
-                            'No GitLab issues match this filter.'
-                          )
-                        : gitlabView === 'mrs'
-                          ? translate(
-                              'auto.components.TaskPage.cd7dc432a3',
-                              'No GitLab MRs match this filter.'
-                            )
-                          : translate(
-                              'auto.components.TaskPage.f294c500ef',
-                              'No GitLab work matches this filter.'
-                            )
-                      : translate(
-                          'auto.components.TaskPage.d6d08c1650',
-                          'Select a project to see GitLab work items.'
-                        )}
+                  <div className="px-4 py-12 text-center">
+                    <p className="text-base font-medium text-foreground">
+                      {gitlabEmptyState.title}
+                    </p>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      {gitlabEmptyState.description}
+                    </p>
                   </div>
                 ) : null}
                 <div className="divide-y divide-border/50">
@@ -11145,7 +11367,7 @@ export default function TaskPage(): React.JSX.Element {
       </Dialog>
 
       <GitHubItemDialog
-        workItem={pageGitHubDetailWorkItem ? null : dialogWorkItem}
+        workItem={dialogWorkItem}
         repoPath={
           // Why: the dialog is for a single item — resolve its repoPath from the
           // item's own repoId (set when fan-out merged the list) so it works in
@@ -11154,6 +11376,7 @@ export default function TaskPage(): React.JSX.Element {
           dialogWorkItem ? (repoMap.get(dialogWorkItem.repoId)?.path ?? null) : null
         }
         repoId={dialogWorkItem?.repoId ?? null}
+        sourceContext={dialogSourceContext}
         onUse={(item) => {
           setDialogWorkItem(null)
           handleUseWorkItem(item)
@@ -11166,13 +11389,9 @@ export default function TaskPage(): React.JSX.Element {
         // Why: dialog's repoPath has to come from the clicked item's
         // own repo, not primaryRepo — items may originate in any of
         // the selected repos now that the GitLab fetch is multi-repo.
-        repoPath={
-          gitlabDialogItem
-            ? (selectedRepos.find((r) => r.id === gitlabDialogItem.repoId)?.path ??
-              primaryRepo?.path ??
-              null)
-            : null
-        }
+        repoPath={gitlabDialogRepo?.path ?? null}
+        repoId={gitlabDialogItem?.repoId ?? null}
+        sourceContext={gitlabDialogSourceContext}
         onCreateWorkspace={(item) => {
           setGitlabDialogItem(null)
           handleUseGitLabItem(item)

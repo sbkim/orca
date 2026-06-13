@@ -20,13 +20,28 @@ function normalizeIdentityPart(value: string): string {
   return value.trim().toLowerCase()
 }
 
-function getProjectProviderIdentity(repo: Pick<Repo, 'upstream'>): ProjectProviderIdentity | null {
+function getProjectProviderIdentity(
+  repo: Pick<Repo, 'upstream' | 'repoIcon'>
+): ProjectProviderIdentity | null {
   const owner = typeof repo.upstream?.owner === 'string' ? repo.upstream.owner.trim() : ''
   const name = typeof repo.upstream?.repo === 'string' ? repo.upstream.repo.trim() : ''
-  return owner && name ? { provider: 'github', owner, repo: name } : null
+  if (owner && name) {
+    return { provider: 'github', owner, repo: name }
+  }
+  if (repo.repoIcon?.type !== 'image' || repo.repoIcon.source !== 'github') {
+    return null
+  }
+  const parts = (repo.repoIcon.label?.trim() ?? '').split('/')
+  const iconOwner = parts[0]?.trim()
+  const iconRepo = parts[1]?.trim()
+  // Why: repo auto-detect can know the GitHub slug through the generated
+  // avatar icon even when legacy `upstream` has not been backfilled yet.
+  return iconOwner && iconRepo && parts.length === 2
+    ? { provider: 'github', owner: iconOwner, repo: iconRepo }
+    : null
 }
 
-function getProjectIdentityKey(repo: Pick<Repo, 'id' | 'upstream'>): string {
+function getProjectIdentityKey(repo: Pick<Repo, 'id' | 'upstream' | 'repoIcon'>): string {
   const identity = getProjectProviderIdentity(repo)
   if (!identity) {
     return `repo:${repo.id}`
@@ -34,7 +49,7 @@ function getProjectIdentityKey(repo: Pick<Repo, 'id' | 'upstream'>): string {
   return `github:${normalizeIdentityPart(identity.owner)}/${normalizeIdentityPart(identity.repo)}`
 }
 
-function getProjectId(repo: Pick<Repo, 'id' | 'upstream'>): string {
+function getProjectId(repo: Pick<Repo, 'id' | 'upstream' | 'repoIcon'>): string {
   return getProjectIdentityKey(repo)
 }
 

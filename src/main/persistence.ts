@@ -63,6 +63,10 @@ import type {
   WorkspaceSessionState
 } from '../shared/types'
 import { projectHostSetupProjectionFromRepos } from '../shared/project-host-setup-projection'
+import {
+  buildTaskSourceContextFromRepo,
+  buildWorkspaceRunContext
+} from '../shared/task-source-context'
 import type { MigrationUnsupportedPtyEntry } from '../shared/agent-status-types'
 import type { SshRemotePtyLease, SshTarget } from '../shared/ssh-types'
 import { isFolderRepo } from '../shared/repo-kind'
@@ -114,11 +118,6 @@ import { normalizeOpenInApplications } from '../shared/open-in-applications'
 import { normalizeTerminalShortcutPolicy } from '../shared/keybindings'
 import { normalizeAppIconId } from '../shared/app-icon'
 import { normalizeTerminalCustomThemes } from '../shared/terminal-custom-themes'
-import {
-  normalizeLeftSidebarAppearanceMode,
-  normalizeLeftSidebarTintColor,
-  normalizeLeftSidebarTintOpacity
-} from '../shared/left-sidebar-appearance'
 import {
   compareFeatureInteractionUsageBuckets,
   getFeatureInteractionCategory,
@@ -484,11 +483,6 @@ function normalizeProjectOrderBy(projectOrderBy: unknown): PersistedState['ui'][
   return getDefaultUIState().projectOrderBy
 }
 
-import {
-  isExistingPersistedProfile,
-  resolveProjectOrderManualDefaultNoticeDismissed
-} from '../shared/project-order-manual-default-notice'
-
 function normalizeRightSidebarTab(tab: unknown): PersistedState['ui']['rightSidebarTab'] {
   if (
     tab === 'explorer' ||
@@ -619,6 +613,102 @@ function normalizeAutomationSessionReuse(automation: Automation): Automation {
     ...automation,
     precheck: normalizeAutomationPrecheck(automation.precheck),
     reuseSession: automation.workspaceMode === 'existing' && automation.reuseSession === true
+  }
+}
+
+function getAutomationContextsForRepo(
+  repo: Repo | undefined,
+  projectHostSetups: readonly ProjectHostSetup[]
+): Pick<Automation, 'runContext' | 'sourceContext'> {
+  if (!repo) {
+    return {
+      runContext: null,
+      sourceContext: null
+    }
+  }
+  const projection = projectHostSetupProjectionFromRepos([repo])
+  const projectedProject = projection.projects[0]
+  const projectedSetup = projection.setups[0]
+  const setup =
+    projectHostSetups.find((candidate) => candidate.repoId === repo.id) ?? projectedSetup
+  const runContext = setup
+    ? buildWorkspaceRunContext({
+        projectId: setup.projectId,
+        hostId: setup.hostId,
+        projectHostSetupId: setup.id,
+        repoId: repo.id,
+        path: setup.path
+      })
+    : null
+  const providerIdentity = projectedProject?.providerIdentity
+  const sourceContext = providerIdentity
+    ? buildTaskSourceContextFromRepo({
+        provider: providerIdentity.provider,
+        projectId: providerIdentity.provider === 'github' ? (setup?.projectId ?? repo.id) : repo.id,
+        repo,
+        projectHostSetupId: setup?.id,
+        providerIdentity
+      })
+    : null
+  return {
+    runContext,
+    sourceContext
+  }
+}
+
+function backfillLegacyAutomationContexts(
+  state: Pick<PersistedState, 'automations' | 'automationRuns' | 'repos' | 'projectHostSetups'>
+): {
+  state: Pick<PersistedState, 'automations' | 'automationRuns' | 'repos' | 'projectHostSetups'>
+  changed: boolean
+} {
+  let changed = false
+  const contextsByAutomationId = new Map<string, Pick<Automation, 'runContext' | 'sourceContext'>>()
+  const automations = (state.automations ?? []).map((automation) => {
+    const contexts = getAutomationContextsForRepo(
+      state.repos.find((repo) => repo.id === automation.projectId),
+      state.projectHostSetups ?? []
+    )
+    const next: Automation = { ...automation }
+    if (!Object.hasOwn(next, 'runContext')) {
+      // Why: pre-host-context automations only stored a repo id. Backfill the
+      // explicit run target once so dispatch/precheck no longer infer it later.
+      next.runContext = contexts.runContext
+      changed = true
+    }
+    if (!Object.hasOwn(next, 'sourceContext')) {
+      next.sourceContext = contexts.sourceContext
+      changed = true
+    }
+    contextsByAutomationId.set(next.id, {
+      runContext: next.runContext ?? null,
+      sourceContext: next.sourceContext ?? null
+    })
+    return next
+  })
+  const automationRuns = (state.automationRuns ?? []).map((run) => {
+    const automationContexts = contextsByAutomationId.get(run.automationId)
+    const next: AutomationRun = { ...run }
+    if (!Object.hasOwn(next, 'runContext')) {
+      next.runContext = automationContexts?.runContext ?? null
+      changed = true
+    }
+    if (!Object.hasOwn(next, 'sourceContext')) {
+      next.sourceContext = automationContexts?.sourceContext ?? null
+      changed = true
+    }
+    return next
+  })
+  if (!changed) {
+    return { state, changed: false }
+  }
+  return {
+    state: {
+      ...state,
+      automations,
+      automationRuns
+    },
+    changed: true
   }
 }
 
@@ -2371,14 +2461,6 @@ export class Store {
           parsed.settings?.disabledTuiAgents
         )
         const migratedAgentYoloDefaults = migrateAgentYoloDefaults(parsed.settings)
-        const openLinksInAppWasPersisted = Object.prototype.hasOwnProperty.call(
-          parsed.settings ?? {},
-          'openLinksInApp'
-        )
-        const migratedOpenLinksInAppPreferencePrompted =
-          typeof parsed.settings?.openLinksInAppPreferencePrompted === 'boolean'
-            ? parsed.settings.openLinksInAppPreferencePrompted
-            : openLinksInAppWasPersisted
         if (
           parsed.settings?.agentYoloDefaultsMigrated !== true ||
           hasUnsupportedTuiAgentArgs('opencode', parsed.settings?.agentDefaultArgs?.opencode) ||
@@ -2393,12 +2475,6 @@ export class Store {
           migratedDisabledTuiAgents.push('claude-agent-teams')
         }
         if (!autoRenameBranchFromWorkDefaultedOn) {
-          this.loadNeedsSave = true
-        }
-        if (
-          parsed.settings?.openLinksInAppPreferencePrompted !==
-          migratedOpenLinksInAppPreferencePrompted
-        ) {
           this.loadNeedsSave = true
         }
         const normalizedOnboarding = normalizeLoadedOnboardingState(
@@ -2464,15 +2540,6 @@ export class Store {
             terminalCustomThemes: normalizeTerminalCustomThemes(
               parsed.settings?.terminalCustomThemes
             ),
-            leftSidebarAppearanceMode: normalizeLeftSidebarAppearanceMode(
-              parsed.settings?.leftSidebarAppearanceMode
-            ),
-            leftSidebarTintColor: normalizeLeftSidebarTintColor(
-              parsed.settings?.leftSidebarTintColor
-            ),
-            leftSidebarTintOpacity: normalizeLeftSidebarTintOpacity(
-              parsed.settings?.leftSidebarTintOpacity
-            ),
             appIcon: normalizeAppIconId(parsed.settings?.appIcon),
             uiLanguage: normalizeUiLanguage(parsed.settings?.uiLanguage),
             defaultTaskSource: taskProviderSettings.defaultTaskSource,
@@ -2487,7 +2554,6 @@ export class Store {
             openInApplications: normalizeOpenInApplications(parsed.settings?.openInApplications, {
               seedDefaults: true
             }),
-            openLinksInAppPreferencePrompted: migratedOpenLinksInAppPreferencePrompted,
             notifications: normalizeNotificationSettings(parsed.settings?.notifications),
             sourceControlAi: migratedSourceControlAi,
             // Why: new builds read sourceControlAi, but rollback builds still
@@ -2628,25 +2694,9 @@ export class Store {
               parsed.ui?.setupGuideSidebarDismissed,
               normalizedOnboarding
             )
-            const projectOrderManualDefaultNoticeDismissed =
-              resolveProjectOrderManualDefaultNoticeDismissed({
-                rawDismissed: parsed.ui?.projectOrderManualDefaultNoticeDismissed,
-                rawProjectOrderBy: parsed.ui?.projectOrderBy,
-                isExistingProfile: isExistingPersistedProfile({
-                  repoCount: parsed.repos?.length ?? 0,
-                  onboardingClosedAt: normalizedOnboarding.closedAt,
-                  ui: parsed.ui
-                })
-              })
             if (
               parsed.ui?.setupGuideSidebarDismissed !== setupGuideSidebarDismissed &&
               (setupGuideSidebarDismissed || parsed.ui?.setupGuideSidebarDismissed !== undefined)
-            ) {
-              this.loadNeedsSave = true
-            }
-            if (
-              parsed.ui?.projectOrderManualDefaultNoticeDismissed !==
-              projectOrderManualDefaultNoticeDismissed
             ) {
               this.loadNeedsSave = true
             }
@@ -2658,7 +2708,6 @@ export class Store {
               rightSidebarOpen,
               rightSidebarTab: normalizeRightSidebarTab(parsed.ui?.rightSidebarTab),
               setupGuideSidebarDismissed,
-              projectOrderManualDefaultNoticeDismissed,
               setupGuideBrowserMilestoneMigrated:
                 typeof parsed.ui?.setupGuideBrowserMilestoneMigrated === 'boolean'
                   ? parsed.ui.setupGuideBrowserMilestoneMigrated
@@ -2767,15 +2816,25 @@ export class Store {
       this.loadNeedsSave = true
     }
 
-    const folderScopeConnectionMigration = backfillFolderScopeConnectionIds({
-      ...result,
-      repos: clearMissingProjectGroupMemberships(result.repos, result.projectGroups ?? []),
-      workspaceSession: migratedScrollback.session
-    })
-    if (folderScopeConnectionMigration.changed) {
+    const repos = clearMissingProjectGroupMemberships(result.repos, result.projectGroups ?? [])
+    const projectHostSetupCompatibility = mergeProjectHostSetupCompatibilityState(result, repos)
+    if (!projectHostSetupCompatibilityStateEqual(result, projectHostSetupCompatibility)) {
       this.loadNeedsSave = true
     }
-    result = folderScopeConnectionMigration.state
+
+    const automationContextMigration = backfillLegacyAutomationContexts({
+      ...result,
+      repos,
+      ...projectHostSetupCompatibility
+    })
+    if (automationContextMigration.changed) {
+      this.loadNeedsSave = true
+    }
+    result = {
+      ...result,
+      automations: automationContextMigration.state.automations,
+      automationRuns: automationContextMigration.state.automationRuns
+    }
 
     const folderScopeConnectionMigration = backfillFolderScopeConnectionIds({
       ...result,
@@ -3686,12 +3745,15 @@ export class Store {
     const repo = this.state.repos.find((entry) => entry.id === input.projectId)
     const now = Date.now()
     const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
+    const contexts = getAutomationContextsForRepo(repo, this.state.projectHostSetups ?? [])
     const automation: Automation = {
       id: randomUUID(),
       name: input.name.trim() || 'Untitled automation',
       prompt: input.prompt,
       precheck: normalizeAutomationPrecheck(input.precheck),
       agentId: input.agentId,
+      runContext: input.runContext ?? contexts.runContext,
+      sourceContext: input.sourceContext ?? contexts.sourceContext,
       projectId: input.projectId,
       executionTargetType,
       executionTargetId: executionTargetType === 'ssh' ? (repo?.connectionId ?? '') : 'local',
@@ -3725,6 +3787,7 @@ export class Store {
     const repoId = updates.projectId ?? current.projectId
     const repo = this.state.repos.find((entry) => entry.id === repoId)
     const executionTargetType = repo?.connectionId ? 'ssh' : 'local'
+    const contexts = getAutomationContextsForRepo(repo, this.state.projectHostSetups ?? [])
     const rrule = updates.rrule ?? current.rrule
     const dtstart = updates.dtstart ?? current.dtstart
     const scheduleChanged = updates.rrule !== undefined || updates.dtstart !== undefined
@@ -3738,6 +3801,16 @@ export class Store {
         ? normalizeAutomationPrecheck(updates.precheck)
         : normalizeAutomationPrecheck(current.precheck),
       projectId: repoId,
+      runContext: Object.hasOwn(updates, 'runContext')
+        ? (updates.runContext ?? null)
+        : updates.projectId !== undefined
+          ? contexts.runContext
+          : (current.runContext ?? contexts.runContext),
+      sourceContext: Object.hasOwn(updates, 'sourceContext')
+        ? (updates.sourceContext ?? null)
+        : updates.projectId !== undefined
+          ? contexts.sourceContext
+          : (current.sourceContext ?? contexts.sourceContext),
       executionTargetType,
       executionTargetId: executionTargetType === 'ssh' ? (repo?.connectionId ?? '') : 'local',
       schedulerOwner: executionTargetType === 'ssh' ? 'ssh_bridge' : 'local_host_service',
@@ -3796,6 +3869,8 @@ export class Store {
     const run: AutomationRun = {
       id: randomUUID(),
       automationId: automation.id,
+      runContext: automation.runContext ?? null,
+      sourceContext: automation.sourceContext ?? null,
       title: `${automation.name} run ${runNumber}`,
       scheduledFor,
       status: 'pending',
@@ -4008,21 +4083,6 @@ export class Store {
     if ('terminalCustomThemes' in updates) {
       sanitizedUpdates.terminalCustomThemes = normalizeTerminalCustomThemes(
         updates.terminalCustomThemes
-      )
-    }
-    if ('leftSidebarAppearanceMode' in updates) {
-      sanitizedUpdates.leftSidebarAppearanceMode = normalizeLeftSidebarAppearanceMode(
-        updates.leftSidebarAppearanceMode
-      )
-    }
-    if ('leftSidebarTintColor' in updates) {
-      sanitizedUpdates.leftSidebarTintColor = normalizeLeftSidebarTintColor(
-        updates.leftSidebarTintColor
-      )
-    }
-    if ('leftSidebarTintOpacity' in updates) {
-      sanitizedUpdates.leftSidebarTintOpacity = normalizeLeftSidebarTintOpacity(
-        updates.leftSidebarTintOpacity
       )
     }
     if ('visibleTaskProviders' in updates || 'defaultTaskSource' in updates) {

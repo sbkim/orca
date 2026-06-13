@@ -13,6 +13,8 @@ import type { ClaudeUsageStore } from '../claude-usage/store'
 import type { CodexUsageStore } from '../codex-usage/store'
 import { splitWorktreeIdForFilesystem } from '../../shared/worktree-id'
 import { runAutomationPrecheck } from './precheck-runner'
+import { getRepoExecutionHostId } from '../../shared/execution-host'
+import type { ProjectHostSetup, Repo } from '../../shared/types'
 
 const DEFAULT_TICK_MS = 60 * 1000
 
@@ -87,8 +89,8 @@ export class AutomationService {
     if (run.trigger !== 'scheduled' || !automation.precheck) {
       return null
     }
-    const cwd = this.getPrecheckCwd(automation)
-    if (!cwd) {
+    const target = this.resolveRunTarget(automation)
+    if (!target.ok) {
       return {
         command: automation.precheck.command,
         exitCode: null,
@@ -98,7 +100,7 @@ export class AutomationService {
         stderr: '',
         stdoutTruncated: false,
         stderrTruncated: false,
-        error: 'Automation precheck target is no longer available.',
+        error: target.error,
         startedAt: Date.now(),
         completedAt: Date.now()
       }
@@ -107,8 +109,8 @@ export class AutomationService {
       precheck: automation.precheck,
       target:
         automation.executionTargetType === 'ssh'
-          ? { type: 'ssh', cwd, connectionId: automation.executionTargetId }
-          : { type: 'local', cwd }
+          ? { type: 'ssh', cwd: target.cwd, connectionId: automation.executionTargetId }
+          : { type: 'local', cwd: target.cwd }
     })
   }
 
@@ -230,7 +232,7 @@ export class AutomationService {
     }
   }
 
-  private getPrecheckCwd(automation: Automation): string | null {
+  private getLegacyPrecheckCwd(automation: Automation): string | null {
     if (automation.workspaceMode === 'existing') {
       const parsed = automation.workspaceId
         ? splitWorktreeIdForFilesystem(automation.workspaceId)
@@ -238,6 +240,70 @@ export class AutomationService {
       return parsed?.worktreePath ?? null
     }
     return this.store.getRepo(automation.projectId)?.path ?? null
+  }
+
+  private resolveRunTarget(
+    automation: Automation
+  ):
+    | { ok: true; cwd: string; repo: Repo; setup?: ProjectHostSetup }
+    | { ok: false; error: string } {
+    const context = automation.runContext ?? null
+    if (!context) {
+      const repo = this.store.getRepo(automation.projectId)
+      const cwd = this.getLegacyPrecheckCwd(automation)
+      if (!repo || !cwd) {
+        return { ok: false, error: 'Automation run target is no longer available.' }
+      }
+      return { ok: true, cwd, repo }
+    }
+
+    const setup = this.store
+      .getProjectHostSetups()
+      .find((candidate) => candidate.id === context.projectHostSetupId)
+    if (!setup) {
+      return {
+        ok: false,
+        error: 'Project is not set up on the selected automation host anymore.'
+      }
+    }
+    if (setup.setupState !== 'ready') {
+      return {
+        ok: false,
+        error: `Project setup on the selected automation host is ${setup.setupState}.`
+      }
+    }
+    if (
+      setup.projectId !== context.projectId ||
+      setup.hostId !== context.hostId ||
+      setup.repoId !== context.repoId
+    ) {
+      return {
+        ok: false,
+        error: 'Automation run target no longer matches the selected project host setup.'
+      }
+    }
+
+    const repo = this.store.getRepo(context.repoId)
+    if (!repo) {
+      return {
+        ok: false,
+        error: 'Repository for the selected automation host is no longer available.'
+      }
+    }
+    if (getRepoExecutionHostId(repo) !== context.hostId) {
+      return {
+        ok: false,
+        error: 'Repository is no longer attached to the selected automation host.'
+      }
+    }
+    if (repo.path !== setup.path || context.path !== setup.path) {
+      return {
+        ok: false,
+        error: 'Project path for the selected automation host has changed.'
+      }
+    }
+
+    return { ok: true, cwd: setup.path, repo, setup }
   }
 
   private async evaluateAutomation(automation: Automation, now: number): Promise<void> {
@@ -267,6 +333,15 @@ export class AutomationService {
     automation: Automation,
     run: AutomationRun
   ): Promise<AutomationRun> {
+    const target = this.resolveRunTarget(automation)
+    if (!target.ok) {
+      return this.store.updateAutomationRun({
+        runId: run.id,
+        status: 'skipped_unavailable',
+        workspaceId: automation.workspaceId,
+        error: target.error
+      })
+    }
     const webContents = this.webContents
     if (!webContents || webContents.isDestroyed() || !this.rendererReady) {
       return this.store.updateAutomationRun({

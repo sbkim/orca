@@ -12,6 +12,7 @@ export type TaskPageRepoCacheInput = {
   id: string
   path: string
   executionHostId?: string | null
+  sourceCacheScope?: string | null
 }
 
 export type TaskPageDialogWorkItemKey = {
@@ -53,7 +54,10 @@ export function selectTaskPageWorkItemsCacheEntries(
   query: string
 ): (CacheEntry<GitHubWorkItem[]> | undefined)[] {
   return repos.map(
-    (repo) => workItemsCache[workItemsCacheKey(repo.id, limit, query, repo.executionHostId)]
+    (repo) =>
+      workItemsCache[
+        workItemsCacheKey(repo.id, limit, query, repo.sourceCacheScope ?? repo.executionHostId)
+      ]
   )
 }
 

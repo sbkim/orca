@@ -26,6 +26,10 @@ import { tuiAgentToAgentKind } from '@/lib/telemetry'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { getRuntimeRepoBaseRefDefault } from '@/runtime/runtime-repo-client'
+import {
+  buildTaskSourceContextFromRepo,
+  type TaskSourceContext
+} from '../../../shared/task-source-context'
 import type {
   GitHubWorkItem,
   GitHubPrStartPoint,
@@ -132,6 +136,7 @@ export type UseComposerStateOptions = {
   initialName?: string
   initialPrompt?: string
   initialLinkedWorkItem?: LinkedWorkItemSummary | null
+  initialTaskSourceContext?: TaskSourceContext | null
   initialWorkspaceStatus?: WorkspaceStatus
   /** Seed the Start-from selection when the composer opens. Used by the
    *  Create-from → Quick fallback path so a PR pick that needs a setup
@@ -292,6 +297,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     initialName = '',
     initialPrompt = '',
     initialLinkedWorkItem = null,
+    initialTaskSourceContext = null,
     initialWorkspaceStatus,
     initialBaseBranch,
     persistDraft,
@@ -479,6 +485,48 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       ? (newWorkspaceDraft?.linkedWorkItem ?? initialLinkedWorkItem)
       : initialLinkedWorkItem
   )
+  const taskSourceContext = useMemo(() => {
+    if (
+      persistDraft &&
+      newWorkspaceDraft?.taskSourceContext &&
+      newWorkspaceDraft.linkedWorkItem?.url === linkedWorkItem?.url
+    ) {
+      return newWorkspaceDraft.taskSourceContext
+    }
+    if (initialTaskSourceContext && initialLinkedWorkItem?.url === linkedWorkItem?.url) {
+      return initialTaskSourceContext
+    }
+    if (
+      !linkedWorkItem ||
+      getLinkedWorkItemProvider(linkedWorkItem) !== 'github' ||
+      !selectedRepo ||
+      selectedWorkspaceTarget.status !== 'ready'
+    ) {
+      return null
+    }
+    const selectedProject = projects.find(
+      (project) => project.id === selectedWorkspaceTarget.target.projectId
+    )
+    if (selectedProject?.providerIdentity?.provider !== 'github') {
+      return null
+    }
+    return buildTaskSourceContextFromRepo({
+      provider: 'github',
+      projectId: selectedWorkspaceTarget.target.projectId,
+      repo: selectedRepo,
+      projectHostSetupId: selectedWorkspaceTarget.target.projectHostSetupId,
+      providerIdentity: selectedProject.providerIdentity
+    })
+  }, [
+    initialLinkedWorkItem,
+    initialTaskSourceContext,
+    linkedWorkItem,
+    newWorkspaceDraft?.taskSourceContext,
+    persistDraft,
+    projects,
+    selectedRepo,
+    selectedWorkspaceTarget
+  ])
   const [linkedIssue, setLinkedIssue] = useState<string>(() => {
     if (persistDraft && newWorkspaceDraft?.linkedIssue) {
       return newWorkspaceDraft.linkedIssue
@@ -926,6 +974,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       note,
       attachments: attachmentPaths,
       linkedWorkItem,
+      taskSourceContext,
       agent: tuiAgent,
       linkedIssue,
       linkedPR,
@@ -948,6 +997,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
     repoId,
     selectedWorkspaceTarget,
     setNewWorkspaceDraft,
+    taskSourceContext,
     tuiAgent
   ])
 
@@ -1668,7 +1718,7 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
   }, [])
 
   const handleRepoChange = useCallback(
-    (value: string): void => {
+    (value: string, options: { preserveStartFrom?: boolean } = {}): void => {
       setProjectError(null)
       if (value === repoId) {
         setRepoId(value)
@@ -1678,26 +1728,30 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       // the field can render an inline reset (e.g. "was PR #8778") after the
       // repo changes and the selection is wiped.
       let hint: string | null = null
-      if (linkedWorkItem?.type === 'pr' && baseBranch) {
-        hint = `was PR #${linkedWorkItem.number}`
-      } else if (linkedWorkItem?.type === 'mr' && baseBranch) {
-        // Why: GitLab MR convention is `!N`, not `#N` — match the
-        // upstream UI so the reset hint is recognizable.
-        hint = `was MR !${linkedWorkItem.number}`
-      } else if (baseBranch) {
-        hint = `was ${baseBranch}`
+      if (!options.preserveStartFrom) {
+        if (linkedWorkItem?.type === 'pr' && baseBranch) {
+          hint = `was PR #${linkedWorkItem.number}`
+        } else if (linkedWorkItem?.type === 'mr' && baseBranch) {
+          // Why: GitLab MR convention is `!N`, not `#N` — match the
+          // upstream UI so the reset hint is recognizable.
+          hint = `was MR !${linkedWorkItem.number}`
+        } else if (baseBranch) {
+          hint = `was ${baseBranch}`
+        }
       }
       const preserveLinearLinkedWorkItem = isLinearLinkedWorkItem(linkedWorkItem)
       setRepoId(value)
-      setLinkedIssue('')
-      setLinkedPR(null)
-      setLinkedGitLabIssue(null)
-      setLinkedGitLabMR(null)
-      // Why: repo changes invalidate repo-scoped sources (GitHub/GitLab/branch),
-      // but a selected Linear issue is workspace-scoped source context and
-      // must survive choosing the implementation project.
-      if (!preserveLinearLinkedWorkItem) {
-        setLinkedWorkItem(null)
+      if (!options.preserveStartFrom) {
+        setLinkedIssue('')
+        setLinkedPR(null)
+        setLinkedGitLabIssue(null)
+        setLinkedGitLabMR(null)
+        // Why: repo changes invalidate repo-scoped sources (GitHub/GitLab/branch),
+        // but a selected Linear issue is workspace-scoped source context and
+        // must survive choosing the implementation project.
+        if (!preserveLinearLinkedWorkItem) {
+          setLinkedWorkItem(null)
+        }
       }
       setSparseEnabled(false)
       setSparseDirectories('')
@@ -1707,11 +1761,13 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       // Why: the Start-from picker is repo-scoped, so any prior branch/PR
       // selection is meaningless in the new repo. Resetting to undefined
       // makes the field fall back to the new repo's effective base ref.
-      setBaseBranch(undefined)
-      setPushTarget(undefined)
-      setBranchNameOverride(undefined)
-      setForkPushWarning(null)
-      setStartFromResetHint(hint)
+      if (!options.preserveStartFrom) {
+        setBaseBranch(undefined)
+        setPushTarget(undefined)
+        setBranchNameOverride(undefined)
+        setForkPushWarning(null)
+        setStartFromResetHint(hint)
+      }
     },
     [baseBranch, linkedWorkItem, repoId, setRepoId]
   )
@@ -1721,7 +1777,9 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
       if (!option || option.kind !== 'ready') {
         return
       }
-      handleRepoChange(option.repoId)
+      // Why: switching the run host for the same logical project must not
+      // erase the task/PR source the user is starting from.
+      handleRepoChange(option.repoId, { preserveStartFrom: true })
     },
     [handleRepoChange, projectHostSetupOptions]
   )
@@ -2549,6 +2607,19 @@ export function useComposerState(options: UseComposerStateOptions): UseComposerS
             : undefined
         const request: WorktreeCreationRequest = {
           repoId,
+          ...(taskSourceContext ? { taskSourceContext } : {}),
+          ...(selectedWorkspaceTarget.status === 'ready'
+            ? {
+                workspaceRunContext: {
+                  kind: 'workspace-run',
+                  projectId: selectedWorkspaceTarget.target.projectId,
+                  hostId: selectedWorkspaceTarget.target.hostId,
+                  projectHostSetupId: selectedWorkspaceTarget.target.projectHostSetupId,
+                  repoId: selectedWorkspaceTarget.target.repoId,
+                  path: selectedWorkspaceTarget.target.repo.path
+                }
+              }
+            : {}),
           name: workspaceName,
           ...(createDisplayName ? { displayName: createDisplayName } : {}),
           ...(selectedRepoIsGit && submitBaseBranch ? { baseBranch: submitBaseBranch } : {}),

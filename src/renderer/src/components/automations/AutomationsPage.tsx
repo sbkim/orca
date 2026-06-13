@@ -89,6 +89,7 @@ import {
 import { AutomationRunPageFrame } from './AutomationRunPageFrame'
 import { AutomationRunHistory } from './AutomationRunHistory'
 import { getAutomationTemplates, type AutomationTemplate } from './automation-templates'
+import { getAutomationTargetAvailability } from './automation-target-availability'
 import { getExternalAutomationScheduleDisplay } from './external-automation-schedule-display'
 import { ExternalAutomationManagers } from './ExternalAutomationManagers'
 import type { FetchExternalAutomationRuns } from './ExternalAutomationRunTable'
@@ -121,6 +122,10 @@ type SelectedExternalRunPage = {
 
 function getDefaultWorktree(worktrees: readonly Worktree[]): Worktree | null {
   return worktrees.find((worktree) => worktree.isMainWorktree) ?? worktrees[0] ?? null
+}
+
+function getAutomationRunRepoId(automation: Automation): string {
+  return automation.runContext?.repoId ?? automation.projectId
 }
 
 function formatTimeInput(hour: number, minute: number): string {
@@ -191,7 +196,7 @@ function getExternalProviderLabel(manager: ExternalAutomationManager): string {
 }
 
 function getExternalTargetKindLabel(manager: ExternalAutomationManager): string {
-  return manager.target.type === 'ssh' ? 'Remote SSH' : 'Local'
+  return manager.target.type === 'ssh' ? 'SSH host' : 'Local'
 }
 
 function isSshConnectionBusy(status: SshConnectionStatus | undefined): boolean {
@@ -482,9 +487,17 @@ export default function AutomationsPage(): React.JSX.Element {
     canRerunAutomationRun({ automation: selected, run: selectedAutomationRunPage })
   const isSelectedAutomationRunPageRerunPending =
     selectedAutomationRunPage !== null && rerunRunIdsInFlight.has(selectedAutomationRunPage.id)
-  const selectedRepo = selected ? (repoMap.get(selected.projectId) ?? null) : null
+  const selectedRepo = selected ? (repoMap.get(getAutomationRunRepoId(selected)) ?? null) : null
   const selectedWorktree =
     selected && selected.workspaceId ? (worktreeMap.get(selected.workspaceId) ?? null) : null
+  const selectedRunNowAvailability = selected
+    ? getAutomationTargetAvailability({
+        automation: selected,
+        repo: selectedRepo,
+        workspace: selectedWorktree,
+        sshConnectionStates
+      })
+    : null
   const canSaveDraft =
     editingAutomationId === null ||
     !draftAtOpen ||
@@ -497,10 +510,14 @@ export default function AutomationsPage(): React.JSX.Element {
           sourceKey: getExternalAutomationSourceKey(selectedExternal.manager)
         }
       : null
+  const selectedExternalSshStatus = selectedExternalSshSource
+    ? sshConnectionStates.get(selectedExternalSshSource.connectionId)?.status
+    : undefined
+  const selectedExternalSshConnected = selectedExternalSshStatus === 'connected'
   const isSelectedExternalSshConnecting =
     selectedExternalSshSource !== null &&
     (connectingExternalSourceKey === selectedExternalSshSource.sourceKey ||
-      isSshConnectionBusy(sshConnectionStates.get(selectedExternalSshSource.connectionId)?.status))
+      isSshConnectionBusy(selectedExternalSshStatus))
 
   useEffect(() => {
     if ((!selected || selectedExternal) && activePaneTab === 'runs') {
@@ -783,7 +800,7 @@ export default function AutomationsPage(): React.JSX.Element {
       name: latest.name,
       prompt: latest.prompt,
       agentId: latest.agentId,
-      projectId: latest.projectId,
+      projectId: getAutomationRunRepoId(latest),
       workspaceMode: latest.workspaceMode,
       workspaceId: latest.workspaceId ?? '',
       baseBranch: latest.baseBranch ?? '',
@@ -1195,6 +1212,18 @@ export default function AutomationsPage(): React.JSX.Element {
   }
 
   const runNow = async (automation: Automation): Promise<void> => {
+    const repo = repoMap.get(getAutomationRunRepoId(automation)) ?? null
+    const workspace = automation.workspaceId ? (worktreeMap.get(automation.workspaceId) ?? null) : null
+    const availability = getAutomationTargetAvailability({
+      automation,
+      repo,
+      workspace,
+      sshConnectionStates
+    })
+    if (!availability.canRunNow) {
+      toast.error(availability.message)
+      return
+    }
     await window.api.automations.runNow({ id: automation.id })
     useAppStore.getState().recordFeatureInteraction('automation-run')
     await hydratePersistedUIState()
@@ -1373,6 +1402,16 @@ export default function AutomationsPage(): React.JSX.Element {
     const sourceKey = getExternalAutomationSourceKey(manager)
     setConnectingExternalSourceKey(sourceKey)
     try {
+      if (sshConnectionStates.get(manager.target.connectionId)?.status === 'connected') {
+        await refresh()
+        toast.success(
+          translate(
+            'auto.components.automations.AutomationsPage.a21f6c33ad',
+            'Automation source refreshed.'
+          )
+        )
+        return
+      }
       const state = await window.api.ssh.connect({ targetId: manager.target.connectionId })
       if (!state || state.status !== 'connected') {
         toast.error(
@@ -1753,10 +1792,16 @@ export default function AutomationsPage(): React.JSX.Element {
               </div>
             ) : null}
             {automations.map((automation) => {
-              const automationRepo = repoMap.get(automation.projectId)
+              const automationRepo = repoMap.get(getAutomationRunRepoId(automation))
               const automationWorktree = automation.workspaceId
                 ? worktreeMap.get(automation.workspaceId)
                 : null
+              const automationRunAvailability = getAutomationTargetAvailability({
+                automation,
+                repo: automationRepo,
+                workspace: automationWorktree,
+                sshConnectionStates
+              })
               const workspaceLabel =
                 automation.workspaceMode === 'new_per_run'
                   ? `Create from ${automation.baseBranch ?? automationRepo?.worktreeBaseRef ?? 'project default'}`
@@ -1836,12 +1881,25 @@ export default function AutomationsPage(): React.JSX.Element {
                     </button>
                   </ContextMenuTrigger>
                   <ContextMenuContent className="w-48">
-                    <ContextMenuItem onSelect={() => void runNow(automation)}>
+                    <ContextMenuItem
+                      disabled={!automationRunAvailability.canRunNow}
+                      onSelect={(event) => {
+                        if (!automationRunAvailability.canRunNow) {
+                          event.preventDefault()
+                          return
+                        }
+                        void runNow(automation)
+                      }}
+                    >
                       <Play className="size-3.5" />
-                      {translate(
-                        'auto.components.automations.AutomationsPage.2faecab10b',
-                        'Run Now'
-                      )}
+                      <span className="min-w-0 truncate">
+                        {automationRunAvailability.canRunNow
+                          ? translate(
+                              'auto.components.automations.AutomationsPage.2faecab10b',
+                              'Run Now'
+                            )
+                          : automationRunAvailability.message}
+                      </span>
                     </ContextMenuItem>
                     <ContextMenuItem onSelect={() => void openEditDialog(automation)}>
                       <Pencil className="size-3.5" />
@@ -1882,8 +1940,18 @@ export default function AutomationsPage(): React.JSX.Element {
               const providerLabel = getExternalProviderLabel(entry.manager)
               const targetKindLabel = getExternalTargetKindLabel(entry.manager)
               if (entry.kind === 'source') {
+                const sshStatus =
+                  entry.manager.target.type === 'ssh'
+                    ? sshConnectionStates.get(entry.manager.target.connectionId)?.status
+                    : undefined
                 const sourceStatus =
-                  entry.manager.target.type === 'ssh' ? 'Connect to load jobs' : 'Unavailable'
+                  entry.manager.target.type === 'ssh'
+                    ? isSshConnectionBusy(sshStatus)
+                      ? 'Connecting...'
+                      : sshStatus === 'connected'
+                        ? 'Source unavailable'
+                        : 'Connect to load jobs'
+                    : 'Unavailable'
                 const sourceSummary =
                   entry.manager.error ??
                   `${providerLabel} source unavailable until ${targetKindLabel.toLowerCase()} connects.`
@@ -2162,6 +2230,11 @@ export default function AutomationsPage(): React.JSX.Element {
                               'auto.components.automations.AutomationsPage.f93ed7a6f8',
                               'Connecting...'
                             )
+                          : selectedExternalSshConnected
+                            ? translate(
+                                'auto.components.automations.AutomationsPage.53f06f0ad5',
+                                'Retry source'
+                              )
                           : translate(
                               'auto.components.automations.AutomationsPage.7934ee0d81',
                               'Connect SSH'
@@ -2170,10 +2243,15 @@ export default function AutomationsPage(): React.JSX.Element {
                     ) : null}
                   </div>
                   <div className="px-3 py-6 text-sm text-muted-foreground">
-                    {translate(
-                      'auto.components.automations.AutomationsPage.97ff587ee3',
-                      'Connect this source to check for Hermes automations in the remote profile.'
-                    )}
+                    {selectedExternalSshConnected
+                      ? translate(
+                          'auto.components.automations.AutomationsPage.f7f6fd7bf8',
+                          'Install or repair the remote automation source, then retry to load jobs.'
+                        )
+                      : translate(
+                          'auto.components.automations.AutomationsPage.97ff587ee3',
+                          'Connect this source to check for Hermes automations in the remote profile.'
+                        )}
                   </div>
                 </div>
               )}
@@ -2213,6 +2291,7 @@ export default function AutomationsPage(): React.JSX.Element {
                       ? 'New workspace each run'
                       : (selectedWorktree?.displayName ?? 'Missing workspace')
                   }
+                  runNowAvailability={selectedRunNowAvailability}
                   now={relativeNow}
                   onRunNow={(automation) => void runNow(automation)}
                   onEdit={(automation) => void openEditDialog(automation)}

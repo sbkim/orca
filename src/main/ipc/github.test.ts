@@ -156,6 +156,25 @@ describe('registerGitHubHandlers', () => {
     expect(getIssueMock).not.toHaveBeenCalled()
   })
 
+  it('rejects GitHub source context from a different host', async () => {
+    registerGitHubHandlers(store as never, stats as never)
+
+    expect(() =>
+      handlers['gh:listWorkItems'](null, {
+        repoPath: '/workspace/repo',
+        sourceContext: {
+          kind: 'task-source',
+          provider: 'github',
+          projectId: 'project-1',
+          hostId: 'ssh:openclaw-2',
+          repoId: 'repo-1'
+        }
+      })
+    ).toThrow('Access denied: GitHub source host does not match repository host')
+
+    expect(listWorkItemsMock).not.toHaveBeenCalled()
+  })
+
   it('forwards listIssues for registered repositories and unwraps items', async () => {
     listIssuesMock.mockResolvedValue({ items: [] })
 

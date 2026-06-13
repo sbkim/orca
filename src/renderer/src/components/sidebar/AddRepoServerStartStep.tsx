@@ -40,7 +40,7 @@ export function AddRepoServerPathStartStep({
           <DialogTitle>
             {translate(
               'auto.components.sidebar.AddRepoServerStartStep.ac66a3ed2d',
-              'Browse server filesystem'
+              'Browse host filesystem'
             )}
           </DialogTitle>
           <DialogDescription>
@@ -79,7 +79,7 @@ export function AddRepoServerPathStartStep({
           <DialogDescription>
             {translate(
               'auto.components.sidebar.AddRepoServerStartStep.8efa930eb5',
-              'Add another project from the selected runtime server.'
+              'Add another project from the selected host.'
             )}
           </DialogDescription>
         </DialogHeader>
@@ -91,7 +91,7 @@ export function AddRepoServerPathStartStep({
               icon={FolderOpen}
               title={translate(
                 'auto.components.sidebar.AddRepoServerStartStep.0adf083af7',
-                'Browse server'
+                'Browse host'
               )}
               description={translate(
                 'auto.components.sidebar.AddRepoServerStartStep.516187414c',
@@ -117,7 +117,7 @@ export function AddRepoServerPathStartStep({
               icon={Server}
               title={translate(
                 'auto.components.sidebar.AddRepoServerStartStep.a81ffa0a99',
-                'Create on server'
+                'Create on host'
               )}
               description={translate(
                 'auto.components.sidebar.AddRepoServerStartStep.d40d751517',
@@ -148,7 +148,7 @@ export function AddRepoServerPathStartStep({
           >
             {translate(
               'auto.components.sidebar.AddRepoServerStartStep.438493f214',
-              'Or enter a server path manually'
+              'Or enter a host path manually'
             )}
           </button>
         </div>
@@ -162,13 +162,13 @@ export function AddRepoServerPathStartStep({
         <DialogTitle>
           {translate(
             'auto.components.sidebar.AddRepoServerStartStep.3d0c035483',
-            'Open server project'
+            'Open host project'
           )}
         </DialogTitle>
         <DialogDescription>
           {translate(
             'auto.components.sidebar.AddRepoServerStartStep.423b5d3d31',
-            'Add a Git repository or folder that already exists on the selected runtime server.'
+            'Add a Git repository or folder that already exists on the selected host.'
           )}
         </DialogDescription>
       </DialogHeader>
@@ -180,7 +180,7 @@ export function AddRepoServerPathStartStep({
             htmlFor="server-project-path"
             className="block text-[11px] font-medium text-muted-foreground"
           >
-            {translate('auto.components.sidebar.AddRepoServerStartStep.867692f505', 'Server path')}
+            {translate('auto.components.sidebar.AddRepoServerStartStep.867692f505', 'Host path')}
           </label>
           <div className="flex gap-2">
             <Input
@@ -207,7 +207,7 @@ export function AddRepoServerPathStartStep({
                   disabled={isAddingServerPath || !runtimeEnvironmentId}
                   aria-label={translate(
                     'auto.components.sidebar.AddRepoServerStartStep.ac66a3ed2d',
-                    'Browse server filesystem'
+                    'Browse host filesystem'
                   )}
                 >
                   <FolderOpen className="size-4" />
@@ -216,7 +216,7 @@ export function AddRepoServerPathStartStep({
               <TooltipContent side="top" sideOffset={4}>
                 {translate(
                   'auto.components.sidebar.AddRepoServerStartStep.ac66a3ed2d',
-                  'Browse server filesystem'
+                  'Browse host filesystem'
                 )}
               </TooltipContent>
             </Tooltip>

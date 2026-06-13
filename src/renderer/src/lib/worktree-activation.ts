@@ -38,6 +38,10 @@ import {
 } from '../../../shared/tui-agent-launch-defaults'
 import { isTuiAgent } from '../../../shared/tui-agent-config'
 import { resumeSleepingAgentSessionsForWorktree } from '@/lib/resume-sleeping-agent-session'
+import {
+  getRuntimeEnvironmentIdForWorktree,
+  type WorktreeRuntimeOwnerState
+} from '@/lib/worktree-runtime-owner'
 import { folderWorkspaceKey } from '../../../shared/workspace-scope'
 import {
   folderWorkspaceActivationBlocked,
@@ -578,6 +582,7 @@ setWorktreeNavViewActivator((entry) => {
       taskPageData: {
         ...state.taskPageData,
         openGitHubWorkItem: undefined,
+        openGitHubSourceContext: undefined,
         openGitHubInitialTab: undefined,
         openLinearIssue: undefined
       }
@@ -592,6 +597,7 @@ setWorktreeNavViewActivator((entry) => {
         taskSource: 'github',
         preselectedRepoId: entry.workItem.repoId,
         openGitHubWorkItem: entry.workItem,
+        openGitHubSourceContext: entry.sourceContext,
         openGitHubInitialTab: entry.initialTab,
         openLinearIssue: undefined
       }
@@ -605,6 +611,7 @@ setWorktreeNavViewActivator((entry) => {
       ...state.taskPageData,
       taskSource: 'linear',
       openGitHubWorkItem: undefined,
+      openGitHubSourceContext: undefined,
       openGitHubInitialTab: undefined,
       openLinearIssue: entry.issue
     }

@@ -28,6 +28,7 @@ import type {
   VisibleWorkspaceHostIds
 } from '../../../../shared/types'
 import type { LaunchSource } from '../../../../shared/telemetry-events'
+import type { TaskSourceContext } from '../../../../shared/task-source-context'
 import { tuiAgentToAgentKind } from '../../../../shared/agent-kind'
 import { PET_SIZE_DEFAULT, PET_SIZE_MAX, PET_SIZE_MIN } from '../../../../shared/types'
 import {
@@ -251,6 +252,15 @@ function migrateStatusBarItems(items: readonly string[] | undefined): StatusBarI
 
 const DEFAULT_ON_PORTS_STATUS_BAR_ITEM: StatusBarItem = 'ports'
 const DEFAULT_ON_KIMI_STATUS_BAR_ITEM: StatusBarItem = 'kimi'
+
+function normalizeHydratedVisibleWorkspaceHostIds(ui: PersistedUIState): VisibleWorkspaceHostIds {
+  const visibleHostIds = normalizeVisibleExecutionHostIds(ui.visibleWorkspaceHostIds)
+  if (visibleHostIds) {
+    return visibleHostIds
+  }
+  const legacyScope = normalizeExecutionHostScope(ui.workspaceHostScope)
+  return legacyScope === 'all' ? null : [legacyScope]
+}
 
 const MIN_SIDEBAR_WIDTH = 220
 const MAX_LEFT_SIDEBAR_WIDTH = 500
@@ -593,6 +603,7 @@ export type UISlice = {
     prefilledName?: string
     taskSource?: TaskProvider
     openGitHubWorkItem?: GitHubWorkItem
+    openGitHubSourceContext?: TaskSourceContext | null
     openGitHubInitialTab?: 'conversation' | 'checks' | 'files'
     openLinearIssue?: LinearIssue
   }
@@ -618,6 +629,9 @@ export type UISlice = {
       url: string
       linearIdentifier?: string
     } | null
+    /** Why: starting from a task must preserve where provider data came from
+     *  separately from the host selected to run the workspace. */
+    taskSourceContext?: TaskSourceContext | null
     agent: TuiAgent
     linkedIssue: string
     linkedPR: number | null
@@ -1087,6 +1101,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           kind: 'task-detail',
           source: 'github',
           workItem: data.openGitHubWorkItem,
+          sourceContext: data.openGitHubSourceContext,
           initialTab: data.openGitHubInitialTab
         } as const)
       : data.openLinearIssue
@@ -1164,7 +1179,13 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           ? (resume.githubItemsQuery ?? '').trim()
           : presetToQuery(resume?.githubItemsPreset ?? defaultPreset)
       for (const repo of selectedRepos) {
-        state.prefetchWorkItems(repo.id, repo.path, PER_REPO_FETCH_LIMIT, query)
+        state.prefetchWorkItems(repo.id, repo.path, PER_REPO_FETCH_LIMIT, query, {
+          sourceContext:
+            data.openGitHubSourceContext?.provider === 'github' &&
+            data.openGitHubSourceContext.repoId === repo.id
+              ? data.openGitHubSourceContext
+              : null
+        })
       }
     }
     if (resolvedSource === 'linear' && typeof state.prefetchLinearIssues === 'function') {

@@ -13,6 +13,7 @@ import {
   formatAutomationTokens,
   summarizeAutomationRunUsage
 } from './automation-usage-model'
+import type { AutomationTargetAvailability } from './automation-target-availability'
 import { translate } from '@/i18n/i18n'
 
 type AutomationDetailProps = {
@@ -21,6 +22,7 @@ type AutomationDetailProps = {
   projectName: string
   workspaceName: string
   projectDefaultBaseRef: string | null
+  runNowAvailability: AutomationTargetAvailability | null
   now: number
   onRunNow: (automation: Automation) => void
   onEdit: (automation: Automation) => void
@@ -86,6 +88,7 @@ export function AutomationDetail({
   projectName,
   workspaceName,
   projectDefaultBaseRef,
+  runNowAvailability,
   now,
   onRunNow,
   onEdit,
@@ -115,6 +118,7 @@ export function AutomationDetail({
     automation.workspaceMode === 'new_per_run'
       ? (automation.baseBranch ?? projectDefaultBaseRef ?? 'Project default')
       : workspaceName
+  const runNowDisabled = runNowAvailability?.canRunNow === false
 
   return (
     <div className="flex w-full flex-col gap-4">
@@ -133,10 +137,26 @@ export function AutomationDetail({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          <Button variant="secondary" size="sm" onClick={() => onRunNow(automation)}>
-            <Play className="size-4" />
-            {translate('auto.components.automations.AutomationDetail.2fb1605beb', 'Run Now')}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onRunNow(automation)}
+                  disabled={runNowDisabled}
+                >
+                  <Play className="size-4" />
+                  {translate('auto.components.automations.AutomationDetail.2fb1605beb', 'Run Now')}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            {runNowDisabled ? (
+              <TooltipContent side="bottom" sideOffset={6}>
+                {runNowAvailability.message}
+              </TooltipContent>
+            ) : null}
+          </Tooltip>
           <ToolbarIconButton
             label={translate(
               'auto.components.automations.AutomationDetail.4b1ea02d2e',
@@ -181,6 +201,12 @@ export function AutomationDetail({
             'auto.components.automations.AutomationDetail.dbef8dc110',
             'This SSH automation runs only while Orca can reach the SSH host. If reconnect needs interactive credentials or the host is unavailable, the run is recorded as skipped.'
           )}
+        </div>
+      ) : null}
+
+      {runNowAvailability?.canRunNow === false ? (
+        <div className="rounded-md border border-border/50 bg-muted/40 p-3 text-sm text-muted-foreground shadow-sm">
+          {runNowAvailability.message}
         </div>
       ) : null}
 

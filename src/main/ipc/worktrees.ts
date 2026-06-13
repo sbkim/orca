@@ -130,15 +130,22 @@ function removeWorktreeMetadataAndTransientState(store: Store, worktreeId: strin
   deleteWorktreeHistoryDir(worktreeId)
 }
 
-function getMissingProjectHostSetupMeta(
+function getProjectHostSetupMetaUpdates(
   store: Store,
   repo: Repo,
   existing?: WorktreeMeta
 ): Partial<Pick<WorktreeMeta, 'projectId' | 'hostId' | 'projectHostSetupId'>> {
   const ownership = getProjectHostSetupWorktreeMeta(store.getProjectHostSetups(), repo)
+  const sameSetup =
+    existing?.projectHostSetupId === undefined ||
+    existing.projectHostSetupId === ownership.projectHostSetupId
   return {
-    ...(existing?.projectId === undefined ? { projectId: ownership.projectId } : {}),
-    ...(existing?.hostId === undefined ? { hostId: ownership.hostId } : {}),
+    // Why: project IDs can be upgraded from legacy repo IDs to provider-backed
+    // logical IDs. If the host setup is the same, repair ownership on discovery.
+    ...(sameSetup && existing?.projectId !== ownership.projectId
+      ? { projectId: ownership.projectId }
+      : {}),
+    ...(sameSetup && existing?.hostId !== ownership.hostId ? { hostId: ownership.hostId } : {}),
     ...(existing?.projectHostSetupId === undefined
       ? { projectHostSetupId: ownership.projectHostSetupId }
       : {})
@@ -156,11 +163,11 @@ function resolveWorktreeMetaWithDiscoveryBackfill(
   worktreeId: string
 ): WorktreeMeta {
   const existing = store.getWorktreeMeta(worktreeId)
-  const missingOwnership = getMissingProjectHostSetupMeta(store, repo, existing)
+  const ownershipUpdates = getProjectHostSetupMetaUpdates(store, repo, existing)
   if (existing) {
     const updates = {
       ...(!existing.instanceId ? { instanceId: randomUUID() } : {}),
-      ...missingOwnership
+      ...ownershipUpdates
     }
     if (Object.keys(updates).length > 0) {
       // Why: profiles created before lineage shipped already have WorktreeMeta
@@ -172,7 +179,7 @@ function resolveWorktreeMetaWithDiscoveryBackfill(
   }
   return store.setWorktreeMeta(worktreeId, {
     lastActivityAt: Date.now(),
-    ...missingOwnership
+    ...ownershipUpdates
   })
 }
 
@@ -392,6 +399,7 @@ function pruneLineageForMissingRepoWorktrees(
 }
 
 type SshWorktreeMetaCandidate = {
+  id: string
   path: string
   meta: WorktreeMeta
 }
@@ -415,7 +423,7 @@ function createSshWorktreeMetaIndex(entries: [string, WorktreeMeta][]): SshWorkt
     }
 
     const candidates = index.get(parsed.repoId) ?? []
-    candidates.push({ path: parsed.worktreePath, meta })
+    candidates.push({ id: worktreeId, path: parsed.worktreePath, meta })
     index.set(parsed.repoId, candidates)
   }
   return index
@@ -437,15 +445,24 @@ function synthesizeSshGitWorktree(repo: Repo, path: string, meta: WorktreeMeta):
 }
 
 function listDisconnectedSshWorktrees(
+  store: Store,
   repo: Repo,
   metaIndex: SshWorktreeMetaIndex
 ): ReturnType<typeof mergeWorktree>[] {
   const byWorktreeId = new Map<string, ReturnType<typeof mergeWorktree>>()
   for (const candidate of metaIndex.get(repo.id) ?? []) {
+    const ownershipUpdates = getProjectHostSetupMetaUpdates(store, repo, candidate.meta)
+    const meta =
+      Object.keys(ownershipUpdates).length > 0
+        ? { ...candidate.meta, ...ownershipUpdates }
+        : candidate.meta
+    if (Object.keys(ownershipUpdates).length > 0) {
+      store.setWorktreeMeta(candidate.id, ownershipUpdates)
+    }
     const worktree = mergeWorktree(
       repo.id,
-      synthesizeSshGitWorktree(repo, candidate.path, candidate.meta),
-      candidate.meta
+      synthesizeSshGitWorktree(repo, candidate.path, meta),
+      meta
     )
     byWorktreeId.delete(worktree.id)
     byWorktreeId.set(worktree.id, worktree)
@@ -569,14 +586,14 @@ function listFolderWorkspaces(store: Store, repo: Repo): Worktree[] {
   return ids
     .map((worktreeId) => {
       const existing = allMeta[worktreeId]
-      const missingOwnership = getMissingProjectHostSetupMeta(store, repo, existing)
+      const ownershipUpdates = getProjectHostSetupMetaUpdates(store, repo, existing)
       const meta =
-        existing?.instanceId && Object.keys(missingOwnership).length === 0
+        existing?.instanceId && Object.keys(ownershipUpdates).length === 0
           ? existing
           : store.setWorktreeMeta(worktreeId, {
               instanceId:
                 existing?.instanceId ?? getFolderWorkspaceInstanceIdentity(repo, worktreeId),
-              ...missingOwnership,
+              ...ownershipUpdates,
               ...(existing ? {} : { displayName: repo.displayName, lastActivityAt: Date.now() })
             })
       return mergeFolderWorkspace(repo, worktreeId, meta)
@@ -611,11 +628,12 @@ function listVisibleFolderWorkspaces(store: Store, repo: Repo): Worktree[] {
     .filter((worktree) => worktree.visible)
     .map((worktree) => {
       const meta = store.getWorktreeMeta(worktree.id)
-      return mergeFolderWorkspace(
-        repo,
-        worktree.id,
-        meta ?? store.setWorktreeMeta(worktree.id, getMissingProjectHostSetupMeta(store, repo))
-      )
+      const ownershipUpdates = getProjectHostSetupMetaUpdates(store, repo, meta)
+      const repairedMeta =
+        meta && Object.keys(ownershipUpdates).length === 0
+          ? meta
+          : store.setWorktreeMeta(worktree.id, ownershipUpdates)
+      return mergeFolderWorkspace(repo, worktree.id, repairedMeta)
     })
 }
 
@@ -726,7 +744,7 @@ export function registerWorktreeHandlers(
               `${repo.connectionId}:${repo.id}`,
               `[worktrees] SSH git provider unavailable; skipping worktree list for repo "${repo.displayName}" (${repo.id}) at ${repo.path} on connection ${repo.connectionId}`
             )
-            return listDisconnectedSshWorktrees(repo, sshWorktreeMetaIndex)
+            return listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
           }
           loggedUnavailableSshGitProviders.delete(`${repo.connectionId}:${repo.id}`)
           try {
@@ -738,7 +756,7 @@ export function registerWorktreeHandlers(
               `[worktrees] failed to list worktrees for repo "${repo.displayName}" (${repo.id}) at ${repo.path}`,
               err
             )
-            return listDisconnectedSshWorktrees(repo, sshWorktreeMetaIndex)
+            return listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
           }
         } else {
           gitWorktrees = await listRepoWorktrees(repo)
@@ -791,7 +809,7 @@ export function registerWorktreeHandlers(
             `${repo.connectionId}:${repo.id}`,
             `[worktrees] SSH git provider unavailable; skipping worktree list for repo "${repo.displayName}" (${repo.id}) at ${repo.path} on connection ${repo.connectionId}`
           )
-          return listDisconnectedSshWorktrees(repo, sshWorktreeMetaIndex)
+          return listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
         }
         loggedUnavailableSshGitProviders.delete(`${repo.connectionId}:${repo.id}`)
         try {
@@ -803,7 +821,7 @@ export function registerWorktreeHandlers(
             `[worktrees] failed to list worktrees for repo "${repo.displayName}" (${repo.id}) at ${repo.path}`,
             err
           )
-          return listDisconnectedSshWorktrees(repo, sshWorktreeMetaIndex)
+          return listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
         }
       } else {
         gitWorktrees = await listRepoWorktrees(repo)
@@ -855,7 +873,7 @@ export function registerWorktreeHandlers(
         } else if (repo.connectionId) {
           const provider = getSshGitProvider(repo.connectionId)
           if (!provider) {
-            const worktrees = listDisconnectedSshWorktrees(repo, sshWorktreeMetaIndex)
+            const worktrees = listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
             return {
               repoId: repo.id,
               authoritative: false,
@@ -884,7 +902,7 @@ export function registerWorktreeHandlers(
           err
         )
         if (repo.connectionId) {
-          const worktrees = listDisconnectedSshWorktrees(repo, sshWorktreeMetaIndex)
+          const worktrees = listDisconnectedSshWorktrees(store, repo, sshWorktreeMetaIndex)
           return {
             repoId: repo.id,
             authoritative: false,

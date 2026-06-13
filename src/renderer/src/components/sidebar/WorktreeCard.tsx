@@ -23,7 +23,6 @@ import CacheTimer, { usePromptCacheCountdownStartedAt } from './CacheTimer'
 import WorktreeContextMenu from './WorktreeContextMenu'
 import { SshDisconnectedDialog } from './SshDisconnectedDialog'
 import { AutoRenameFailedDialog } from './AutoRenameFailedDialog'
-import { LinearAgentSkillSetupPrompt } from './LinearAgentSkillSetupPrompt'
 import WorktreeCardAgents from './WorktreeCardAgents'
 import { WorktreeCardStatusSlot } from './WorktreeCardStatusSlot'
 import { cn } from '@/lib/utils'
@@ -989,7 +988,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
                       )
                     : translate(
                         'auto.components.sidebar.WorktreeCard.ca74db7550',
-                        'Remote project via SSH'
+                        'Project on SSH host'
                       )}
                 </TooltipContent>
               </Tooltip>
@@ -1217,6 +1216,15 @@ const WorktreeCard = React.memo(function WorktreeCard({
                 </div>
               )}
 
+              {showHostContextBadge && (
+                <Badge
+                  variant="secondary"
+                  className="h-[16px] max-w-[7rem] shrink-0 rounded border border-border bg-accent px-1.5 text-[10px] font-medium leading-none text-muted-foreground dark:bg-accent/80 dark:border-border/50"
+                >
+                  <span className="truncate">{hostContextLabel}</span>
+                </Badge>
+              )}
+
               {isFolder ? (
                 <span
                   className="min-w-0 truncate font-mono text-[11px] leading-none text-muted-foreground"
@@ -1275,15 +1283,6 @@ const WorktreeCard = React.memo(function WorktreeCard({
             </span>
           </div>
         )}
-
-        {isActive && worktree.linkedLinearIssue ? (
-          <LinearAgentSkillSetupPrompt
-            linked
-            remote={Boolean(repo?.connectionId || settings?.activeRuntimeEnvironmentId?.trim())}
-            surface="modal"
-            settings={settings}
-          />
-        ) : null}
 
         {/* Why: inline agent list. Gated on the 'inline-agents' card
              property so users can hide it. Layout coupling: this block

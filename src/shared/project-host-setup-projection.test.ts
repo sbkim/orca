@@ -112,6 +112,44 @@ describe('project host setup projection', () => {
     )
   })
 
+  it('uses GitHub repo icon metadata as a provider identity fallback', () => {
+    const projection = projectHostSetupProjectionFromRepos([
+      repo({
+        id: 'local-repo',
+        path: '/Users/alice/orca',
+        displayName: 'Orca',
+        repoIcon: {
+          type: 'image',
+          src: 'https://github.com/stablyai.png?size=64',
+          source: 'github',
+          label: 'stablyai/orca'
+        }
+      }),
+      repo({
+        id: 'remote-repo',
+        path: '/home/alice/orca',
+        displayName: 'orca',
+        connectionId: 'gpu-vm',
+        repoIcon: {
+          type: 'image',
+          src: 'https://github.com/stablyai.png?size=64',
+          source: 'github',
+          label: 'StablyAI/Orca'
+        }
+      })
+    ])
+
+    expect(projection.projects).toHaveLength(1)
+    expect(projection.projects[0]).toMatchObject({
+      id: 'github:stablyai/orca',
+      sourceRepoIds: ['local-repo', 'remote-repo'],
+      providerIdentity: { provider: 'github', owner: 'stablyai', repo: 'orca' }
+    })
+    expect(getProjectHostSetupsForProject(projection.setups, 'github:stablyai/orca')).toHaveLength(
+      2
+    )
+  })
+
   it('does not guess that same-named folders are the same project without identity', () => {
     const projection = projectHostSetupProjectionFromRepos([
       repo({ id: 'local-repo', path: '/Users/alice/app', displayName: 'app' }),

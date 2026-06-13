@@ -89,11 +89,11 @@ export function useAddRepoCloneFlow({
   const handlePickDestination = useCallback(async (): Promise<void> => {
     if (activeRuntimeEnvironmentId?.trim() || sshTargetId?.trim()) {
       // Why: the native folder picker returns a client-local path. Runtime
-      // clone destinations must be typed as server paths.
+      // and SSH clone destinations must be typed as paths on that host.
       toast.error(
         translate(
           'auto.components.sidebar.useAddRepoCloneFlow.0dc4d1b657',
-          'Enter a server path for the clone destination.'
+          'Enter a host path for the clone destination.'
         )
       )
       return
@@ -152,16 +152,7 @@ export function useAddRepoCloneFlow({
         translate('auto.components.sidebar.useAddRepoCloneFlow.4d0013cc93', 'Repository cloned'),
         { description: repo.displayName }
       )
-      // Why: eagerly upsert so step 2 finds the repo before the IPC event.
-      const state = useAppStore.getState()
-      const existingIdx = state.repos.findIndex((r) => r.id === repo.id)
-      if (existingIdx === -1) {
-        useAppStore.setState({ repos: [...state.repos, repo] })
-      } else {
-        const updated = [...state.repos]
-        updated[existingIdx] = repo
-        useAppStore.setState({ repos: updated })
-      }
+      upsertAddedRepoWithProjectHostSetup(repo)
       // Why: once the repo exists, a transient non-authoritative refresh
       // should fall through to project reveal instead of leaving the add flow open.
       await fetchWorktrees(repo.id, { requireAuthoritative: true })

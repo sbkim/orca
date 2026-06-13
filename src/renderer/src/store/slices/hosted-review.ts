@@ -23,6 +23,7 @@ export { getHostedReviewCacheKey, linkedReviewHintKey } from './hosted-review-ca
 
 type CacheEntry<T> = { data: T | null; fetchedAt: number; linkedReviewHintKey?: string }
 type FetchOptions = { force?: boolean; repoId?: string; staleWhileRevalidate?: boolean }
+type CreateHostedReviewStoreInput = CreateHostedReviewInput & { repoId?: string | null }
 
 const CACHE_TTL_MS = 60_000
 const HOSTED_REVIEW_CACHE_MAX = 500
@@ -50,6 +51,14 @@ export function _clearHostedReviewRequestGenerationsForTest(): void {
 
 function isFresh<T>(entry: CacheEntry<T> | undefined): entry is CacheEntry<T> {
   return entry !== undefined && Date.now() - entry.fetchedAt < CACHE_TTL_MS
+}
+
+function findHostedReviewRepoByPath(
+  repos: readonly Repo[] | undefined,
+  repoPath: string,
+  repoId?: string | null
+): Repo | undefined {
+  return repos?.find((candidate) => (repoId ? candidate.id === repoId : candidate.path === repoPath))
 }
 
 function shouldRefetchForLinkedHint(
@@ -147,7 +156,7 @@ export type HostedReviewSlice = {
   ) => Promise<HostedReviewCreationEligibility>
   createHostedReview: (
     repoPath: string,
-    input: CreateHostedReviewInput
+    input: CreateHostedReviewStoreInput
   ) => Promise<CreateHostedReviewResult>
   fetchHostedReviewForBranch: (
     repoPath: string,
@@ -193,7 +202,7 @@ export const createHostedReviewSlice: StateCreator<AppState, [], [], HostedRevie
 
   getHostedReviewCreationEligibility: async (args) => {
     const settings = get().settings
-    const repo = get().repos.find((candidate) => candidate.path === args.repoPath)
+    const repo = findHostedReviewRepoByPath(get().repos, args.repoPath, args.repoId)
     const ownerSettings = settingsForHostedReviewRepoOwner(settings, repo)
     const target = getActiveRuntimeTarget(ownerSettings)
     if (target.kind === 'environment') {
@@ -212,17 +221,19 @@ export const createHostedReviewSlice: StateCreator<AppState, [], [], HostedRevie
     }
     return window.api.hostedReview.getCreationEligibility({
       ...args,
+      repoId: repo?.id ?? args.repoId,
       connectionId: repo?.connectionId ?? null
     })
   },
 
   createHostedReview: async (repoPath, input) => {
     const settings = get().settings
-    const repo = get().repos.find((candidate) => candidate.path === repoPath)
+    const repo = findHostedReviewRepoByPath(get().repos, repoPath, input.repoId)
     const ownerSettings = settingsForHostedReviewRepoOwner(settings, repo)
     const target = getActiveRuntimeTarget(ownerSettings)
+    const { repoId: inputRepoId, ...hostedReviewInput } = input
     if (target.kind === 'environment') {
-      const { worktreePath, ...runtimeInput } = input
+      const { worktreePath, ...runtimeInput } = hostedReviewInput
       return callRuntimeRpc<CreateHostedReviewResult>(
         target,
         'hostedReview.create',
@@ -236,8 +247,9 @@ export const createHostedReviewSlice: StateCreator<AppState, [], [], HostedRevie
     }
     return window.api.hostedReview.create({
       repoPath,
+      repoId: repo?.id ?? inputRepoId ?? undefined,
       connectionId: repo?.connectionId ?? null,
-      ...input
+      ...hostedReviewInput
     })
   },
 
