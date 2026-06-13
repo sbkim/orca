@@ -51,6 +51,19 @@ describe('task source provider availability', () => {
     ).toEqual([{ hostId: 'local', reason: 'unavailable-source-tool' }])
   })
 
+  it('marks GitLab unsupported when a host preflight payload predates GitLab support', () => {
+    const { glab: _glab, ...preGitLabPreflight } = readyPreflight
+
+    expect(
+      getRepoBackedProviderAvailability({
+        provider: 'gitlab',
+        contexts: [source('local')],
+        preflightReady: true,
+        preflightStatus: preGitLabPreflight
+      })
+    ).toEqual([{ hostId: 'local', reason: 'unsupported-provider' }])
+  })
+
   it('does not apply desktop preflight to runtime-owned sources', () => {
     expect(
       getRepoBackedProviderAvailability({
@@ -106,6 +119,28 @@ describe('task source provider availability', () => {
         ])
       })
     ).toEqual([])
+  })
+
+  it('marks runtime-owned GitLab sources unsupported when runtime preflight lacks GitLab', () => {
+    const { glab: _glab, ...preGitLabPreflight } = readyPreflight
+
+    expect(
+      getRepoBackedProviderAvailability({
+        provider: 'gitlab',
+        contexts: [source('runtime:server')],
+        preflightReady: true,
+        preflightStatus: readyPreflight,
+        runtimePreflightStatusByHostId: new Map([
+          [
+            'runtime:server',
+            {
+              checked: true,
+              status: preGitLabPreflight
+            }
+          ]
+        ])
+      })
+    ).toEqual([{ hostId: 'runtime:server', reason: 'unsupported-provider' }])
   })
 
   it('waits for preflight before reporting provider availability', () => {
