@@ -140,6 +140,10 @@ Done means: Local, SSH, remote server, and future cloud VMs share one Host model
 - [~] Integration-test Linear/Jira with explicit source account selection.
 - [x] Integration-test automations on local host, SSH host, and remote server where supported.
 - [x] Integration-test disconnected host UX for Tasks, New Workspace modal, sidebar, and automations.
+  - 2026-06-13 follow-up: verified patched main IPC against a live Docker SSH target.
+    Connected SSH PTY inspection returned `bash`; after disconnect, PTY inspection returned
+    `null`/`false` and remote agent detection returned `[]` without repeated main-process
+    handler errors.
 - [ ] Integration-test new client with older remote server and older client with newer server where practical.
 - [x] Electron-test Add Project flows: browse folder, clone URL, and create project from scratch on local and SSH hosts.
 - [x] Electron-test workspace options and sidebar host filtering.

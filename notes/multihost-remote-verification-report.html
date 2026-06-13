@@ -274,6 +274,12 @@
             disconnected SSH UX, opened Tasks, opened Automations, and captured screenshots below.
           </li>
           <li class="pass">
+            Follow-up disconnected SSH validation launched a patched second Electron instance,
+            connected a Docker SSH PTY, observed foreground process <code>bash</code>, disconnected
+            the host, then verified PTY inspection returned <code>null</code>/<code>false</code>
+            and remote agent detection returned <code>[]</code> without repeated handler errors.
+          </li>
+          <li class="pass">
             Focused locked-SSH Add Project regression test passed:
             <code>src/renderer/src/components/sidebar/AddRepoDialogStepContent.test.tsx</code>,
             9 tests.
