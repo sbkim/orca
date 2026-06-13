@@ -90,6 +90,7 @@ import { AutomationRunHistory } from './AutomationRunHistory'
 import { getAutomationTemplates, type AutomationTemplate } from './automation-templates'
 import { getAutomationTargetAvailability } from './automation-target-availability'
 import {
+  getExternalAutomationActionDisabledMessage,
   getExternalAutomationSourceAvailability,
   isSshConnectionBusy
 } from './external-automation-source-availability'
@@ -2006,7 +2007,18 @@ export default function AutomationsPage(): React.JSX.Element {
               const nextRunLabel = entry.job.enabled
                 ? formatExternalDate(entry.job.nextRunAt, relativeNow)
                 : 'Paused'
-              const actionDisabled = !entry.manager.canManage || externalActionKey !== null
+              const entrySshStatus =
+                entry.manager.target.type === 'ssh'
+                  ? sshConnectionStates.get(entry.manager.target.connectionId)?.status
+                  : undefined
+              const disabledMessage = getExternalAutomationActionDisabledMessage({
+                manager: entry.manager,
+                providerLabel,
+                targetKindLabel,
+                sshStatus: entrySshStatus,
+                actionInProgress: externalActionKey !== null
+              })
+              const actionDisabled = disabledMessage !== null
               const scheduleDisplay = getExternalAutomationScheduleDisplay(entry.manager, entry.job)
               return (
                 <ContextMenu key={entry.key}>
@@ -2069,10 +2081,13 @@ export default function AutomationsPage(): React.JSX.Element {
                       onSelect={() => requestExternalAction(entry.manager, entry.job, 'run')}
                     >
                       <Play className="size-3.5" />
-                      {translate(
-                        'auto.components.automations.AutomationsPage.2faecab10b',
-                        'Run Now'
-                      )}
+                      <span className="min-w-0 truncate">
+                        {disabledMessage ??
+                          translate(
+                            'auto.components.automations.AutomationsPage.2faecab10b',
+                            'Run Now'
+                          )}
+                      </span>
                     </ContextMenuItem>
                     {entry.manager.provider === 'hermes' ? (
                       <ContextMenuItem
