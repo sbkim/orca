@@ -716,7 +716,14 @@ export function useIpcEvents(): void {
     const pendingAgentStatusEvents: PendingAgentStatusEvent[] = []
     let pendingAgentStatusRetryTimer: ReturnType<typeof setTimeout> | null = null
     const runtimeClientEventsSubscriptions = new Map<string, () => void>()
-    const runtimeClientEventsPending = new Set<string>()
+    // Why: a still-in-flight subscribe promise is uncancellable, so a flap
+    // (env leaves desiredIds then returns before the promise resolves) could
+    // otherwise leave two attempts both installing into the subscriptions Map
+    // and leaking the first unsubscribe handle. Keying pending by a per-attempt
+    // id lets each completion verify it is still the current attempt before
+    // installing, so only one subscription survives per environment.
+    const runtimeClientEventsPending = new Map<string, number>()
+    let runtimeClientEventsAttemptSeq = 0
     let runtimeClientEventsGeneration = 0
 
     unsubs.push(attachMobileMarkdownBridge())
@@ -806,6 +813,11 @@ export function useIpcEvents(): void {
     const handleRuntimeClientEvent = (environmentId: string, event: RuntimeClientEvent): void => {
       if (event.type === 'reposChanged') {
         const state = useAppStore.getState()
+        // Why: a server-side repos change can also add/rename/remove project
+        // groups and folder workspaces; refresh them so the sidebar grouping
+        // does not go stale until the next startup or env re-switch.
+        void state.fetchProjectGroups()
+        void state.fetchFolderWorkspaces()
         void state.fetchRuntimeEnvironmentRepos(environmentId).then(async (repos) => {
           await Promise.all(repos.map((repo) => useAppStore.getState().fetchWorktrees(repo.id)))
           await useAppStore.getState().fetchWorktreeLineage()
@@ -859,7 +871,8 @@ export function useIpcEvents(): void {
         ) {
           continue
         }
-        runtimeClientEventsPending.add(environmentId)
+        const attemptId = ++runtimeClientEventsAttemptSeq
+        runtimeClientEventsPending.set(environmentId, attemptId)
         const generation = runtimeClientEventsGeneration
         void subscribeRuntimeClientEvents(
           environmentId,
@@ -869,9 +882,14 @@ export function useIpcEvents(): void {
           }
         )
           .then((subscription) => {
-            runtimeClientEventsPending.delete(environmentId)
+            const isCurrentAttempt = runtimeClientEventsPending.get(environmentId) === attemptId
+            if (isCurrentAttempt) {
+              runtimeClientEventsPending.delete(environmentId)
+            }
             if (
+              !isCurrentAttempt ||
               generation !== runtimeClientEventsGeneration ||
+              runtimeClientEventsSubscriptions.has(environmentId) ||
               !getRuntimeClientEventEnvironmentIds().includes(environmentId)
             ) {
               subscription.unsubscribe()
@@ -880,13 +898,15 @@ export function useIpcEvents(): void {
             runtimeClientEventsSubscriptions.set(environmentId, subscription.unsubscribe)
           })
           .catch((error) => {
-            runtimeClientEventsPending.delete(environmentId)
+            if (runtimeClientEventsPending.get(environmentId) === attemptId) {
+              runtimeClientEventsPending.delete(environmentId)
+            }
             if (generation === runtimeClientEventsGeneration) {
               console.warn('[runtime-client-events] failed to subscribe:', error)
             }
           })
       }
-      for (const environmentId of runtimeClientEventsPending) {
+      for (const environmentId of [...runtimeClientEventsPending.keys()]) {
         if (desiredIds.has(environmentId)) {
           continue
         }
