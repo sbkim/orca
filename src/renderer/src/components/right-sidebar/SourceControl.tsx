@@ -2288,7 +2288,9 @@ function SourceControlInner(): React.JSX.Element {
             base: stripBaseRef(seed.base.trim()),
             title: seed.title,
             body: seed.body,
-            draft: seed.draft
+            draft: seed.draft,
+            provider: hostedReviewCreateProvider,
+            useTemplate: resolvedPrCreationDefaults.useTemplate
           },
           overrides
         )
@@ -2339,7 +2341,9 @@ function SourceControlInner(): React.JSX.Element {
       activeWorktreeId,
       allocatePullRequestGenerationRequestId,
       branchName,
+      hostedReviewCreateProvider,
       refreshGitStatusAfterPullRequestGeneration,
+      resolvedPrCreationDefaults.useTemplate,
       setPullRequestGenerationRecord,
       updatePullRequestGenerationRecord,
       worktreePath
@@ -2757,7 +2761,11 @@ function SourceControlInner(): React.JSX.Element {
               worktreePath: token.worktreePath,
               connectionId: getConnectionId(token.worktreeId) ?? undefined
             },
-            fields
+            {
+              ...fields,
+              provider: eligibility.provider,
+              useTemplate: resolvedPrCreationDefaults.useTemplate
+            }
           )
           if (generated.success) {
             fields = {
