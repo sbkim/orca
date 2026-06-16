@@ -124,7 +124,7 @@ describe('WorktreeCardStatusSlot', () => {
     )
 
     expect(markup).toContain('Working')
-    expect(markup).toContain('animate-spin')
+    expect(markup).toContain('border-yellow-500')
     expect(markup).not.toContain('PR checks: Failed')
   })
 
