@@ -550,6 +550,22 @@ describe('mobile subscribe integration', () => {
   })
 
   describe('onExternalPtyResize', () => {
+    it('keeps the headless mirror at the desktop renderer size for hidden snapshots', async () => {
+      const { runtime } = createRuntime()
+
+      runtime.onPtyData('pty-1', 'visible output\r\n', Date.now())
+      await runtime.serializeMainTerminalBuffer('pty-1')
+
+      runtime.onExternalPtyResize('pty-1', 180, 50)
+      runtime.setPtyHeadlessTerminalVisible('pty-1', false)
+      runtime.onPtyData('pty-1', 'hidden output\r\n', Date.now())
+
+      const snapshot = await runtime.serializeMainTerminalBuffer('pty-1')
+      expect(snapshot?.source).toBe('headless')
+      expect(snapshot?.cols).toBe(180)
+      expect(snapshot?.rows).toBe(50)
+    })
+
     it('updates previousCols when desktop renderer resizes PTY after desktop restore', async () => {
       const { runtime, ptySizes } = createRuntime()
       await runtime.handleMobileSubscribe('pty-1', 'client-a', { cols: 45, rows: 20 })

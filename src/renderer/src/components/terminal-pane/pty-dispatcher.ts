@@ -144,7 +144,14 @@ export function ensurePtyDispatcher(): void {
       }
     }
   })
-  window.api.pty.onRendererOutputSkipped((payload) => {
+  const onRendererOutputSkipped = (
+    window.api.pty as typeof window.api.pty & {
+      onRendererOutputSkipped?: typeof window.api.pty.onRendererOutputSkipped
+    }
+  ).onRendererOutputSkipped
+  // Why: tests and mixed-version clients can expose an older preload shape;
+  // missing skip notifications should degrade restore freshness, not crash attach.
+  onRendererOutputSkipped?.((payload) => {
     ptyRendererOutputSkippedHandlers.get(payload.id)?.()
   })
 }

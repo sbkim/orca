@@ -507,6 +507,9 @@ test.describe('Terminal raw emoji table scroll restore repro', () => {
       await switchToWorktree(orcaPage, firstWorktreeId)
       await ensureTerminalVisible(orcaPage)
       await waitForActiveTerminalManager(orcaPage, 30_000)
+      // Why: this golden asserts hidden-output restore, not a later viewport
+      // shrink after returning to the original worktree.
+      await ensureWideRenderedTableColumns(orcaPage)
       await expect
         .poll(() => getTerminalContent(orcaPage, 30_000), {
           timeout: 30_000,
