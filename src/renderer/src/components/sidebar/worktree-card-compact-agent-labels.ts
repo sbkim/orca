@@ -33,17 +33,11 @@ function lastEnteredDoneAt(agent: DashboardAgentRowData): number | null {
 }
 
 export function getCompactAgentPrimary(agent: DashboardAgentRowData): string {
-  if (agent.sleeping) {
-    return formatAgentTypeLabel(agent.agentType)
-  }
   const prompt = agent.entry.prompt?.trim() ?? ''
   return prompt || agentStateLabel(getAgentDotState(agent))
 }
 
 export function getCompactAgentSecondary(agent: DashboardAgentRowData): string {
-  if (agent.sleeping) {
-    return 'Slept · resume saved'
-  }
   if (agent.entry.interrupted === true) {
     return 'Interrupted by user'
   }
@@ -61,9 +55,6 @@ export function getCompactAgentSecondary(agent: DashboardAgentRowData): string {
 }
 
 export function getCompactAgentTime(agent: DashboardAgentRowData, now: number): string | null {
-  if (agent.sleeping) {
-    return null
-  }
   const doneAt = lastEnteredDoneAt(agent)
   if (doneAt !== null) {
     return formatShortTimeAgo(doneAt, now)

@@ -14,7 +14,6 @@ import {
   selectMigrationUnsupportedEntriesForWorktree,
   selectRuntimeAgentOrchestrationForWorktree,
   selectRetainedAgentEntriesForWorktree,
-  selectSleepingAgentSessionRecordsForWorktree,
   selectTerminalLayoutsForWorktree
 } from './worktree-agent-row-selectors'
 
@@ -23,8 +22,7 @@ export {
   selectLiveAgentStatusEntriesForWorktree,
   selectMigrationUnsupportedEntriesForWorktree,
   selectRuntimeAgentOrchestrationForWorktree,
-  selectRetainedAgentEntriesForWorktree,
-  selectSleepingAgentSessionRecordsForWorktree
+  selectRetainedAgentEntriesForWorktree
 } from './worktree-agent-row-selectors'
 
 /**
@@ -55,9 +53,6 @@ export function useWorktreeAgentRows(worktreeId: string): DashboardAgentRow[] {
   )
   const retained = useAppStore(
     useShallow((s) => selectRetainedAgentEntriesForWorktree(s, worktreeId))
-  )
-  const sleeping = useAppStore(
-    useShallow((s) => selectSleepingAgentSessionRecordsForWorktree(s, worktreeId))
   )
   const runtimePaneTitlesByTabId = useAppStore(
     useShallow((s) => selectRuntimePaneTitlesForWorktree(s, worktreeId))
@@ -95,7 +90,6 @@ export function useWorktreeAgentRows(worktreeId: string): DashboardAgentRow[] {
         tabs: tabs ?? [],
         entries,
         retained,
-        sleeping,
         runtimePaneTitlesByTabId,
         ptyIdsByTabId,
         terminalLayoutsByTabId,
@@ -109,7 +103,6 @@ export function useWorktreeAgentRows(worktreeId: string): DashboardAgentRow[] {
     liveEntries,
     migrationUnsupported,
     retained,
-    sleeping,
     runtimePaneTitlesByTabId,
     ptyIdsByTabId,
     terminalLayoutsByTabId,

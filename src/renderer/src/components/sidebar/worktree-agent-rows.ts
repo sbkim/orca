@@ -1,7 +1,6 @@
 import type { DashboardAgentRow } from '@/components/dashboard/useDashboardData'
 import { isExplicitAgentStatusFresh } from '@/lib/agent-status'
 import type { RetainedAgentEntry } from '@/store/slices/agent-status'
-import type { SleepingAgentSessionRecord } from '../../../../shared/agent-session-resume'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
   type AgentType,
@@ -23,7 +22,6 @@ import {
   buildTitleDerivedAgentRows,
   resolveAgentTypeFromTerminalTitle
 } from './worktree-title-derived-agent-rows'
-import { buildSleepingAgentRows } from './worktree-agent-sleeping-rows'
 
 function tabFromAttributedStatusEntry(entry: AgentStatusEntry): TerminalTab | null {
   const parsed = parsePaneKey(entry.paneKey)
@@ -148,7 +146,6 @@ export function buildWorktreeAgentRows(args: {
   tabs: TerminalTab[]
   entries: AgentStatusEntry[]
   retained: RetainedAgentEntry[]
-  sleeping?: SleepingAgentSessionRecord[]
   runtimePaneTitlesByTabId?: Record<string, Record<number, string>>
   ptyIdsByTabId?: Record<string, string[]>
   terminalLayoutsByTabId?: Record<string, TerminalLayoutSnapshot | undefined>
@@ -157,7 +154,6 @@ export function buildWorktreeAgentRows(args: {
 }): DashboardAgentRow[] {
   const rows: DashboardAgentRow[] = []
   const seenPaneKeys = new Set<string>()
-  const seenTabIds = new Set<string>()
 
   const entriesByTabId = new Map<string, AgentStatusEntry[]>()
   for (const entry of args.entries) {
@@ -192,15 +188,11 @@ export function buildWorktreeAgentRows(args: {
         startedAt: rowEntry.stateHistory[0]?.startedAt ?? rowEntry.stateStartedAt
       })
       seenPaneKeys.add(rowEntry.paneKey)
-      seenTabIds.add(tab.id)
     }
   }
 
   const titleDerivedRows = buildTitleDerivedAgentRows({ ...args, seenPaneKeys })
   rows.push(...titleDerivedRows)
-  for (const row of titleDerivedRows) {
-    seenTabIds.add(row.tab.id)
-  }
 
   // Why: orchestration workers can be attributed to a worktree by main before
   // their tab is present in this renderer. Keep those live rows visible in the
@@ -227,7 +219,6 @@ export function buildWorktreeAgentRows(args: {
       startedAt: rowEntry.stateHistory[0]?.startedAt ?? rowEntry.stateStartedAt
     })
     seenPaneKeys.add(rowEntry.paneKey)
-    seenTabIds.add(tab.id)
   }
 
   for (const ra of args.retained) {
@@ -255,16 +246,8 @@ export function buildWorktreeAgentRows(args: {
       state: 'done',
       startedAt: ra.startedAt
     })
-    seenPaneKeys.add(rowEntry.paneKey)
-    seenTabIds.add(ra.tab.id)
   }
 
   rows.sort((a, b) => a.startedAt - b.startedAt)
-  const sleepingRows = buildSleepingAgentRows({
-    sleeping: args.sleeping,
-    seenPaneKeys,
-    seenTabIds
-  })
-
-  return sleepingRows.length > 0 ? [...rows, ...sleepingRows] : rows
+  return rows
 }

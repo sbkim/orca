@@ -15,12 +15,11 @@ let mockAgents: unknown[] = []
 let mockStoreState: Record<string, unknown> = {}
 const mockSendPromptToSidebarAgentTarget = vi.fn()
 
-function agentRow(paneKey: string, state: string, now: number, sleeping?: true): unknown {
+function agentRow(paneKey: string, state: string, now: number): unknown {
   return {
     paneKey,
     tab: { id: 'tab-1' },
     state,
-    sleeping,
     entry: { stateStartedAt: now, orchestration: undefined }
   }
 }
@@ -184,24 +183,6 @@ describe('WorktreeCardAgents send targets', () => {
 
     expect(markup).toContain('data-agent-send-target="sending"')
     expect(markup).toContain('data-disabled-reason="Sending..."')
-    expect(markup).toContain(`data-pane-key="${READY_PANE_KEY}"`)
-  })
-
-  it('keeps sleeping rows unavailable as send targets', async () => {
-    const now = Date.now()
-    mockAgents = [agentRow(READY_PANE_KEY, 'idle', now, true)]
-    mockStoreState = {
-      ...targetStoreState(now),
-      agentSendPopoverTargetMode: activeTargetMode({
-        eligiblePaneKeys: [READY_PANE_KEY]
-      })
-    }
-    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
-
-    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
-
-    expect(markup).toContain('data-agent-send-target="disabled"')
-    expect(markup).toContain('data-disabled-reason="Sleeping agent is not available"')
     expect(markup).toContain(`data-pane-key="${READY_PANE_KEY}"`)
   })
 
