@@ -6,6 +6,7 @@ import { translate } from '@/i18n/i18n'
 type Props = {
   expanded: boolean
   hideExpand: boolean
+  isSleeping: boolean
   sendTargetStatus?: 'eligible' | 'disabled' | 'sending'
   timeLabel: string | null
   onDismiss: (e: React.MouseEvent) => void
@@ -18,6 +19,7 @@ type Props = {
 export function DashboardAgentRowTrailingControls({
   expanded,
   hideExpand,
+  isSleeping,
   sendTargetStatus,
   timeLabel,
   onDismiss,
@@ -27,7 +29,7 @@ export function DashboardAgentRowTrailingControls({
   onToggleExpand
 }: Props): React.JSX.Element {
   const showSendTarget = sendTargetStatus === 'eligible' || sendTargetStatus === 'sending'
-  const showDismiss = !sendTargetStatus
+  const showDismiss = !isSleeping && !sendTargetStatus
   const dismissLabel = translate(
     'auto.components.dashboard.DashboardAgentRow.b06e13fcf7',
     'Dismiss agent'

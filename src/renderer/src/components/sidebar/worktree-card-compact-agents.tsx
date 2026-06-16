@@ -197,7 +197,7 @@ export function CompactAgentSummaryButton({
 type CompactAgentRowProps = {
   agent: DashboardAgentRowData
   now: number
-  onActivate: (tabId: string, paneKey: string) => void
+  onActivate: (tabId: string, paneKey: string, sleeping?: true) => void
   childAgentCount?: number
   childAgentsExpanded?: boolean
   onToggleChildAgents?: () => void
@@ -246,9 +246,9 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
         }
         return
       }
-      onActivate(agent.tab.id, agent.paneKey)
+      onActivate(agent.tab.id, agent.paneKey, agent.sleeping)
     },
-    [agent.paneKey, agent.tab.id, onActivate, onSendTargetClick, sendTargetStatus]
+    [agent.paneKey, agent.sleeping, agent.tab.id, onActivate, onSendTargetClick, sendTargetStatus]
   )
   const handleToggleChildren = useCallback(
     (e: React.MouseEvent<HTMLButtonElement>) => {

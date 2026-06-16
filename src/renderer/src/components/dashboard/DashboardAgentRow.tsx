@@ -74,7 +74,7 @@ type Props = {
   /** Navigate directly to the tab this agent lives in. paneKey is passed
    *  through so the caller can acknowledge (mark-visited) the specific row
    *  that was clicked, without having to re-derive it from the tab id. */
-  onActivate: (tabId: string, paneKey: string) => void
+  onActivate: (tabId: string, paneKey: string, sleeping?: true) => void
   /**
    * Why: the relative-time labels ("Xm ago") need a periodic re-render to stay
    * honest. We accept `now` from a parent container so a single 30s tick owned
@@ -190,9 +190,9 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   const handleActivate = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      onActivate(agent.tab.id, agent.paneKey)
+      onActivate(agent.tab.id, agent.paneKey, agent.sleeping)
     },
-    [onActivate, agent.tab.id, agent.paneKey]
+    [agent.paneKey, agent.sleeping, agent.tab.id, onActivate]
   )
   const handleSendTargetClickCapture = useCallback(
     (e: React.MouseEvent) => {
@@ -233,16 +233,20 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   // readable label — just a state dot and icon. Fall back to the state label
   // ("Working", "Done", "Waiting", …) so every row is identifiable at a
   // glance.
-  const displayLabel = prompt || agentStateLabel(asDotState(agent.state))
+  const displayLabel = agent.sleeping
+    ? formatAgentTypeLabel(agent.agentType)
+    : prompt || agentStateLabel(asDotState(agent.state))
   // Why: the tool row describes what the agent is *currently* doing; once it
   // leaves working, that line goes stale and misleads (a done row showing
   // "Bash: pnpm test" reads as if the command is still running). Gate tool
   // fields on `state === 'working'`. The assistant message is the opposite
   // — it's the reply, most useful on `done`, so we always show it.
-  const isWorking = agent.state === 'working'
+  const isWorking = !agent.sleeping && agent.state === 'working'
   const toolName = isWorking ? (agent.entry.toolName?.trim() ?? '') : ''
   const toolInput = isWorking ? (agent.entry.toolInput?.trim() ?? '') : ''
-  const lastAssistantMessage = agent.entry.lastAssistantMessage?.trim() ?? ''
+  const lastAssistantMessage = agent.sleeping
+    ? 'Slept · resume saved'
+    : (agent.entry.lastAssistantMessage?.trim() ?? '')
   const isInterrupted = agent.entry.interrupted === true
   const lineage = agent.lineage
   const isLineageChild = lineage?.depth === 1
@@ -258,7 +262,9 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
   // leading state column; the secondary-line text below provides the
   // explanation without competing with the prompt or timestamp.
   const dotState: AgentDotState = isInterrupted ? 'interrupted' : asDotState(agent.state)
-  const dotTooltipLabel = stateDotTooltipLabel(agent, dotState)
+  const dotTooltipLabel = agent.sleeping
+    ? 'Agent session is sleeping'
+    : stateDotTooltipLabel(agent, dotState)
 
   // Why: always show the chevron to keep the row's right edge stable — a
   // conditional control would appear/disappear as agent content grows and
@@ -423,6 +429,7 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
         <DashboardAgentRowTrailingControls
           expanded={expanded}
           hideExpand={hideExpand}
+          isSleeping={agent.sleeping === true}
           sendTargetStatus={sendTargetStatus}
           timeLabel={timeLabel}
           onDismiss={handleDismiss}
