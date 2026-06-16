@@ -1,4 +1,5 @@
 /* eslint-disable max-lines */
+import type { ExecutionHostId } from './execution-host'
 import type { SshRemotePtyLease, SshTarget } from './ssh-types'
 import type { Automation, AutomationRun } from './automations-types'
 import type { WorkspaceSource } from './workspace-source'
@@ -10,6 +11,7 @@ import type {
 } from './agent-status-types'
 import type { VoiceSettings } from './speech-types'
 import type { WorkspaceCleanupUIState } from './workspace-cleanup'
+import type { LargeDiffRenderLimit } from './large-diff-render-limit'
 import type { GitLabProjectSettings } from './gitlab-types'
 import type { TaskProvider } from './task-providers'
 import type { FeatureTipId } from './feature-tips'
@@ -31,6 +33,7 @@ import type { SleepingAgentSessionRecord } from './agent-session-resume'
 import type { ClaudeAgentTeamsMode } from './claude-agent-teams-tmux-compat'
 import type { TerminalCustomTheme } from './terminal-custom-themes'
 import type { UiLanguage } from './ui-language'
+import type { ForkSyncMode } from './git-fork-sync'
 
 // Re-exported for backward compat with renderer call sites that import
 // `WorkspaceCreateTelemetrySource` from '../../../shared/types'.
@@ -85,7 +88,130 @@ export type RepoKind = 'git' | 'folder'
  * - `'origin'`: explicit origin. Same precedence.
  */
 export type IssueSourcePreference = 'upstream' | 'origin' | 'auto'
+export type { ForkSyncMode, GitForkSyncExpectedUpstream, GitForkSyncResult } from './git-fork-sync'
 export type ExternalWorktreeVisibility = 'hide' | 'show'
+
+export type ProjectProviderIdentity = {
+  provider: 'github'
+  owner: string
+  repo: string
+}
+
+export type Project = {
+  id: string
+  displayName: string
+  badgeColor: string
+  repoIcon?: RepoIcon | null
+  kind?: RepoKind
+  providerIdentity?: ProjectProviderIdentity
+  sourceRepoIds: string[]
+  createdAt: number
+  updatedAt: number
+}
+
+export type ProjectHostSetupState = 'ready' | 'not-set-up' | 'setting-up' | 'error' | 'unsupported'
+export type ProjectHostSetupMethod =
+  | 'legacy-repo'
+  | 'imported-existing-folder'
+  | 'cloned'
+  | 'provisioned'
+export type RepoProjectHostSetupMethod = Extract<
+  ProjectHostSetupMethod,
+  'imported-existing-folder' | 'cloned'
+>
+
+export type ProjectHostSetup = {
+  id: string
+  projectId: string
+  hostId: ExecutionHostId
+  repoId: string
+  path: string
+  displayName: string
+  kind?: RepoKind
+  connectionId?: string | null
+  executionHostId?: ExecutionHostId | null
+  worktreeBasePath?: string
+  hookSettings?: RepoHookSettings
+  gitUsername?: string
+  setupState: ProjectHostSetupState
+  setupMethod: ProjectHostSetupMethod
+  sourceControlAi?: RepoSourceControlAiOverrides
+  createdAt: number
+  updatedAt: number
+}
+
+export type ProjectHostSetupExistingFolderArgs = {
+  projectId: string
+  hostId: ExecutionHostId
+  path: string
+  kind?: RepoKind
+  displayName?: string
+  setupMethod?: RepoProjectHostSetupMethod
+}
+
+export type ProjectHostSetupCreateArgs = {
+  projectId: string
+  hostId: ExecutionHostId
+  setupId?: string
+  path?: string
+  kind?: RepoKind
+  displayName?: string
+  worktreeBasePath?: string
+  gitUsername?: string
+  setupState?: ProjectHostSetupState
+  setupMethod?: Exclude<ProjectHostSetupMethod, 'legacy-repo'>
+}
+
+export type ProjectHostSetupCloneArgs = {
+  projectId: string
+  hostId: ExecutionHostId
+  url: string
+  destination: string
+  displayName?: string
+}
+
+export type ProjectHostSetupUpdateArgs = {
+  setupId: string
+  updates: Partial<
+    Pick<
+      ProjectHostSetup,
+      | 'displayName'
+      | 'path'
+      | 'worktreeBasePath'
+      | 'setupState'
+      | 'setupMethod'
+      | 'gitUsername'
+      | 'kind'
+    >
+  >
+}
+
+export type ProjectHostSetupDeleteArgs = {
+  setupId: string
+}
+
+export type ProjectHostSetupResult = {
+  project: Project
+  setup: ProjectHostSetup
+  repo: Repo
+}
+
+export type ProjectHostSetupCreateResult = {
+  project: Project
+  setup: ProjectHostSetup
+}
+
+export type ProjectHostSetupUpdateResult = {
+  project: Project
+  setup: ProjectHostSetup
+  repo?: Repo
+}
+
+export type ProjectHostSetupDeleteResult = {
+  project: Project
+  setup: ProjectHostSetup
+  repo?: Repo
+}
 
 export type Repo = {
   id: string
@@ -106,10 +232,17 @@ export type Repo = {
   hookSettings?: RepoHookSettings
   /** SSH target ID for remote repos. null/undefined = local. */
   connectionId?: string | null
+  /**
+   * Explicit execution owner for this repo. Runtime-host repos need this
+   * because they otherwise look identical to local repos (`connectionId: null`).
+   */
+  executionHostId?: 'local' | `ssh:${string}` | `runtime:${string}` | null
   /** Per-repo override for issue-source resolution. `undefined` is treated
    *  identically to `'auto'`; writers leave it undefined on creation so
    *  existing persisted records stay forward-compatible. */
   issueSourcePreference?: IssueSourcePreference
+  /** Controls Orca's fork-default-branch sync offer for repos with upstream metadata. */
+  forkSyncMode?: ForkSyncMode
   /** Controls whether worktrees Orca did not create appear in the sidebar. */
   externalWorktreeVisibility?: ExternalWorktreeVisibility
   /** True when the repo predates hidden-by-default external worktrees. */
@@ -128,6 +261,8 @@ export type Repo = {
   projectGroupOrder?: number
   /** Repo-specific source-control AI overrides. Missing fields inherit global settings. */
   sourceControlAi?: RepoSourceControlAiOverrides
+  /** Transitional source for ProjectHostSetup.setupMethod while Repo remains compatibility storage. */
+  projectHostSetupMethod?: RepoProjectHostSetupMethod
 }
 
 export type ProjectGroupCreatedFrom = 'manual' | 'folder-scan' | 'migration'
@@ -286,6 +421,12 @@ export type Worktree = {
   id: string // `${repoId}::${path}`
   instanceId?: string
   repoId: string
+  /** Durable project identity. Optional while legacy repo-only workspaces migrate. */
+  projectId?: string
+  /** Execution host that owns the workspace. Optional for pre-project-host metadata. */
+  hostId?: ExecutionHostId
+  /** Host-specific setup used to create/run this workspace. */
+  projectHostSetupId?: string
   displayName: string
   comment: string
   linkedIssue: number | null
@@ -293,16 +434,19 @@ export type Worktree = {
   linkedLinearIssue: string | null
   linkedLinearIssueWorkspaceId?: string | null
   linkedLinearIssueOrganizationUrlKey?: string | null
-  // Why: parallel slots for GitLab work-item references. Kept as separate
+  // Why: parallel slots for non-GitHub work-item references. Kept as separate
   // fields (rather than reusing linkedIssue / linkedPR with a provider
   // discriminator) so the persistence layer is unambiguous when a user
-  // has both a GitHub and a GitLab remote on the same repo, and so the
+  // has remotes from several providers on the same repo, and so the
   // existing GitHub renderer code keeps reading linkedPR / linkedIssue
   // unchanged. Optional on the type so existing test fixtures and
   // persisted older worktrees that never carried these fields continue
   // to typecheck and load without migration.
   linkedGitLabMR?: number | null
   linkedGitLabIssue?: number | null
+  linkedBitbucketPR?: number | null
+  linkedAzureDevOpsPR?: number | null
+  linkedGiteaPR?: number | null
   isArchived: boolean
   isUnread: boolean
   isPinned: boolean
@@ -350,6 +494,8 @@ export type GitPushTarget = {
 
 export type GitHubPrStartPoint = {
   baseBranch: string
+  /** Review target branch to use for Source Control compare after creating from a PR head SHA. */
+  compareBaseRef?: string
   pushTarget?: GitPushTarget
   /** Verified PR head commit. Present when checkout can be tied to a stable SHA. */
   headSha?: string
@@ -363,6 +509,12 @@ export type GitHubPrStartPoint = {
 export type WorktreeMeta = {
   /** Immutable per-workspace-instance ID used to reject stale lineage after path reuse. */
   instanceId?: string
+  /** See Worktree.projectId. Persisted for project-first workspace ownership. */
+  projectId?: string
+  /** See Worktree.hostId. Persisted for project-first workspace ownership. */
+  hostId?: ExecutionHostId
+  /** See Worktree.projectHostSetupId. Persisted for project-first workspace ownership. */
+  projectHostSetupId?: string
   displayName: string
   comment: string
   linkedIssue: number | null
@@ -374,6 +526,12 @@ export type WorktreeMeta = {
   linkedGitLabMR?: number | null
   /** Optional for backward compatibility — see Worktree.linkedGitLabIssue. */
   linkedGitLabIssue?: number | null
+  /** Optional for backward compatibility — see Worktree.linkedBitbucketPR. */
+  linkedBitbucketPR?: number | null
+  /** Optional for backward compatibility — see Worktree.linkedAzureDevOpsPR. */
+  linkedAzureDevOpsPR?: number | null
+  /** Optional for backward compatibility — see Worktree.linkedGiteaPR. */
+  linkedGiteaPR?: number | null
   isArchived: boolean
   isUnread: boolean
   isPinned: boolean
@@ -406,6 +564,11 @@ export type WorktreeMeta = {
   /** User-assigned workspace board status for manual sidebar organization. */
   workspaceStatus?: WorkspaceStatus
   diffComments?: DiffComment[]
+  /** Path-derived worktree ids this worktree had before its folder was renamed
+   *  on disk (the id embeds the path). Lets the daemon's session GC and registry
+   *  hydration recognize sessions minted under an old id instead of reaping
+   *  them. Self-prunes when the worktree is deleted. */
+  priorWorktreeIds?: string[]
   mobileDiffReview?: MobileDiffReviewState
 }
 
@@ -430,9 +593,11 @@ export type WorktreeLineageOrigin = 'orchestration' | 'cli' | 'manual'
 export type WorktreeLineageCaptureConfidence = 'explicit' | 'inferred'
 export type WorktreeLineageCaptureSource =
   | 'explicit-cli-flag'
+  | 'env-workspace'
   | 'cwd-context'
   | 'terminal-context'
   | 'orchestration-context'
+  | 'active-workspace'
   | 'manual-action'
 
 export type WorktreeLineageCapture = {
@@ -449,6 +614,20 @@ export type WorktreeLineage = {
   capture: WorktreeLineageCapture
   orchestrationRunId?: string
   taskId?: string
+  coordinatorHandle?: string
+  createdByTerminalHandle?: string
+  createdAt: number
+}
+
+export type WorkspaceLineage = {
+  childWorkspaceKey: WorkspaceKey
+  childInstanceId?: string | null
+  parentWorkspaceKey: WorkspaceKey
+  parentInstanceId?: string | null
+  origin: WorktreeLineageOrigin
+  capture: WorktreeLineageCapture
+  taskId?: string
+  orchestrationRunId?: string
   coordinatorHandle?: string
   createdByTerminalHandle?: string
   createdAt: number
@@ -534,6 +713,7 @@ export type TabContentType =
   | 'editor'
   | 'diff'
   | 'conflict-review'
+  | 'check-details'
   | 'browser'
   | 'simulator'
 
@@ -657,6 +837,9 @@ export type BrowserPage = {
   canGoForward: boolean
   loadError: BrowserLoadError | null
   createdAt: number
+  // Why: remote-owned worktrees can still host client-local fallback browser
+  // pages until headless remote runtimes support real browser panes.
+  browserRuntimeEnvironmentId?: string | null
   /** Active CDP viewport emulation preset. null = default (fill pane, no CDP override) */
   viewportPresetId?: BrowserViewportPresetId | null
 }
@@ -865,6 +1048,7 @@ export type PRInfo = {
   mergeable: PRMergeableState
   reviewDecision?: PRReviewDecision | null
   autoMergeEnabled?: boolean
+  autoMergeAllowed?: boolean | null
   mergeQueueRequired?: boolean | null
   mergeMethodSettings?: GitHubPRMergeMethodSettings
   mergeStateStatus?: string | null
@@ -872,6 +1056,8 @@ export type PRInfo = {
   // Keeping the head SHA in cached PR metadata lets the checks panel poll the
   // correct commit without re-querying GitHub or guessing from local branch refs.
   headSha?: string
+  /** Target branch name for PR-created worktree compare-base repair. */
+  baseRefName?: string
   prRepo?: GitHubRepositoryIdentity
   headRepo?: GitHubRepositoryIdentity
   conflictSummary?: PRConflictSummary
@@ -903,6 +1089,7 @@ export type GitHubPRRefreshAlias = {
   branch: string
   worktreeId?: string
   connectionId?: string | null
+  executionHostId?: string | null
   linkedPRNumber?: number | null
   fallbackPRNumber?: number | null
   fallbackPRSource?: 'explicit' | 'pr-cache' | 'hosted-review' | null
@@ -914,6 +1101,7 @@ export type GitHubPRRefreshCandidate = GitHubPRRefreshAlias & {
   isBare?: boolean
   isArchived?: boolean
   connectionId?: string | null
+  executionHostId?: string | null
   connectionState?: 'connected' | 'disconnected' | 'unknown'
   cachedFetchedAt?: number | null
   cachedHasPR?: boolean | null
@@ -1136,6 +1324,7 @@ export type GitHubWorkItem = {
   checksSummary?: GitHubPRCheckSummary
   mergeable?: PRMergeableState
   autoMergeEnabled?: boolean
+  autoMergeAllowed?: boolean | null
   mergeQueueRequired?: boolean | null
   mergeMethodSettings?: GitHubPRMergeMethodSettings
   mergeStateStatus?: string | null
@@ -1170,6 +1359,8 @@ export type GitHubPRFileContents = {
   modified: string
   originalIsBinary: boolean
   modifiedIsBinary: boolean
+  originalTooLarge?: boolean
+  modifiedTooLarge?: boolean
 }
 
 export type GitHubPRReviewCommentInput = {
@@ -1273,6 +1464,7 @@ export type LinearIssue = {
   }
   estimate?: number | null
   priority: number
+  dueDate?: string | null
   updatedAt: string
 }
 
@@ -1435,6 +1627,7 @@ export type LinearIssueUpdate = {
   assigneeId?: string | null
   estimate?: number | null
   priority?: number
+  dueDate?: string | null
   labelIds?: string[]
   projectId?: string | null
 }
@@ -1705,6 +1898,8 @@ export type CreateWorktreeArgs = {
    *  Linear artifact whose title should remain readable in the sidebar. */
   displayName?: string
   baseBranch?: string
+  /** Source Control compare target when it differs from the checkout start point. */
+  compareBaseRef?: string
   /** Optional git branch to create, separate from the filesystem-safe worktree
    *  name. Used when creating from an existing branch whose local branch name
    *  legitimately contains `/` while the worktree directory must not. */
@@ -1718,9 +1913,14 @@ export type CreateWorktreeArgs = {
   linkedLinearIssueOrganizationUrlKey?: string | null
   linkedGitLabIssue?: number
   linkedGitLabMR?: number
+  linkedBitbucketPR?: number | null
+  linkedAzureDevOpsPR?: number | null
+  linkedGiteaPR?: number | null
   pushTarget?: GitPushTarget
   workspaceStatus?: WorkspaceStatus
   manualOrder?: number
+  /** Parent workspace for in-app creates launched from a folder workspace. */
+  parentWorkspace?: WorkspaceKey
   /** Agent selected in the create surface. Omitted for blank-shell creates. */
   createdWithAgent?: TuiAgent
   /** Set when the renderer knows this auto-generated branch should be renamed
@@ -1749,9 +1949,11 @@ export type CreateWorktreeResult = {
     parentWorktreeId?: string | null
     childWorktreeIds?: string[]
     lineage?: WorktreeLineage | null
+    workspaceLineage?: WorkspaceLineage | null
     git?: GitWorktreeInfo
   }
   lineage?: WorktreeLineage | null
+  workspaceLineage?: WorkspaceLineage | null
   warnings?: WorktreeLineageWarning[]
   setup?: WorktreeSetupLaunch
   defaultTabs?: WorktreeDefaultTabsLaunch
@@ -1761,6 +1963,8 @@ export type CreateWorktreeResult = {
   localBaseRefUpdateSuggestion?: LocalBaseRefUpdateSuggestion
   startupTerminal?: {
     spawned: boolean
+    handle?: string
+    tabId?: string
     surface?: 'visible' | 'background'
   }
   timing?: WorktreeCreateTiming
@@ -2075,8 +2279,23 @@ export type FloatingTerminalCwdRequest = {
   requireTrusted?: boolean
 }
 
+/** Per-host overrides for client preferences that genuinely vary by execution
+ *  host. NARROW by design: only settings whose value is meaningless to share
+ *  across hosts belong here.
+ *  - `displayLabel`: a client-side rename for the host shown in sidebar/pickers.
+ *  - `defaultWorktreeLocation`: the host's root worktree directory; a remote
+ *    SSH/runtime host has a different filesystem layout than the local Mac, so
+ *    the client `workspaceDir` default cannot apply unchanged. */
+export type HostSettingOverrides = {
+  displayLabel?: string
+  defaultWorktreeLocation?: string
+}
+
 export type GlobalSettings = {
   workspaceDir: string
+  /** Per-host overrides keyed by ExecutionHostId. Effective value for a
+   *  host-varying setting is `host override ?? client default`. */
+  hostSettingOverrides?: Partial<Record<ExecutionHostId, HostSettingOverrides>>
   nestWorkspaces: boolean
   workspaceDirHistory?: OrcaWorkspaceLayout[]
   refreshLocalBaseRefOnWorktreeCreate: boolean
@@ -2418,6 +2637,10 @@ export type GlobalSettings = {
    *  and agent-completion events. Opt-in while the signal/noise balance is
    *  being tested. */
   experimentalTerminalAttention: boolean
+  /** Experimental: automatically sleep completed, resumable background agent terminals. */
+  experimentalAgentHibernation?: boolean
+  /** Milliseconds a completed agent must stay idle before hibernation can be considered. */
+  agentHibernationIdleMs?: number
   /** Compact worktree cards by hiding a redundant metadata row when the title
    *  and branch already say the same thing. */
   compactWorktreeCards: boolean
@@ -2698,6 +2921,8 @@ export type RightSidebarTab =
   | 'explorer'
   | 'search'
   | 'vault'
+  | 'workspaces'
+  | 'pr-checks'
   | 'source-control'
   | 'checks'
   | 'ports'
@@ -2705,6 +2930,9 @@ export type ActiveRightSidebarTab = Exclude<RightSidebarTab, 'search'>
 export type RightSidebarExplorerView = 'files' | 'search'
 
 export type ProjectOrderBy = 'manual' | 'recent'
+export type WorkspaceHostScope = 'all' | 'local' | `ssh:${string}` | `runtime:${string}`
+export type VisibleWorkspaceHostIds = Exclude<WorkspaceHostScope, 'all'>[] | null
+export type WorkspaceHostOrder = Exclude<WorkspaceHostScope, 'all'>[]
 
 export type PersistedUIState = {
   lastActiveRepoId: string | null
@@ -2714,6 +2942,7 @@ export type PersistedUIState = {
   rightSidebarTab: RightSidebarTab
   rightSidebarExplorerView: RightSidebarExplorerView
   rightSidebarWidth: number
+  markdownTocPanelWidth?: number
   groupBy: 'none' | 'workspace-status' | 'repo' | 'pr-status'
   sortBy: 'name' | 'smart' | 'recent' | 'repo' | 'manual'
   /** Project header ordering in `groupBy: 'repo'`, independent of workspace
@@ -2725,6 +2954,16 @@ export type PersistedUIState = {
   showActiveOnly: boolean
   /** Hide sleeping/inactive workspaces from workspace navigation. Off by default. */
   hideSleepingWorkspaces?: boolean
+  /** Which execution hosts the workspace sidebar shows. `all` keeps the mixed
+   *  command-center view; specific host IDs focus the sidebar without tearing
+   *  down sessions owned by other hosts. */
+  workspaceHostScope?: WorkspaceHostScope
+  /** Which execution hosts the workspace sidebar shows. `null` means sticky
+   *  all-hosts so newly-added hosts appear automatically. */
+  visibleWorkspaceHostIds?: VisibleWorkspaceHostIds
+  /** User-defined sidebar order for host sections. Missing/new hosts append in
+   *  the discovered host order. */
+  workspaceHostOrder?: WorkspaceHostOrder
   /** Deprecated legacy positive-form setting. Ignored on hydration. */
   showSleepingWorkspaces?: boolean
   /** Deprecated legacy name used by a short-lived build. Ignored on hydration. */
@@ -2794,6 +3033,11 @@ export type PersistedUIState = {
   /** User-dismissed browser import hint in the browser toolbar. Import remains
    *  available from Settings > Browser and the toolbar overflow menu. */
   browserImportHintHidden?: boolean
+  /** User dismissed the first-run Mobile Emulator intro (Keep, Hide, or close).
+   *  Reversible only by re-enabling the feature in Settings. */
+  mobileEmulatorTabIntroDismissed?: boolean
+  /** User deferred the in-pane Mobile Emulator CLI + skill setup guide. */
+  mobileEmulatorAgentSetupDismissed?: boolean
   /** One-shot rollout notice for manual project ordering becoming the default.
    *  Absent or true means the sidebar callout stays hidden. */
   projectOrderManualDefaultNoticeDismissed?: boolean
@@ -2977,6 +3221,8 @@ export type LegacyPaneKeyAliasEntry = {
 export type PersistedState = {
   schemaVersion: number
   repos: Repo[]
+  projects: Project[]
+  projectHostSetups: ProjectHostSetup[]
   projectGroups: ProjectGroup[]
   folderWorkspaces: FolderWorkspace[]
   /** Sparse-checkout presets keyed by repoId. Empty record on first launch;
@@ -2984,13 +3230,21 @@ export type PersistedState = {
   sparsePresetsByRepo: Record<string, SparsePreset[]>
   worktreeMeta: Record<string, WorktreeMeta>
   worktreeLineageById: Record<string, WorktreeLineage>
+  workspaceLineageByChildKey: Record<WorkspaceKey, WorkspaceLineage>
   settings: GlobalSettings
   ui: PersistedUIState
   githubCache: {
     pr: Record<string, { data: PRInfo | null; fetchedAt: number }>
     issue: Record<string, { data: IssueInfo | null; fetchedAt: number }>
   }
+  /** Legacy single-blob session. Retained as the canonical 'local' execution
+   *  host partition so an app downgrade still reads its workspace. Non-local
+   *  hosts live in workspaceSessionsByHostId, keyed by ExecutionHostId. */
   workspaceSession: WorkspaceSessionState
+  /** Per-execution-host session partitions for non-'local' hosts (ssh:/runtime:).
+   *  Mixed-host writes stay isolated here; 'local' stays in workspaceSession so
+   *  pre-partition builds keep working. Optional/absent on legacy files. */
+  workspaceSessionsByHostId?: Partial<Record<ExecutionHostId, WorkspaceSessionState>>
   sshTargets: SshTarget[]
   sshRemotePtyLeases: SshRemotePtyLease[]
   migrationUnsupportedPtyEntries: MigrationUnsupportedPtyEntry[]
@@ -3079,6 +3333,7 @@ export type GitDiffTextResult = {
   modifiedContent: string
   originalIsBinary: false
   modifiedIsBinary: false
+  largeDiffRenderLimit?: LargeDiffRenderLimit
 }
 
 export type GitDiffBinaryResult = {

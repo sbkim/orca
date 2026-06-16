@@ -22,12 +22,15 @@ import type {
   WorkspaceCreateTelemetrySource,
   WorkspaceStatus
 } from '../../../shared/types'
+import type { TaskSourceContext } from '../../../shared/task-source-context'
 import { translate } from '@/i18n/i18n'
+import { getWorkspaceComposerInitialFocusTarget } from '@/lib/workspace-composer-initial-focus'
 
 type ComposerModalData = {
   prefilledName?: string
   initialRepoId?: string
   linkedWorkItem?: LinkedWorkItemSummary | null
+  taskSourceContext?: TaskSourceContext | null
   initialBaseBranch?: string
   initialWorkspaceStatus?: WorkspaceStatus
   /** Telemetry surface that opened the composer. Set by each
@@ -85,14 +88,11 @@ function ComposerModalBody({
         onOpenAutoFocus={(event) => {
           // Why: Radix's FocusScope fires this once the dialog has mounted.
           // preventDefault stops it from focusing whatever first-tabbable it
-          // picks (close button), and we instead focus the repo picker so the
-          // keyboard flow starts at the top of the unified create form.
+          // picks (close button), and we instead focus the name/source field
+          // so users can start typing immediately.
           event.preventDefault()
           const content = event.currentTarget as HTMLElement
-          const trigger = content.querySelector<HTMLElement>(
-            '[data-repo-combobox-root="true"][role="combobox"]'
-          )
-          trigger?.focus({ preventScroll: true })
+          getWorkspaceComposerInitialFocusTarget(content)?.focus({ preventScroll: true })
         }}
       >
         <QuickTabBody modalData={modalData} onClose={onClose} active />
@@ -124,6 +124,7 @@ function QuickTabBody({
     // intentionally ignored even if older callers still send it.
     initialPrompt: '',
     initialLinkedWorkItem: modalData.linkedWorkItem ?? null,
+    initialTaskSourceContext: modalData.taskSourceContext ?? null,
     initialRepoId: modalData.initialRepoId,
     initialWorkspaceStatus: modalData.initialWorkspaceStatus,
     ...(modalData.initialBaseBranch ? { initialBaseBranch: modalData.initialBaseBranch } : {}),

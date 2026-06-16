@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type SetStateAction
@@ -21,7 +22,10 @@ import {
 import logo from '../../../resources/logo.svg'
 import { SYNC_FIT_PANES_EVENT, TOGGLE_TERMINAL_PANE_EXPAND_EVENT } from '@/constants/terminal'
 import { syncZoomCSSVar } from '@/lib/ui-zoom'
+import { resolveLeftSidebarStyleVariables } from '@/lib/left-sidebar-appearance'
 import { canShowRightSidebarForView } from '@/lib/right-sidebar-visibility'
+import { resolveLeftTitlebarChromeLayout } from '@/lib/titlebar-left-chrome'
+import { shouldShowWorktreeCreationSurface } from '@/lib/worktree-creation-surface'
 import { buildAppFontFamily } from '@/lib/app-font-family'
 import { toast } from 'sonner'
 import { Toaster } from '@/components/ui/sonner'
@@ -37,9 +41,12 @@ import { useShallow } from 'zustand/react/shallow'
 import { isRemoteWorkspaceSnapshotApplyInProgress, useIpcEvents } from './hooks/useIpcEvents'
 import { useAutomationDispatchEvents } from './hooks/useAutomationDispatchEvents'
 import RetainedAgentsSyncGate from './components/dashboard/RetainedAgentsSyncGate'
+import { AgentHibernationGate } from './components/AgentHibernationGate'
 import { ActivityTitlebarControls } from './components/activity/ActivityTitlebarControls'
 import Sidebar from './components/Sidebar'
 import { shutdownBufferCaptures } from './components/terminal-pane/shutdown-buffer-captures'
+import { dispatchWindowCloseRequest } from './components/window-close-request-coordinator'
+import { useSystemPrefersDark } from './components/terminal-pane/use-system-prefers-dark'
 import RightSidebar from './components/right-sidebar'
 import { StarNagCard } from './components/StarNagCard'
 import { TelemetryFirstLaunchSurface } from './components/TelemetryFirstLaunchSurface'
@@ -59,6 +66,7 @@ import { createFloatingWorkspaceTourInteractionSnapshot } from '@/lib/floating-w
 import { requestScrollToCurrentWorkspaceRevealAndRename } from '@/lib/scroll-to-current-workspace-status'
 import { WorkspacePortScanner } from './components/ports/WorkspacePortScanner'
 import { CrashReportDialog } from './components/crash-report/CrashReportDialog'
+import NewWorkspaceComposerModal from './components/NewWorkspaceComposerModal'
 import { RecoverableRenderErrorBoundary } from './components/error-boundaries/RecoverableRenderErrorBoundary'
 import { ConfirmationDialogProvider } from './components/confirmation-dialog'
 import { LinkRoutingPreferenceDialogProvider } from './components/link-routing-preference-dialog'
@@ -88,6 +96,11 @@ import {
   shouldPersistWorkspaceSession
 } from './lib/workspace-session'
 import { createSessionWriteSubscriber } from './lib/session-write-subscriber'
+import {
+  fetchWorkspaceSessionFromHosts,
+  patchWorkspaceSessionByHost,
+  persistWorkspaceSessionByHostSync
+} from './lib/workspace-session-host-persistence'
 import {
   getStartupErrorFallbackUI,
   hydratePersistedUIAfterStartupRead
@@ -222,7 +235,6 @@ const WorkspaceSpacePage = lazy(() => import('./components/workspace-space/Works
 const MobilePage = lazy(() => import('./components/mobile/MobilePage'))
 const QuickOpen = lazy(() => import('./components/QuickOpen'))
 const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
-const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
 const WorkspaceCleanupDialog = lazy(
   () => import('./components/workspace-cleanup/WorkspaceCleanupDialog')
 )
@@ -233,6 +245,12 @@ const StatusBar = lazy(() =>
 const SetupGuideModal = lazy(() => import('./components/setup-guide/SetupGuideModal'))
 const FeatureWallModal = lazy(() => import('./components/feature-wall/FeatureWallModal'))
 const FeatureTipsModal = lazy(() => import('./components/feature-tips/FeatureTipsModal'))
+const AddRepoDialog = lazy(() => import('./components/sidebar/AddRepoDialog'))
+const NonGitFolderDialog = lazy(() => import('./components/sidebar/NonGitFolderDialog'))
+const AddProjectFromFolderDialog = lazy(
+  () => import('./components/sidebar/AddProjectFromFolderDialog')
+)
+const ProjectAddedDialog = lazy(() => import('./components/sidebar/ProjectAddedDialog'))
 const DeleteWorktreeDialog = lazy(() => import('./components/sidebar/DeleteWorktreeDialog'))
 const DictationController = lazy(() =>
   import('./components/dictation/DictationController').then((module) => ({
@@ -374,14 +392,12 @@ function App(): React.JSX.Element {
   const contextualToursAutoEligible = useAppStore((s) => s.contextualToursAutoEligible)
   const activeWorktreeId = useAppStore((s) => s.activeWorktreeId)
   const activePendingCreationId = useAppStore((s) => s.activePendingCreationId)
-  // Why: the creation loader is debounced — a fast create resolves before its
-  // entry's loaderVisible flips, so the content area keeps showing the prior
-  // workspace (or Landing) and never flashes a loader. Only a create still
-  // pending past the debounce gates the loader and hides the terminal.
-  const activeCreationLoaderVisible = useAppStore(
+  // Why: the creation surface owns the tab strip from the first pending frame.
+  // Gating it on the delayed loader flag made the tab bar swap in mid-create.
+  const activePendingCreationExists = useAppStore(
     (s) =>
-      s.activePendingCreationId != null &&
-      s.pendingWorktreeCreations[s.activePendingCreationId]?.loaderVisible === true
+      s.activePendingCreationId !== null &&
+      s.pendingWorktreeCreations[s.activePendingCreationId] !== undefined
   )
   // Why: App swaps the sidebar between workspace and landing layouts when the
   // active workspace is slept/deleted. Keep virtualized scroll memory above
@@ -418,6 +434,18 @@ function App(): React.JSX.Element {
   // and shutdown transitions where activeWorktreeId can briefly become null.
   const shouldMountTerminalWorkbench =
     activeWorktreeId !== null || hasMountedTerminalWorkbenchRef.current
+  // Why: visible worktree creation owns its faux tab strip from start to finish;
+  // the previous workspace must stay mounted for retention without rendering
+  // real chrome.
+  const creationLayoutActive = shouldShowWorktreeCreationSurface({
+    activeView,
+    activePendingCreationId,
+    hasActivePendingCreation: activePendingCreationExists
+  })
+  const workspaceChromeActive =
+    activeView === 'terminal' && activeWorktreeId !== null && !creationLayoutActive
+  const terminalWorkbenchVisible =
+    activeView === 'terminal' && activeWorktreeId !== null && !creationLayoutActive
   // Why: a closed empty floating workspace is not startup-critical. Once it owns
   // tabs, keep it mounted while closed so hidden terminal/browser/editor panes
   // retain their local state.
@@ -512,6 +540,7 @@ function App(): React.JSX.Element {
       setFloatingTerminalOpenWithFocus(false)
     }
   }, [floatingTerminalEnabled, setFloatingTerminalOpenWithFocus])
+
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const sidebarOpen = useAppStore((s) => s.sidebarOpen)
   const groupBy = useAppStore((s) => s.groupBy)
@@ -527,11 +556,17 @@ function App(): React.JSX.Element {
   const shouldMountSetupGuideTelemetryObserver = persistedUIReady
   const shouldMountUpdateCard = shouldMountUpdateCardForStatus(updateStatus)
   const rightSidebarWidth = useAppStore((s) => s.rightSidebarWidth)
+  const markdownTocPanelWidth = useAppStore((s) => s.markdownTocPanelWidth)
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
   const rightSidebarTab = useAppStore((s) => s.rightSidebarTab)
   const rightSidebarExplorerView = useAppStore((s) => s.rightSidebarExplorerView)
   const isFullScreen = useAppStore((s) => s.isFullScreen)
   const settings = useAppStore((s) => s.settings)
+  const systemPrefersDark = useSystemPrefersDark()
+  const leftSidebarStyle = useMemo(
+    () => resolveLeftSidebarStyleVariables(settings, systemPrefersDark),
+    [settings, systemPrefersDark]
+  ) as React.CSSProperties | undefined
   const dictationState = useAppStore((s) => s.dictationState)
   const hasSshCredentialRequest = useAppStore((s) => s.sshCredentialQueue.length > 0)
   const shouldMountDictationController =
@@ -552,10 +587,12 @@ function App(): React.JSX.Element {
   const titlebarLeftControlsRef = useRef<HTMLDivElement | null>(null)
   const [collapsedSidebarHeaderWidth, setCollapsedSidebarHeaderWidth] = useState(0)
   const [mountedLazyModalIds, setMountedLazyModalIds] = useState<Set<LazyModalId>>(() => new Set())
+  const [shouldMountAddRepoDialog, setShouldMountAddRepoDialog] = useState(false)
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null)
   const [onboardingLoaded, setOnboardingLoaded] = useState(false)
   const featureTipsPromptedThisSessionRef = useRef(false)
   const featureTipsSuppressedByOnboardingThisSessionRef = useRef(false)
+  const unmountAddRepoDialogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [featureTipCliInstalled, setFeatureTipCliInstalled] = useState<boolean | null>(null)
   const [onboardingSettingsDetour, setOnboardingSettingsDetour] = useState(false)
   const shouldRenderOnboarding = onboarding !== null && shouldShowOnboarding(onboarding)
@@ -566,6 +603,31 @@ function App(): React.JSX.Element {
     // it during render so onboarding can resume without a follow-up Effect pass.
     setOnboardingSettingsDetour(false)
   }
+
+  useEffect(() => {
+    if (activeModal === 'add-repo') {
+      if (unmountAddRepoDialogTimerRef.current) {
+        clearTimeout(unmountAddRepoDialogTimerRef.current)
+        unmountAddRepoDialogTimerRef.current = null
+      }
+      setShouldMountAddRepoDialog(true)
+      return
+    }
+    if (shouldMountAddRepoDialog && !unmountAddRepoDialogTimerRef.current) {
+      // Why: AddRepoDialog's close effect aborts in-flight clone/nested work.
+      // Keep one closed render, then remove hidden SSH/remote subscriptions.
+      unmountAddRepoDialogTimerRef.current = setTimeout(() => {
+        setShouldMountAddRepoDialog(false)
+        unmountAddRepoDialogTimerRef.current = null
+      }, 0)
+    }
+    return () => {
+      if (unmountAddRepoDialogTimerRef.current) {
+        clearTimeout(unmountAddRepoDialogTimerRef.current)
+        unmountAddRepoDialogTimerRef.current = null
+      }
+    }
+  }, [activeModal, shouldMountAddRepoDialog])
 
   // Subscribe to IPC push events
   useIpcEvents()
@@ -743,7 +805,14 @@ function App(): React.JSX.Element {
           cancelled,
           hydratePersistedUI: actions.hydratePersistedUI
         })
-        const session = await window.api.session.get()
+        // Why: runtime-owned worktree slices live in per-host partitions.
+        // Repos were fetched above, so the known runtime hosts are derivable
+        // here; merge their slices into the unified session the hydrators
+        // expect. An unreadable host partition is skipped (fail-soft).
+        const session = await fetchWorkspaceSessionFromHosts(
+          window.api.session,
+          useAppStore.getState().repos
+        )
         await actions.fetchKeybindings()
         if (!cancelled) {
           actions.hydrateWorkspaceSession(session)
@@ -1035,9 +1104,12 @@ function App(): React.JSX.Element {
       store: useAppStore,
       shouldSchedulePersist: () => !isRemoteWorkspaceSnapshotApplyInProgress(),
       persist: ({ patch }) => {
-        const localWrite = window.api.session.patch(patch)
-        void localWrite
         const state = useAppStore.getState()
+        // Why: route each runtime host's worktree-scoped slice to its own
+        // partition; the returned promise is the local write so the
+        // remote-workspace upload chain below keeps its ordering.
+        const localWrite = patchWorkspaceSessionByHost(window.api.session, patch, state)
+        void localWrite
         const hydratedTargetIds = Array.from(state.remoteWorkspaceHydratedTargetIds).filter(
           (targetId) => state.remoteWorkspaceSyncStatusByTargetId[targetId]?.phase !== 'conflict'
         )
@@ -1097,11 +1169,25 @@ function App(): React.JSX.Element {
       // into the store via Zustand setters. The earlier read is only for the
       // gating flags and would miss those updates.
       const freshState = useAppStore.getState()
-      window.api.session.setSync(buildWorkspaceSessionPayload(freshState))
+      persistWorkspaceSessionByHostSync(
+        window.api.session,
+        buildWorkspaceSessionPayload(freshState),
+        freshState
+      )
       shutdownBuffersCaptured = true
     }
     window.addEventListener('beforeunload', captureAndFlush)
     return () => window.removeEventListener('beforeunload', captureAndFlush)
+  }, [])
+
+  // Own the single window-close-request subscription at the always-mounted App
+  // root. Why: the rich confirmation flow lives in Terminal, which is not
+  // mounted on the no-workspace landing page (and is lazy-loaded elsewhere), so
+  // subscribing there left File → Exit / Ctrl+Q with no listener and the window
+  // never closed (#5144). dispatchWindowCloseRequest delegates to Terminal's
+  // handler when present, else confirms the close directly.
+  useEffect(() => {
+    return window.api.ui.onWindowCloseRequested(dispatchWindowCloseRequest)
   }, [])
 
   // Why there is no periodic scrollback save: PR #461 added a 3-minute
@@ -1128,6 +1214,7 @@ function App(): React.JSX.Element {
         rightSidebarTab,
         rightSidebarExplorerView,
         rightSidebarWidth,
+        markdownTocPanelWidth,
         groupBy,
         sortBy,
         projectOrderBy,
@@ -1154,6 +1241,7 @@ function App(): React.JSX.Element {
     rightSidebarTab,
     rightSidebarExplorerView,
     rightSidebarWidth,
+    markdownTocPanelWidth,
     groupBy,
     sortBy,
     projectOrderBy,
@@ -1221,11 +1309,7 @@ function App(): React.JSX.Element {
   const effectiveActiveTabExpanded = effectiveActiveTabId
     ? (expandedPaneByTabId[effectiveActiveTabId] ?? false)
     : false
-  const showTitlebarExpandButton =
-    activeView === 'terminal' &&
-    activeWorktreeId !== null &&
-    !hasTabBar &&
-    effectiveActiveTabExpanded
+  const showTitlebarExpandButton = workspaceChromeActive && !hasTabBar && effectiveActiveTabExpanded
   // Why: Activity and Space are full-page navigation surfaces — same
   // treatment as Settings — so the worktree sidebar is removed for those views.
   const showSidebar =
@@ -1233,16 +1317,22 @@ function App(): React.JSX.Element {
     activeView !== 'activity' &&
     activeView !== 'space' &&
     activeView !== 'skills'
-  // Why: only the terminal workspace replaces the full-width titlebar with
-  // split-column chrome. Full-page navigation views keep the draggable app
-  // titlebar so their page-level controls can live in that window strip.
-  const workspaceActive = activeView === 'terminal' && activeWorktreeId !== null
-  // Why: Tasks/Landing keep the full titlebar only when the sidebar is collapsed;
-  // with it open, mirror workspace view so titlebar-left sits flush above nav.
-  const stackedSidebarOpen = !workspaceActive && showSidebar && sidebarOpen
+  // Why: Tasks/Landing keep the full titlebar only when the sidebar is
+  // collapsed; with it open, mirror workspace view so titlebar-left sits flush
+  // above nav. Creation layout suppresses the full-width titlebar.
+  const stackedSidebarOpen =
+    !workspaceChromeActive && !creationLayoutActive && showSidebar && sidebarOpen
+  // Why: visible creation keeps only the top-left window chrome; workspace tabs
+  // and right-sidebar chrome remain gated by workspaceChromeActive.
+  const leftTitlebarChromeLayout = resolveLeftTitlebarChromeLayout({
+    workspaceChromeActive,
+    stackedSidebarOpen,
+    creationLayoutActive,
+    sidebarOpen
+  })
   // Why: suppress right sidebar controls on full-page navigation surfaces
   // since those surfaces intentionally own the full content area.
-  const showRightSidebarControls = canShowRightSidebarForView(activeView)
+  const showRightSidebarControls = !creationLayoutActive && canShowRightSidebarForView(activeView)
 
   const handleToggleExpand = (): void => {
     if (!effectiveActiveTabId) {
@@ -1301,7 +1391,7 @@ function App(): React.JSX.Element {
         })
       }
 
-      const canRevealRightSidebar = canShowRightSidebarForView(activeView)
+      const canRevealRightSidebar = !creationLayoutActive && canShowRightSidebarForView(activeView)
 
       const openSearchSidebar = (query: string | null): void => {
         actions.showRightSidebarSearch(query ? { query } : undefined)
@@ -1372,7 +1462,7 @@ function App(): React.JSX.Element {
         // Why: Back/Forward traverse mixed worktree + page visits, so the
         // shortcut is active wherever the titlebar button cluster is (terminal
         // or stack-backed pages). Still suppressed in Settings.
-        if (!shouldShowWorktreeHistoryControls(activeView)) {
+        if (creationLayoutActive || !shouldShowWorktreeHistoryControls(activeView)) {
           return
         }
         e.preventDefault()
@@ -1414,7 +1504,7 @@ function App(): React.JSX.Element {
       // focus zone because the browser pane owns its own Cmd+R reload and that
       // focus never reaches this renderer-window handler. Only terminal tabs
       // have an inline title editor, so other active tab types fall through.
-      if (workspaceActive && !floatingWorkspaceFocused && matchShortcut('tab.rename')) {
+      if (workspaceChromeActive && !floatingWorkspaceFocused && matchShortcut('tab.rename')) {
         const store = useAppStore.getState()
         if (store.activeTabType === 'terminal' && store.activeTabId) {
           e.preventDefault()
@@ -1428,7 +1518,7 @@ function App(): React.JSX.Element {
       // first so the card is mounted and visible even when sidebar filters or
       // collapse state would otherwise hide it.
       if (
-        workspaceActive &&
+        workspaceChromeActive &&
         !floatingWorkspaceFocused &&
         matchShortcut('workspace.rename') &&
         activeWorktreeId
@@ -1533,7 +1623,8 @@ function App(): React.JSX.Element {
     keybindings,
     settings?.terminalShortcutPolicy,
     setFloatingTerminalOpenWithFocus,
-    workspaceActive
+    workspaceChromeActive,
+    creationLayoutActive
   ])
 
   useLayoutEffect(() => {
@@ -1552,7 +1643,13 @@ function App(): React.JSX.Element {
     })
     observer.observe(controls)
     return () => observer.disconnect()
-  }, [isFullScreen, settings?.showTitlebarAppName, showSidebar, workspaceActive, sidebarOpen])
+  }, [
+    isFullScreen,
+    settings?.showTitlebarAppName,
+    showSidebar,
+    leftTitlebarChromeLayout.isFloating,
+    sidebarOpen
+  ])
 
   const resolvedMountedLazyModalIds = resolveMountedLazyModalIds(activeModal, mountedLazyModalIds)
   if (resolvedMountedLazyModalIds !== mountedLazyModalIds) {
@@ -1576,7 +1673,7 @@ function App(): React.JSX.Element {
     <div
       ref={titlebarLeftControlsRef}
       className={`flex h-full shrink-0 items-center${
-        workspaceActive && !sidebarOpen ? ' w-max' : ' w-full'
+        leftTitlebarChromeLayout.isFloating ? ' w-max' : ' w-full'
       }`}
     >
       <div className="flex h-full items-center">
@@ -1722,10 +1819,10 @@ function App(): React.JSX.Element {
     <>
       {activeView === 'activity' ? (
         <ActivityTitlebarControls />
-      ) : (
+      ) : creationLayoutActive ? null : (
         <div
           id="titlebar-tabs"
-          className={`flex flex-1 min-w-0 self-stretch${activeView !== 'terminal' || !activeWorktreeId ? ' invisible pointer-events-none' : ''}`}
+          className={`flex flex-1 min-w-0 self-stretch${!workspaceChromeActive ? ' invisible pointer-events-none' : ''}`}
         />
       )}
       {showTitlebarExpandButton && (
@@ -1758,7 +1855,7 @@ function App(): React.JSX.Element {
   return (
     <div
       ref={setAppRootNode}
-      className="flex flex-col h-screen w-screen overflow-hidden"
+      className="flex flex-col h-dvh w-screen overflow-hidden"
       style={
         {
           '--collapsed-sidebar-header-width': `${collapsedSidebarHeaderWidth}px`,
@@ -1779,6 +1876,7 @@ function App(): React.JSX.Element {
             {/* Why: leaf-mounted retention sync keeps agent-status retention
             subscriptions from re-rendering the App tree. */}
             <RetainedAgentsSyncGate />
+            <AgentHibernationGate />
             {/* Why: workspace activation is a hot path; including activeWorktreeId
             in reset keys remounts whole surfaces during wake. */}
             <RecoverableRenderErrorBoundary
@@ -1802,7 +1900,7 @@ function App(): React.JSX.Element {
                 to the top of the window. Left titlebar controls move to a
                 header above the sidebar. Settings, landing, and the tasks
                 page keep the titlebar. */}
-                  {!workspaceActive && !stackedSidebarOpen ? (
+                  {!leftTitlebarChromeLayout.shouldMount ? (
                     <div className="titlebar">
                       <div className="flex items-center shrink-0 mr-2">{titlebarLeftControls}</div>
                       {titlebarMainStrip}
@@ -1810,7 +1908,7 @@ function App(): React.JSX.Element {
                   ) : null}
                   <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
                     {showSidebar ? (
-                      workspaceActive || stackedSidebarOpen ? (
+                      leftTitlebarChromeLayout.shouldMount ? (
                         /* Why: left column wraps the sidebar with a titlebar-height
                      header above it. The header holds the same controls
                      (traffic lights, sidebar toggle, "Orca" title, agent badge)
@@ -1832,11 +1930,15 @@ function App(): React.JSX.Element {
                             // header sized to its own controls instead of the w-0
                             // sidebar wrapper.
                             className={`titlebar-left${
-                              sidebarOpen
-                                ? ''
-                                : ' titlebar-left-floating absolute top-0 left-0 z-10 w-max border-r border-border'
+                              leftTitlebarChromeLayout.isFloating
+                                ? ' titlebar-left-floating absolute top-0 left-0 z-10 w-max border-r border-border'
+                                : ''
                             }`}
                             style={{
+                              // Why: custom sidebar appearances are scoped to the sidebar
+                              // root, so mirror those variables onto the open header that
+                              // visually belongs to the same left-column panel.
+                              ...(sidebarOpen ? leftSidebarStyle : undefined),
                               // Why: the Sidebar resize hook updates the sidebar DOM width
                               // directly during drag and only persists to Zustand on
                               // mouseup. In workspace view, size this header from the
@@ -1905,7 +2007,7 @@ function App(): React.JSX.Element {
                     top-0 anchor so the icon's vertical center is identical between
                     open and closed states — otherwise toggling makes the icon jump
                     a few pixels, which reads as layout jitter. */}
-                        {workspaceActive && !rightSidebarOpen && (
+                        {workspaceChromeActive && !rightSidebarOpen && (
                           <div
                             className="absolute top-0 z-10 flex items-center h-[36px]"
                             style={
@@ -1929,9 +2031,7 @@ function App(): React.JSX.Element {
                           {shouldMountTerminalWorkbench ? (
                             <div
                               className={
-                                activeView !== 'terminal' ||
-                                !activeWorktreeId ||
-                                activeCreationLoaderVisible
+                                !terminalWorkbenchVisible
                                   ? 'hidden flex-1 min-w-0 min-h-0'
                                   : 'flex flex-1 min-w-0 min-h-0'
                               }
@@ -1974,13 +2074,18 @@ function App(): React.JSX.Element {
                               {activeView === 'space' ? <WorkspaceSpacePage /> : null}
                               {activeView === 'mobile' ? <MobilePage /> : null}
                               {activeView === 'terminal' &&
-                              activeCreationLoaderVisible &&
+                              creationLayoutActive &&
                               activePendingCreationId ? (
-                                <WorktreeCreationPanel creationId={activePendingCreationId} />
+                                <WorktreeCreationPanel
+                                  creationId={activePendingCreationId}
+                                  reserveCollapsedSidebarHeaderSpace={
+                                    leftTitlebarChromeLayout.isFloating
+                                  }
+                                />
                               ) : null}
                               {activeView === 'terminal' &&
                               !activeWorktreeId &&
-                              !activeCreationLoaderVisible ? (
+                              !creationLayoutActive ? (
                                 <Landing />
                               ) : null}
                             </RecoverableRenderErrorBoundary>
@@ -2062,19 +2167,65 @@ function App(): React.JSX.Element {
                 </RecoverableRenderErrorBoundary>
               </Suspense>
             ) : null}
+            {/* Why: workspace creation is a core action; keeping it in the
+            entry bundle avoids stale/corrupt lazy chunks stranding users at Create. */}
+            {activeModal === 'new-workspace-composer' ? (
+              <RecoverableRenderErrorBoundary
+                boundaryId="modal.new-workspace-composer"
+                surface="modal"
+                resetKey
+                compact
+              >
+                <NewWorkspaceComposerModal />
+              </RecoverableRenderErrorBoundary>
+            ) : null}
+            <Suspense fallback={null}>
+              {shouldMountAddRepoDialog ? (
+                <RecoverableRenderErrorBoundary
+                  boundaryId="modal.add-repo"
+                  surface="modal"
+                  resetKey={activeModal === 'add-repo'}
+                  compact
+                >
+                  <AddRepoDialog />
+                </RecoverableRenderErrorBoundary>
+              ) : null}
+              {/* Why: Settings can start Add Project without mounting Sidebar,
+              so Add Project handoff dialogs must share the root host. */}
+              {activeModal === 'confirm-non-git-folder' ? (
+                <RecoverableRenderErrorBoundary
+                  boundaryId="modal.confirm-non-git-folder"
+                  surface="modal"
+                  resetKey
+                  compact
+                >
+                  <NonGitFolderDialog />
+                </RecoverableRenderErrorBoundary>
+              ) : null}
+              {activeModal === 'confirm-add-project-from-folder' ? (
+                <RecoverableRenderErrorBoundary
+                  boundaryId="modal.confirm-add-project-from-folder"
+                  surface="modal"
+                  resetKey
+                  compact
+                >
+                  <AddProjectFromFolderDialog />
+                </RecoverableRenderErrorBoundary>
+              ) : null}
+              {activeModal === 'project-added' ? (
+                <RecoverableRenderErrorBoundary
+                  boundaryId="modal.project-added"
+                  surface="modal"
+                  resetKey
+                  compact
+                >
+                  <ProjectAddedDialog />
+                </RecoverableRenderErrorBoundary>
+              ) : null}
+            </Suspense>
             {/* Why: root overlays can render Radix <Tooltip>s; keep them inside
             the shared provider so lazy surfaces mount safely from any entry point. */}
             <Suspense fallback={null}>
-              {resolvedMountedLazyModalIds.has('new-workspace-composer') ? (
-                <RecoverableRenderErrorBoundary
-                  boundaryId="modal.new-workspace-composer"
-                  surface="modal"
-                  resetKey={activeModal === 'new-workspace-composer'}
-                  compact
-                >
-                  <NewWorkspaceComposerModal />
-                </RecoverableRenderErrorBoundary>
-              ) : null}
               {resolvedMountedLazyModalIds.has('workspace-cleanup') ? (
                 <RecoverableRenderErrorBoundary
                   boundaryId="modal.workspace-cleanup"

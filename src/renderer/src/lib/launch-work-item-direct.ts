@@ -39,6 +39,11 @@ import type {
   LaunchWorkItemDirectArgs
 } from '@/lib/launch-work-item-direct-types'
 import { resolveSourceControlLaunchPlatform } from '@/lib/source-control-launch-platform'
+import { getSettingsForRepoRuntimeOwner } from '@/lib/repo-runtime-owner'
+
+// Why: bracketed paste markers and ready-wait grace timing live in
+// agent-paste-draft.ts so the new-workspace and "Use" flows share one
+// definition of "type into the agent's input as a non-submitted draft".
 
 async function getDirectDraftContent(
   item: LaunchableWorkItem,
@@ -81,6 +86,9 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   }
 
   const settings = store.settings
+  // Why: preflight (PR base + hooks probe) must run on the repo's owner host so it
+  // matches the owner-routed createWorktree below, not the focused runtime.
+  const repoOwnerSettings = getSettingsForRepoRuntimeOwner(store, repoId)
   const promptDelivery = args.promptDelivery ?? 'draft'
   const repoConnectionId = repo.connectionId?.trim() || null
   const preflightLaunchPlatform =
@@ -107,7 +115,7 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
       ? store.ensureRemoteDetectedAgents(repoConnectionId)
       : store.ensureDetectedAgents()
 
-  const setupResolution = await resolveDirectSetupDecision(repoId, repo)
+  const setupResolution = await resolveDirectSetupDecision(repoId, repo, repoOwnerSettings)
   if (setupResolution.kind === 'needs-modal') {
     openModalFallback()
     return false
@@ -135,14 +143,16 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
   let resolvedBaseBranch = baseBranch
   let resolvedPushTarget: GitPushTarget | undefined
   let resolvedBranchNameOverride: string | undefined
+  let resolvedCompareBaseRef: string | undefined
   if (!resolvedBaseBranch && item.type === 'pr' && item.number) {
     try {
       // Why: direct "Use PR" launches bypass the Start-from picker, so they
       // must still resolve the PR head before `git worktree add`.
-      const result = await resolveDirectPrStartPoint(repoId, item.number, settings)
+      const result = await resolveDirectPrStartPoint(repoId, item.number, repoOwnerSettings)
       resolvedBaseBranch = result.baseBranch
       resolvedPushTarget = result.pushTarget
       resolvedBranchNameOverride = result.branchNameOverride
+      resolvedCompareBaseRef = result.compareBaseRef
     } catch (error) {
       toast.error(error instanceof Error ? error.message : resolvePrHeadErrorMessage())
       openModalFallback()
@@ -179,7 +189,11 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
       undefined,
       undefined,
       item.linearWorkspaceId,
-      item.linearOrganizationUrlKey
+      item.linearOrganizationUrlKey,
+      undefined,
+      undefined,
+      undefined,
+      resolvedCompareBaseRef
     )
     worktreeId = result.worktree.id
     const worktreePath = result.worktree.path

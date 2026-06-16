@@ -13,6 +13,7 @@ import { getActiveMultiplexer } from './ssh'
 import { detectWslCommandsOnPath, type WslPreflightTarget } from './preflight-wsl-agent-detection'
 import { runPreflightCommandInWsl } from './preflight-wsl-command'
 import { detectCommandsInInstallDirs } from './local-agent-install-dir-detection'
+import { buildLocalPreflightEnv } from './preflight-local-env'
 const execFileAsync = promisify(execFile)
 const PREFLIGHT_COMMAND_TIMEOUT_MS = 5000
 
@@ -91,9 +92,11 @@ async function execLocalPreflightCommand(
   command: string,
   args: string[]
 ): Promise<PreflightCommandResult> {
+  const env = buildLocalPreflightEnv()
   const commandPromise = execFileAsync(command, args, {
     encoding: 'utf-8',
-    timeout: PREFLIGHT_COMMAND_TIMEOUT_MS
+    timeout: PREFLIGHT_COMMAND_TIMEOUT_MS,
+    ...(env ? { env } : {})
   }) as Promise<PreflightCommandResult>
 
   return withPreflightTimeout(command, commandPromise)
@@ -248,7 +251,9 @@ export async function refreshShellPathAndDetectAgents(
 export async function detectRemoteAgents(args: { connectionId: string }): Promise<string[]> {
   const mux = getActiveMultiplexer(args.connectionId)
   if (!mux || mux.isDisposed()) {
-    throw new Error(`No active SSH connection for "${args.connectionId}"`)
+    // Why: remote agent detection is passive UI polling. A disconnected host has
+    // no detectable agents until reconnect, but should not spam IPC errors.
+    return []
   }
   const result = (await mux.request('preflight.detectAgents', {
     commands: KNOWN_AGENT_COMMANDS

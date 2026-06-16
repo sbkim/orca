@@ -1,6 +1,13 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
+import {
+  resolveWindowsAgentForegroundProcess,
+  shouldInspectWindowsAgentForeground,
+  type AgentForegroundResolutionOptions
+} from './windows-agent-foreground-process'
+
+export type { AgentForegroundResolutionOptions } from './windows-agent-foreground-process'
 
 const execFileAsync = promisify(execFile)
 
@@ -28,18 +35,18 @@ function parsePsRows(stdout: string): ProcessRow[] {
   return rows
 }
 
-function collectDescendants(
-  rows: ProcessRow[],
+function collectDescendants<Row extends { pid: number; ppid: number }>(
+  rows: Row[],
   rootPid: number
-): (ProcessRow & { depth: number })[] {
-  const childrenByParent = new Map<number, ProcessRow[]>()
+): (Row & { depth: number })[] {
+  const childrenByParent = new Map<number, Row[]>()
   for (const row of rows) {
     const children = childrenByParent.get(row.ppid) ?? []
     children.push(row)
     childrenByParent.set(row.ppid, children)
   }
 
-  const descendants: (ProcessRow & { depth: number })[] = []
+  const descendants: (Row & { depth: number })[] = []
   const stack = (childrenByParent.get(rootPid) ?? []).map((row) => ({ row, depth: 1 }))
   while (stack.length > 0) {
     const { row, depth } = stack.pop()!
@@ -60,10 +67,21 @@ function candidateScore(row: ProcessRow & { depth: number }): number {
 
 export async function resolveAgentForegroundProcess(
   shellPid: number | null | undefined,
-  fallbackProcess: string | null
+  fallbackProcess: string | null,
+  options: AgentForegroundResolutionOptions = {}
 ): Promise<string | null> {
-  if (process.platform === 'win32' || !shellPid) {
+  if (!shellPid) {
     return fallbackProcess
+  }
+
+  if (process.platform === 'win32') {
+    if (!fallbackProcess || !shouldInspectWindowsAgentForeground(fallbackProcess)) {
+      return fallbackProcess
+    }
+    return (
+      (await resolveWindowsAgentForegroundProcess(shellPid, fallbackProcess, options)) ??
+      fallbackProcess
+    )
   }
 
   try {
@@ -81,10 +99,21 @@ export async function resolveAgentForegroundProcess(
 }
 
 function resolveAgentForegroundProcessFromPs(stdout: string, shellPid: number): string | null {
-  const candidates = collectDescendants(parsePsRows(stdout), shellPid).sort(
+  const rows = parsePsRows(stdout)
+  const shellRow = rows.find((row) => row.pid === shellPid)
+  const candidates = collectDescendants(rows, shellPid).sort(
     (a, b) => candidateScore(b) - candidateScore(a)
   )
+  // Why: `+` in `ps stat` marks the process holding the terminal foreground.
+  // The root shell can hold it after Ctrl-Z, so use the whole PTY tree as the
+  // foreground gate; otherwise a stopped agent child still masquerades as live.
+  const foregroundIsKnown =
+    shellRow?.stat.includes('+') === true ||
+    candidates.some((candidate) => candidate.stat.includes('+'))
   for (const candidate of candidates) {
+    if (foregroundIsKnown && !candidate.stat.includes('+')) {
+      continue
+    }
     const recognized = recognizeAgentProcessFromCommandLine(candidate.command)
     if (recognized) {
       return recognized.processName

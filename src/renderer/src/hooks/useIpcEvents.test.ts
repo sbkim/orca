@@ -538,6 +538,7 @@ describe('useIpcEvents browser tab create routing', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -756,6 +757,7 @@ describe('useIpcEvents updater integration', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -993,6 +995,7 @@ describe('useIpcEvents updater integration', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -1383,6 +1386,7 @@ describe('useIpcEvents updater integration', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -1534,6 +1538,9 @@ describe('useIpcEvents updater integration', () => {
     expect(createFloatingWorkspaceTerminalTab).not.toHaveBeenCalled()
     expect(createWebRuntimeSessionTerminal).toHaveBeenCalledWith({
       worktreeId: 'wt-1',
+      // Why: multi-host scopes the new terminal to the worktree's own runtime
+      // env (null here -> falls back to the active env inside the helper).
+      environmentId: null,
       activate: true
     })
     expect(createTab).toHaveBeenCalledWith('wt-1')
@@ -1910,6 +1917,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -2124,6 +2132,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -2333,6 +2342,7 @@ describe('useIpcEvents browser tab close routing', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -2560,6 +2570,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -2734,9 +2745,11 @@ describe('useIpcEvents CLI-created worktree activation', () => {
         subscribe: vi.fn(() => () => {}),
         getState: () => ({
           fetchRepos: vi.fn(),
+          fetchRuntimeEnvironmentRepos: vi.fn(),
           fetchProjectGroups: vi.fn(),
           fetchWorktrees,
           fetchWorktreeLineage,
+          repos: [{ id: 'repo-1' }],
           detectedWorktreesByRepo: {
             'repo-1': {
               repoId: 'repo-1',
@@ -2811,6 +2824,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
         },
         runtimeEnvironments: { subscribe: runtimeSubscribe },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
@@ -3037,6 +3051,7 @@ describe('useIpcEvents agent status snapshot integration', () => {
           onRemoteBranchConflict: () => () => {}
         },
         ui: {
+          onStateChanged: () => () => {},
           onOpenSettings: () => () => {},
           onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},

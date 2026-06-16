@@ -14,6 +14,7 @@ export type FeatureInteractionId =
   | 'github-tasks'
   | 'gitlab-tasks'
   | 'linear-tasks'
+  | 'jira-tasks'
   | 'automations'
   | 'automation-created'
   | 'automation-run'
@@ -26,6 +27,7 @@ export type FeatureInteractionId =
   | 'agent-browser-use'
   | 'agent-orchestration-setup'
   | 'agent-orchestration'
+  | 'mobile-emulator-agent-setup'
   | 'ai-commit-generation'
   | 'ai-pr-generation'
   | 'claude-account-switching'
@@ -80,6 +82,7 @@ export const FEATURE_INTERACTIONS = [
   { id: 'github-tasks', interaction: 'GitHub task item workflow used' },
   { id: 'gitlab-tasks', interaction: 'GitLab task item workflow used' },
   { id: 'linear-tasks', interaction: 'Linear task item workflow used' },
+  { id: 'jira-tasks', interaction: 'Jira task item workflow used' },
   { id: 'automations', interaction: 'Automations page opened' },
   { id: 'automation-created', interaction: 'automation created' },
   { id: 'automation-run', interaction: 'automation run queued' },
@@ -98,6 +101,10 @@ export const FEATURE_INTERACTIONS = [
     interaction: 'Agent Orchestration setup enabled or opened'
   },
   { id: 'agent-orchestration', interaction: 'agent orchestration runtime method used' },
+  {
+    id: 'mobile-emulator-agent-setup',
+    interaction: 'Mobile Emulator agent CLI or skill setup opened'
+  },
   {
     id: 'ai-commit-generation',
     interaction: 'AI commit message generation enabled or used'

@@ -21,6 +21,7 @@ import type {
   StatsSummary,
   Worktree,
   WorktreeLineage,
+  WorkspaceLineage,
   WorkspaceSessionPatch,
   WorkspaceSessionState
 } from '../../../shared/types'
@@ -36,6 +37,7 @@ import {
 import { legacyBaseRefSearchResult } from '../../../shared/base-ref-search-result'
 import { createE2EConfig } from '../../../shared/e2e-config'
 import { relativePathInsideRoot } from '../../../shared/cross-platform-path'
+import { LOCAL_EXECUTION_HOST_ID, normalizeExecutionHostId } from '../../../shared/execution-host'
 import { toRuntimeWorktreeSelector } from '../runtime/runtime-worktree-selector'
 import { normalizeDisabledTuiAgents } from '../../../shared/tui-agent-selection'
 import {
@@ -170,7 +172,6 @@ function invalidateRuntimeWorktreeCaches(): void {
 type WebSettingsApi = NonNullable<PreloadApi['settings']>
 type WebKeybindingsApi = NonNullable<PreloadApi['keybindings']>
 type WebGitHubApi = NonNullable<PreloadApi['gh']>
-type WebStarNagApi = NonNullable<PreloadApi['starNag']>
 type WebGitHubResult<K extends keyof WebGitHubApi> = Awaited<ReturnType<WebGitHubApi[K]>>
 type WebGitHubRouteKey =
   | 'repoSlug'
@@ -500,22 +501,25 @@ function createWebPreloadApi(): Partial<PreloadApi> {
       deleteBundle: () => Promise.reject(new Error('Diagnostic bundles are unavailable on web.'))
     },
     session: {
-      get: () => Promise.resolve(getStoredWorkspaceSession()),
-      set: async (session) => {
-        writeJson(SESSION_STORAGE_KEY, sanitizeWebRuntimeWorkspaceSession(session))
+      // hostId mirrors the desktop bridge: omitted/'local' targets the existing
+      // storage key; non-local hosts persist under a host-suffixed key so their
+      // sessions stay isolated from the local one.
+      get: (hostId) => Promise.resolve(getStoredWorkspaceSession(hostId)),
+      set: async (session, hostId) => {
+        writeJson(sessionStorageKeyForHost(hostId), sanitizeWebRuntimeWorkspaceSession(session))
       },
-      patch: async (patch: WorkspaceSessionPatch) => {
+      patch: async (patch: WorkspaceSessionPatch, hostId) => {
         writeJson(
-          SESSION_STORAGE_KEY,
+          sessionStorageKeyForHost(hostId),
           sanitizeWebRuntimeWorkspaceSession({
-            ...getStoredWorkspaceSession(),
+            ...getStoredWorkspaceSession(hostId),
             ...patch
           })
         )
       },
       readTerminalScrollback: () => null,
-      setSync: (session) => {
-        writeJson(SESSION_STORAGE_KEY, sanitizeWebRuntimeWorkspaceSession(session))
+      setSync: (session, hostId) => {
+        writeJson(sessionStorageKeyForHost(hostId), sanitizeWebRuntimeWorkspaceSession(session))
       }
     },
     onboarding: {
@@ -556,7 +560,6 @@ function createWebPreloadApi(): Partial<PreloadApi> {
     browser: createBrowserApi(),
     emulator: createEmulatorApi(),
     gh: createGitHubApi(),
-    starNag: createStarNagApi(),
     gl: createGitLabApi(),
     hostedReview: createRuntimeNamespaceApi('hostedReview'),
     linear: createRuntimeNamespaceApi('linear'),
@@ -975,6 +978,13 @@ function createRuntimeEnvironmentsApi(): NonNullable<Partial<PreloadApi>['runtim
       }
       return { removed: redactStoredWebRuntimeEnvironment(environment) }
     },
+    disconnect: async ({ selector }) => {
+      const environment = resolveEnvironment(selector)
+      if (activeEnvironment?.id === environment.id) {
+        disconnectActiveRuntimeEnvironment()
+      }
+      return { disconnected: redactStoredWebRuntimeEnvironment(environment) }
+    },
     getStatus: ({ selector, timeoutMs }) =>
       callEnvironmentEnvelope<RuntimeStatus>(selector, 'status.get', undefined, timeoutMs),
     call: ({ selector, method, params, timeoutMs }) =>
@@ -1002,12 +1012,23 @@ function createReposApi(): NonNullable<Partial<PreloadApi>['repos']> {
     update: async ({ repoId, updates }) =>
       (await callRuntimeResult<{ repo: Repo }>('repo.update', { repo: repoId, updates })).repo,
     pickFolder: () => Promise.resolve(null),
+    pickFolders: () => Promise.resolve([]),
     pickDirectory: () => Promise.resolve(null),
     clone: async ({ url, destination }) => {
       invalidateRuntimeWorktreeCaches()
       return (
         await callRuntimeResult<{ repo: Repo }>('repo.clone', { url, destination }, 10 * 60_000)
       ).repo
+    },
+    cloneRemote: async () => {
+      // Why: SSH relay cloning is owned by the desktop main process; paired web
+      // clients must not pretend they can run that local IPC path directly.
+      throw new Error('SSH clone is unavailable in paired web clients.')
+    },
+    createRemote: async () => {
+      // Why: SSH relay project creation is owned by the desktop main process;
+      // paired web clients cannot create folders through local SSH IPC.
+      throw new Error('Creating projects on SSH hosts is unavailable in paired web clients.')
     },
     cloneAbort: () => Promise.resolve(),
     addRemote: async ({ remotePath, displayName, kind }) => {
@@ -1081,6 +1102,7 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         repo: args.repoId,
         name: args.name,
         baseBranch: args.baseBranch,
+        compareBaseRef: args.compareBaseRef,
         branchNameOverride: args.branchNameOverride,
         linkedIssue: args.linkedIssue,
         linkedPR: args.linkedPR,
@@ -1089,12 +1111,16 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         linkedLinearIssueOrganizationUrlKey: args.linkedLinearIssueOrganizationUrlKey,
         linkedGitLabIssue: args.linkedGitLabIssue,
         linkedGitLabMR: args.linkedGitLabMR,
+        linkedBitbucketPR: args.linkedBitbucketPR,
+        linkedAzureDevOpsPR: args.linkedAzureDevOpsPR,
+        linkedGiteaPR: args.linkedGiteaPR,
         displayName: args.displayName,
         sparseCheckout: args.sparseCheckout,
         pushTarget: args.pushTarget,
         setupDecision: args.setupDecision,
         createdWithAgent: args.createdWithAgent,
         pendingFirstAgentMessageRename: args.pendingFirstAgentMessageRename,
+        parentWorkspace: args.parentWorkspace,
         workspaceStatus: args.workspaceStatus,
         manualOrder: args.manualOrder
       })
@@ -1108,18 +1134,20 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         baseBranch
       })
     },
-    resolvePrBase: async ({ repoId, prNumber, headRefName, isCrossRepository }) =>
+    resolvePrBase: async ({ repoId, prNumber, headRefName, baseRefName, isCrossRepository }) =>
       callRuntimeResult('worktree.resolvePrBase', {
         repo: repoId,
         prNumber,
         headRefName,
+        baseRefName,
         isCrossRepository
       }),
-    resolveMrBase: async ({ repoId, mrIid, sourceBranch, isCrossRepository }) =>
+    resolveMrBase: async ({ repoId, mrIid, sourceBranch, targetBranch, isCrossRepository }) =>
       callRuntimeResult('worktree.resolveMrBase', {
         repo: repoId,
         mrIid,
         sourceBranch,
+        targetBranch,
         isCrossRepository
       }),
     remove: async ({ worktreeId, force }) => {
@@ -1143,11 +1171,10 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
         })
       ).worktree,
     listLineage: async () =>
-      (
-        await callRuntimeResult<{ lineage: Record<string, WorktreeLineage> }>(
-          'worktree.lineageList'
-        )
-      ).lineage,
+      await callRuntimeResult<{
+        lineage: Record<string, WorktreeLineage>
+        workspaceLineage?: Record<string, WorkspaceLineage>
+      }>('worktree.lineageList'),
     updateLineage: async ({ worktreeId, parentWorktreeId, noParent }) => {
       invalidateRuntimeWorktreeCaches()
       const result = await callRuntimeResult<{
@@ -1313,6 +1340,10 @@ function createGitApi(): NonNullable<Partial<PreloadApi>['git']> {
         paths
       })
     },
+    // Why: the "add huge folder to .gitignore" flow is a local-desktop helper;
+    // in the web runtime there's no offer, so return no candidates / no-op.
+    findHugeFoldersToIgnore: async () => [],
+    appendGitignore: async () => false,
     history: async ({ worktreePath, limit, baseRef }) => {
       const worktree = await resolveRuntimeWorktreeByPath(worktreePath)
       return callRuntimeResult('git.history', {
@@ -1375,6 +1406,17 @@ function createGitApi(): NonNullable<Partial<PreloadApi>['git']> {
         worktree: toRuntimeWorktreeSelector(worktree.id),
         pushTarget
       })
+    },
+    syncFork: async ({ worktreePath, expectedUpstream }) => {
+      const worktree = await resolveRuntimeWorktreeByPath(worktreePath)
+      return callRuntimeResult(
+        'git.forkSync',
+        {
+          worktree: toRuntimeWorktreeSelector(worktree.id),
+          expectedUpstream
+        },
+        60_000
+      )
     },
     push: async ({ worktreePath, publish, pushTarget }) => {
       const worktree = await resolveRuntimeWorktreeByPath(worktreePath)
@@ -1475,6 +1517,13 @@ function createGitApi(): NonNullable<Partial<PreloadApi>['git']> {
         relativePath,
         line
       })
+    },
+    remoteCommitUrl: async ({ worktreePath, sha }) => {
+      const worktree = await resolveRuntimeWorktreeByPath(worktreePath)
+      return callRuntimeResult('git.remoteCommitUrl', {
+        worktree: toRuntimeWorktreeSelector(worktree.id),
+        sha
+      })
     }
   }
 }
@@ -1573,18 +1622,6 @@ function createEmulatorApi(): NonNullable<Partial<PreloadApi>['emulator']> {
     onFrameStreamFrame: () => noopUnsubscribe,
     onFrameStreamError: () => noopUnsubscribe
   } as unknown as NonNullable<Partial<PreloadApi>['emulator']>
-}
-
-function createStarNagApi(): WebStarNagApi {
-  return {
-    onShow: () => noopUnsubscribe,
-    dismiss: () => Promise.resolve(),
-    complete: () => Promise.resolve(),
-    disable: () => Promise.resolve(),
-    openWeb: () => Promise.resolve(),
-    starOrca: () => Promise.resolve(false),
-    forceShow: () => Promise.resolve()
-  }
 }
 
 function createGitHubApi(): WebGitHubApi {
@@ -1943,6 +1980,9 @@ function createWebUiApi(): NonNullable<Partial<PreloadApi>['ui']> {
     onOpenSetupGuide: () => noopUnsubscribe,
     onOpenFeatureTour: () => noopUnsubscribe,
     onOpenCrashReport: () => noopUnsubscribe,
+    // No desktop main process to push state changes; the web client re-reads
+    // via ui.get on interaction instead.
+    onStateChanged: () => noopUnsubscribe,
     onToggleLeftSidebar: () => noopUnsubscribe,
     onToggleRightSidebar: () => noopUnsubscribe,
     onToggleWorktreePalette: () => noopUnsubscribe,
@@ -2088,9 +2128,9 @@ function createCliApi(): NonNullable<Partial<PreloadApi>['cli']> {
     getInstallStatus: () => Promise.resolve(status),
     install: () => Promise.resolve(status),
     remove: () => Promise.resolve(status),
-    getWslInstallStatus: () => Promise.resolve(status),
-    installWsl: () => Promise.resolve(status),
-    removeWsl: () => Promise.resolve(status)
+    getWslInstallStatus: (_args?: { distro?: string | null }) => Promise.resolve(status),
+    installWsl: (_args?: { distro?: string | null }) => Promise.resolve(status),
+    removeWsl: (_args?: { distro?: string | null }) => Promise.resolve(status)
   } as NonNullable<Partial<PreloadApi>['cli']>
 }
 
@@ -2592,7 +2632,22 @@ function getStoredOnboarding(): OnboardingState {
   return closed
 }
 
-function getStoredWorkspaceSession(): WorkspaceSessionState {
+/** Resolve the localStorage key for a session partition. Non-'local' hosts get
+ *  a host-suffixed key so their sessions never clobber the local one. */
+function sessionStorageKeyForHost(hostId?: string | null): string {
+  const resolved = normalizeExecutionHostId(hostId) ?? LOCAL_EXECUTION_HOST_ID
+  return resolved === LOCAL_EXECUTION_HOST_ID
+    ? SESSION_STORAGE_KEY
+    : `${SESSION_STORAGE_KEY}.${resolved}`
+}
+
+function getStoredWorkspaceSession(hostId?: string | null): WorkspaceSessionState {
+  const resolvedHostId = normalizeExecutionHostId(hostId) ?? LOCAL_EXECUTION_HOST_ID
+  if (resolvedHostId !== LOCAL_EXECUTION_HOST_ID) {
+    return sanitizeWebRuntimeWorkspaceSession(
+      readJson(sessionStorageKeyForHost(resolvedHostId), getDefaultWorkspaceSession())
+    )
+  }
   const localSession = sanitizeWebRuntimeWorkspaceSession(
     readJson(SESSION_STORAGE_KEY, getDefaultWorkspaceSession())
   )

@@ -92,6 +92,8 @@ import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service
 import { StarNagService } from './star-nag/service'
 import { agentHookServer } from './agent-hooks/server'
 import { maybeAutoRenameBranchOnFirstWork } from './agent-hooks/first-work-branch-rename'
+import { renameWorktreeFolderOnFirstWork } from './agent-hooks/first-work-folder-rename'
+import { moveWorktree } from './git/worktree'
 import { getRepoIdFromWorktreeId } from '../shared/worktree-id'
 import { parseWorkspaceKey } from '../shared/workspace-scope'
 import { setMigrationUnsupportedPtyListener } from './agent-hooks/migration-unsupported-pty-state'
@@ -109,6 +111,7 @@ import { browserManager } from './browser/browser-manager'
 import { initializeBrowserSessionsForApp } from './browser/browser-session-startup'
 import { setUnreadDockBadgeCount } from './dock/unread-badge'
 import { AutomationService } from './automations/service'
+import { createHeadlessAutomationOutputSnapshotBuffer } from './automations/headless-dispatch'
 import { AgentAwakeService } from './agent-awake-service'
 import {
   getCrashBreadcrumbSnapshot,
@@ -158,6 +161,16 @@ let claudeRuntimeAuth: ClaudeRuntimeAuthService | null = null
 let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
+
+function buildHeadlessAutomationWorkspaceName(runTitle: string, scheduledFor: number): string {
+  const slug = runTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40)
+  const stamp = new Date(scheduledFor).toISOString().replace(/[-:]/g, '').slice(0, 13)
+  return `auto-${slug || 'run'}-${stamp}`
+}
 let starNag: StarNagService | null = null
 let agentAwakeService: AgentAwakeService | null = null
 let crashReports: CrashReportStore | null = null
@@ -179,6 +192,12 @@ const appImageCliRedirect = maybeRedirectAppImageCliLaunch({
 if (appImageCliRedirect.redirected) {
   app.exit(appImageCliRedirect.status)
 }
+
+// Kill switch for the first-work on-disk folder rename. The renderer reconciles a
+// worktree id change via migrateWorktreeIdentity + a rename-aware worktrees:changed
+// handler, so an old->new id change is no longer mistaken for a deletion. Flip off
+// to disable the on-disk move (branch + display rename still happen) if needed.
+const ENABLE_FIRST_WORK_FOLDER_RENAME = false
 
 // Why: the store/runtime singletons live here in index.ts; injecting them keeps
 // the rename orchestrator free of module-level state and unit-testable.
@@ -256,6 +275,19 @@ function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
           firstAgentMessageRenameError: null
         })
       },
+      renameWorktreeFolder: ENABLE_FIRST_WORK_FOLDER_RENAME
+        ? (worktreeId, newLeaf) =>
+            renameWorktreeFolderOnFirstWork(worktreeId, newLeaf, {
+              getRepo: (repoId) => currentStore.getRepo(repoId),
+              getSettings: () => currentStore.getSettings(),
+              migrateWorktreeIdentity: (oldId, newId) =>
+                currentStore.migrateWorktreeIdentity(oldId, newId),
+              notifyWorktreeRenamed: (repoId, oldId, newId) =>
+                currentRuntime.notifyWorktreeFolderRenamed(repoId, oldId, newId),
+              pathExists: async (candidate) => existsSync(candidate),
+              moveWorktree
+            })
+        : undefined,
       setRenameError: (worktreeId, error) => {
         // Skip the write + renderer push when nothing changes — benign skips
         // clear the error on every settled worktree, most of which never had one.
@@ -1303,10 +1335,101 @@ app.whenReady().then(async () => {
     onPtyStopped: clearProviderPtyState,
     onTerminalAgentStatus: (event) => {
       agentHookServer.ingestTerminalStatus(event)
-    }
+    },
+    // Why: hook-reported agent status is the same source the desktop sidebar
+    // reads. worktree.ps pulls it at query time so mobile shows the same agents.
+    getAgentStatusSnapshot: () => agentHookServer.getStatusSnapshot()
   })
   runtime = runtimeService
-  automations = new AutomationService(store, { claudeUsage, codexUsage })
+  automations = new AutomationService(store, {
+    claudeUsage,
+    codexUsage,
+    // Why: desktop clients may mirror remote-host automations, but only a
+    // server process should execute schedules owned by `remote_host_service`.
+    allowRemoteHostScheduling: isServeMode,
+    headlessDispatcher: isServeMode
+      ? async ({ automation, run, target }) => {
+          const terminalSnapshotLimit = 2_000
+          let terminalHandle: string
+          let terminalSessionId: string | null = null
+          let workspaceId: string
+          let workspaceDisplayName: string | null = null
+
+          if (automation.workspaceMode === 'new_per_run') {
+            const created = await runtimeService.createManagedWorktree({
+              repoSelector: target.repo.id,
+              name: buildHeadlessAutomationWorkspaceName(run.title, run.scheduledFor),
+              baseBranch: automation.baseBranch ?? undefined,
+              setupDecision: 'inherit',
+              activate: false,
+              createdWithAgent: automation.agentId,
+              startupAgent: automation.agentId,
+              startupPrompt: automation.prompt,
+              telemetrySource: 'unknown'
+            })
+            terminalHandle = created.startupTerminal?.handle ?? ''
+            terminalSessionId = created.startupTerminal?.tabId ?? null
+            workspaceId = created.worktree.id
+            workspaceDisplayName = created.worktree.displayName ?? null
+            if (!terminalHandle) {
+              throw new Error(
+                created.warning ||
+                  'Automation workspace was created, but no agent terminal started.'
+              )
+            }
+          } else {
+            if (!automation.workspaceId) {
+              throw new Error('The target workspace is no longer available.')
+            }
+            const terminal = await runtimeService.launchAgentTerminal(
+              `id:${automation.workspaceId}`,
+              {
+                agent: automation.agentId,
+                prompt: automation.prompt,
+                title: run.title
+              }
+            )
+            terminalHandle = terminal.handle
+            terminalSessionId = terminal.tabId ?? null
+            workspaceId = terminal.worktreeId
+            const worktree = await runtimeService.showManagedWorktree(`id:${workspaceId}`)
+            workspaceDisplayName = worktree.displayName ?? null
+          }
+
+          const completion = (async () => {
+            const wait = await runtimeService.waitForTerminal(terminalHandle, {
+              condition: 'tui-idle'
+            })
+            const read = await runtimeService.readTerminal(terminalHandle, {
+              limit: terminalSnapshotLimit
+            })
+            const snapshotBuffer = createHeadlessAutomationOutputSnapshotBuffer()
+            snapshotBuffer.append(read.tail.join('\n'))
+            if (wait.satisfied) {
+              return {
+                status: 'completed' as const,
+                outputSnapshot: snapshotBuffer.snapshot(),
+                error: null
+              }
+            }
+            return {
+              status: 'dispatch_failed' as const,
+              outputSnapshot: snapshotBuffer.snapshot(),
+              error: wait.blockedReason
+                ? `Automation agent is blocked: ${wait.blockedReason}.`
+                : 'Automation agent did not report completion.'
+            }
+          })()
+
+          return {
+            workspaceId,
+            workspaceDisplayName,
+            terminalSessionId,
+            completion
+          }
+        }
+      : undefined
+  })
   runtimeService.setAutomationService(automations)
   runtimeService.setAccountServices({ claudeAccounts, codexAccounts, rateLimits })
   runtimeService.setCommitMessageAgentEnvironmentResolvers({

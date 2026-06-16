@@ -1,9 +1,12 @@
-name: Mobile Release
+name: Mobile Android Release
 
+# Why a separate workflow from iOS: iOS releases go through App Store review,
+# which can take days. Decoupling the triggers lets an Android release ship
+# immediately without waiting on iOS, and vice versa.
 on:
   push:
     tags:
-      - 'mobile-v*'
+      - 'mobile-android-v*'
   workflow_dispatch:
 
 jobs:
@@ -57,14 +60,14 @@ jobs:
           path: mobile/android/app/build/outputs/apk/release/*.apk
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/mobile-v')
+        if: startsWith(github.ref, 'refs/tags/mobile-android-v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Orca Mobile $tag" \
+            --title "Orca Mobile Android $tag" \
             --prerelease \
             --latest=false \
             --generate-notes \

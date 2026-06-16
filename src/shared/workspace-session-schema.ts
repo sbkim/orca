@@ -135,6 +135,7 @@ const tabContentTypeSchema = z.enum([
   'editor',
   'diff',
   'conflict-review',
+  'check-details',
   'browser',
   'simulator'
 ])
@@ -245,6 +246,9 @@ const browserPageSchema = z.object({
   canGoForward: z.boolean(),
   loadError: browserLoadErrorSchema.nullable(),
   createdAt: z.number(),
+  // Why: explicit null marks a browser page as client-local even when its
+  // worktree is remote-owned; older sessions omit it and keep inferred runtime.
+  browserRuntimeEnvironmentId: z.string().nullable().optional(),
   // Why: optional+nullable so sessions persisted before viewport presets were
   // added still validate; without this, zod would strip the field during
   // restore and reset the user's chosen preset on every app restart.

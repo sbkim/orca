@@ -18,8 +18,10 @@ import {
   subscribeToPtyExit
 } from '@/components/terminal-pane/pty-dispatcher'
 import { callRuntimeRpc, getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
+import { getSettingsForWorktreeRuntimeOwner } from '@/lib/worktree-runtime-owner'
 import { toRuntimeWorktreeSelector } from '@/runtime/runtime-worktree-selector'
 import { singlePaneLayoutSnapshot } from '@/store/slices/terminal-helpers'
+import { createBrowserUuid } from '@/lib/browser-uuid'
 import {
   getRemoteRuntimeTerminalHandle,
   subscribeToRuntimeTerminalData,
@@ -113,8 +115,10 @@ export async function launchAgentBackgroundSession(
     store.setTabCustomTitle(tab.id, title, { recordInteraction: false })
   }
   // Why: agent hook callbacks are keyed by pane, and background automation
-  // tabs never mount a TerminalPane to inject this env for us.
-  const leafId = globalThis.crypto.randomUUID()
+  // tabs never mount a TerminalPane to inject this env for us. createBrowserUuid
+  // (not crypto.randomUUID) because the latter is undefined in non-secure
+  // browser contexts — the LAN web client served over plain HTTP.
+  const leafId = createBrowserUuid()
   const paneKey = makePaneKey(tab.id, leafId)
   // Why: `title` labels the tab/worktree entry. Pane titles render as an
   // in-terminal title row, so background sessions must not persist it there.
@@ -153,7 +157,11 @@ export async function launchAgentBackgroundSession(
       window.api.pty.write(ptyId, submittedCommand)
     }, 50)
   }
-  const runtimeTarget = getActiveRuntimeTarget(store.settings)
+  // Route by the worktree's owner host: the agent terminal must spawn on the host
+  // that owns this worktree, not on the focused runtime.
+  const runtimeTarget = getActiveRuntimeTarget(
+    getSettingsForWorktreeRuntimeOwner(store, worktreeId)
+  )
   let ptyId: string
   try {
     if (runtimeTarget.kind === 'environment') {

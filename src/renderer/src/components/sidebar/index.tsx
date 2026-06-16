@@ -1,9 +1,8 @@
-import React, { useEffect, useMemo } from 'react'
+import React, { useEffect } from 'react'
 import { useAppStore } from '@/store'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useSidebarResize } from '@/hooks/useSidebarResize'
 import SidebarHeader from './SidebarHeader'
-import ProjectOrderManualDefaultNotice from './ProjectOrderManualDefaultNotice'
 import SidebarNav from './SidebarNav'
 import SetupScriptPromptCard from './SetupScriptPromptCard'
 import WorktreeList from './WorktreeList'
@@ -14,15 +13,9 @@ import { cn } from '@/lib/utils'
 import { FolderPlus, Loader2 } from 'lucide-react'
 import { useSidebarProjectDrop } from './useSidebarProjectDrop'
 import { useWorkspaceBoardPanel } from './useWorkspaceBoardPanel'
-import { useSystemPrefersDark } from '../terminal-pane/use-system-prefers-dark'
-import { resolveLeftSidebarStyleVariables } from '@/lib/left-sidebar-appearance'
 
 const WorktreeMetaDialog = React.lazy(() => import('./WorktreeMetaDialog'))
-const NonGitFolderDialog = React.lazy(() => import('./NonGitFolderDialog'))
 const RemoveFolderDialog = React.lazy(() => import('./RemoveFolderDialog'))
-const AddRepoDialog = React.lazy(() => import('./AddRepoDialog'))
-const AddProjectFromFolderDialog = React.lazy(() => import('./AddProjectFromFolderDialog'))
-const ProjectAddedDialog = React.lazy(() => import('./ProjectAddedDialog'))
 const WorktreeVisibilityDialog = React.lazy(() => import('./WorktreeVisibilityDialog'))
 const OrcaYamlTrustDialog = React.lazy(() => import('./OrcaYamlTrustDialog'))
 
@@ -45,17 +38,9 @@ function Sidebar({
   const sidebarWidth = useAppStore((s) => s.sidebarWidth)
   const setSidebarWidth = useAppStore((s) => s.setSidebarWidth)
   const repos = useAppStore((s) => s.repos)
-  const settings = useAppStore((s) => s.settings)
   const fetchAllWorktrees = useAppStore((s) => s.fetchAllWorktrees)
   const activeModal = useAppStore((s) => s.activeModal)
   const { nativeDropTarget, dropHandlers, affordance } = useSidebarProjectDrop()
-  const systemPrefersDark = useSystemPrefersDark()
-  const leftSidebarStyle = useMemo(
-    () => resolveLeftSidebarStyleVariables(settings, systemPrefersDark),
-    [settings, systemPrefersDark]
-  ) as React.CSSProperties | undefined
-  const [shouldMountAddRepoDialog, setShouldMountAddRepoDialog] = React.useState(false)
-  const unmountAddRepoDialogTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
   const {
     workspaceBoardOpen,
     workspaceBoardMenuOpen,
@@ -76,31 +61,6 @@ function Sidebar({
       fetchAllWorktrees()
     }
   }, [repoCount, fetchAllWorktrees])
-
-  useEffect(() => {
-    if (activeModal === 'add-repo') {
-      if (unmountAddRepoDialogTimerRef.current) {
-        clearTimeout(unmountAddRepoDialogTimerRef.current)
-        unmountAddRepoDialogTimerRef.current = null
-      }
-      setShouldMountAddRepoDialog(true)
-      return
-    }
-    if (shouldMountAddRepoDialog && !unmountAddRepoDialogTimerRef.current) {
-      // Why: AddRepoDialog's close effect aborts in-flight clone/nested work.
-      // Keep one closed render, then remove hidden SSH/remote subscriptions.
-      unmountAddRepoDialogTimerRef.current = setTimeout(() => {
-        setShouldMountAddRepoDialog(false)
-        unmountAddRepoDialogTimerRef.current = null
-      }, 0)
-    }
-    return () => {
-      if (unmountAddRepoDialogTimerRef.current) {
-        clearTimeout(unmountAddRepoDialogTimerRef.current)
-        unmountAddRepoDialogTimerRef.current = null
-      }
-    }
-  }, [activeModal, shouldMountAddRepoDialog])
 
   useEffect(() => {
     if (!sidebarOpen && workspaceBoardOpen) {
@@ -124,7 +84,6 @@ function Sidebar({
         ref={containerRef}
         data-native-file-drop-target={sidebarOpen ? nativeDropTarget : undefined}
         className="relative min-h-0 flex-shrink-0 bg-worktree-sidebar flex flex-col overflow-hidden scrollbar-sleek-parent"
-        style={leftSidebarStyle}
         {...dropHandlers}
       >
         {sidebarOpen && (
@@ -132,7 +91,6 @@ function Sidebar({
             {/* Fixed controls */}
             <SidebarNav />
             <SidebarHeader onWorkspaceBoardMenuOpenChange={setWorkspaceBoardMenuOpen} />
-            <ProjectOrderManualDefaultNotice />
 
             <WorktreeList
               scrollOffsetRef={worktreeScrollOffsetRef}
@@ -182,17 +140,12 @@ function Sidebar({
       for the modal that needs their flow-specific hooks and UI. */}
       <React.Suspense fallback={null}>
         {activeModal === 'edit-meta' ? <WorktreeMetaDialog /> : null}
-        {activeModal === 'confirm-non-git-folder' ? <NonGitFolderDialog /> : null}
         {activeModal === 'confirm-remove-folder' ? <RemoveFolderDialog /> : null}
-        {shouldMountAddRepoDialog ? <AddRepoDialog /> : null}
-        {activeModal === 'confirm-add-project-from-folder' ? <AddProjectFromFolderDialog /> : null}
-        {activeModal === 'project-added' ? <ProjectAddedDialog /> : null}
         {activeModal === 'worktree-visibility' ? <WorktreeVisibilityDialog /> : null}
         {activeModal === 'confirm-orca-yaml-hooks' ? <OrcaYamlTrustDialog /> : null}
       </React.Suspense>
       {sidebarOpen ? (
         <WorkspaceKanbanDrawer
-          leftSidebarStyle={leftSidebarStyle}
           open={workspaceBoardOpen}
           preserveOpenForMenu={workspaceBoardMenuOpen}
           onOpenChange={handleWorkspaceBoardOpenChange}

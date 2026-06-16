@@ -14,7 +14,11 @@ export type HostedReviewActionInfo = Pick<
   Partial<
     Pick<
       HostedReviewInfo,
-      'reviewDecision' | 'autoMergeEnabled' | 'mergeQueueRequired' | 'mergeStateStatus'
+      | 'reviewDecision'
+      | 'autoMergeEnabled'
+      | 'autoMergeAllowed'
+      | 'mergeQueueRequired'
+      | 'mergeStateStatus'
     >
   >
 
@@ -60,6 +64,7 @@ export function useHostedReviewActions({
         const result = isGitLab
           ? await window.api.gl.mergeMR({
               repoPath: repo.path,
+              repoId: repo.id,
               iid: review.number,
               method
             })
@@ -105,6 +110,7 @@ export function useHostedReviewActions({
         repoId: repo.id,
         prNumber: review.number,
         enabled,
+        method: enabled ? defaultMergeMethod : undefined,
         prRepo: githubPR?.prRepo ?? null
       })
       if (!result.ok) {
@@ -121,6 +127,7 @@ export function useHostedReviewActions({
     githubPR?.prRepo,
     isGitLab,
     autoMergeAction,
+    defaultMergeMethod,
     onRefreshReview,
     repo.id,
     repo.path,
@@ -158,8 +165,16 @@ export function useHostedReviewActions({
       try {
         const result = isGitLab
           ? isClosing
-            ? await window.api.gl.closeMR({ repoPath: repo.path, iid: review.number })
-            : await window.api.gl.reopenMR({ repoPath: repo.path, iid: review.number })
+            ? await window.api.gl.closeMR({
+                repoPath: repo.path,
+                repoId: repo.id,
+                iid: review.number
+              })
+            : await window.api.gl.reopenMR({
+                repoPath: repo.path,
+                repoId: repo.id,
+                iid: review.number
+              })
           : await window.api.gh.updatePRState({
               repoPath: repo.path,
               repoId: repo.id,
