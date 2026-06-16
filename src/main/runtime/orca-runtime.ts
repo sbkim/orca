@@ -10474,6 +10474,7 @@ export class OrcaRuntimeService {
     repoSelector: string
     name: string
     baseBranch?: string
+    compareBaseRef?: string
     branchNameOverride?: string
     linkedIssue?: number | null
     linkedPR?: number | null
@@ -10943,9 +10944,9 @@ export class OrcaRuntimeService {
 
     const worktreeId = `${repo.id}::${created.path}`
     const now = Date.now()
-    // Why: persisted compare refs must survive local branches whose names look
-    // like remote labels, e.g. a local branch literally named "origin/main".
-    const metadataBaseRef = remoteTrackingBase?.ref ?? baseBranch
+    // Why: PR/MR-created worktrees can start from a head ref/SHA while Source
+    // Control must compare against the review target branch.
+    const metadataBaseRef = args.compareBaseRef ?? remoteTrackingBase?.ref ?? baseBranch
     const displayNameMeta = requestedDisplayName
       ? { displayName: requestedDisplayName }
       : shouldSetDisplayName(effectiveRequestedName, branchName, effectiveSanitizedName)
@@ -11247,6 +11248,7 @@ export class OrcaRuntimeService {
     args: {
       name: string
       baseBranch?: string
+      compareBaseRef?: string
       branchNameOverride?: string
       linkedIssue?: number | null
       linkedPR?: number | null
@@ -11292,6 +11294,7 @@ export class OrcaRuntimeService {
         name: args.name,
         ...(args.displayName ? { displayName: args.displayName } : {}),
         ...(args.baseBranch ? { baseBranch: args.baseBranch } : {}),
+        ...(args.compareBaseRef ? { compareBaseRef: args.compareBaseRef } : {}),
         ...(args.branchNameOverride ? { branchNameOverride: args.branchNameOverride } : {}),
         ...(args.runHooks ? { setupDecision: 'run' as const } : {}),
         ...(!args.runHooks && args.setupDecision ? { setupDecision: args.setupDecision } : {}),
@@ -11984,6 +11987,7 @@ export class OrcaRuntimeService {
     repoSelector: string
     prNumber: number
     headRefName?: string
+    baseRefName?: string
     isCrossRepository?: boolean
   }): Promise<GitHubPrStartPoint | { error: string }> {
     if (!this.store) {
@@ -12033,6 +12037,7 @@ export class OrcaRuntimeService {
       repoPath: repo.path,
       prNumber: args.prNumber,
       headRefName: args.headRefName,
+      baseRefName: args.baseRefName,
       isCrossRepository: args.isCrossRepository,
       connectionId: repo.connectionId ?? null,
       gitExec,
@@ -12045,8 +12050,11 @@ export class OrcaRuntimeService {
     repoSelector: string
     mrIid: number
     sourceBranch?: string
+    targetBranch?: string
     isCrossRepository?: boolean
-  }): Promise<{ baseBranch: string; pushTarget?: GitPushTarget } | { error: string }> {
+  }): Promise<
+    { baseBranch: string; compareBaseRef?: string; pushTarget?: GitPushTarget } | { error: string }
+  > {
     if (!this.store) {
       throw new Error('runtime_unavailable')
     }
@@ -12065,6 +12073,7 @@ export class OrcaRuntimeService {
       : (gitArgs: string[]) => gitExecFileAsync(gitArgs, { cwd: repo.path })
 
     let sourceBranch = args.sourceBranch?.trim() ?? ''
+    let targetBranch = args.targetBranch?.trim() ?? ''
     let isCrossRepository = args.isCrossRepository === true
 
     if (!sourceBranch) {
@@ -12099,6 +12108,7 @@ export class OrcaRuntimeService {
         return { error: `MR !${args.mrIid} not found.` }
       }
       sourceBranch = (item.branchName ?? '').trim()
+      targetBranch = (item.baseRefName ?? '').trim()
       if (!sourceBranch) {
         return { error: `MR !${args.mrIid} has no source branch.` }
       }
@@ -12116,6 +12126,21 @@ export class OrcaRuntimeService {
       )
     } catch (error) {
       return { error: error instanceof Error ? error.message : 'Could not resolve git remote.' }
+    }
+    const compareBaseRef = targetBranch ? `refs/remotes/${remote}/${targetBranch}` : undefined
+    const fetchTargetBranch = async (): Promise<{ error: string } | null> => {
+      if (!targetBranch || !compareBaseRef) {
+        return null
+      }
+      try {
+        await (sshGitProvider
+          ? sshGitProvider.fetchRemoteTrackingRef(repo.path, remote, targetBranch, compareBaseRef)
+          : gitExec(['fetch', remote, `+refs/heads/${targetBranch}:${compareBaseRef}`]))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return { error: `Failed to fetch ${remote}/${targetBranch}: ${message.split('\n')[0]}` }
+      }
+      return null
     }
 
     if (isCrossRepository) {
@@ -12138,7 +12163,11 @@ export class OrcaRuntimeService {
       if (!sha) {
         return { error: `Empty SHA resolving fork MR !${args.mrIid} head.` }
       }
-      return { baseBranch: sha }
+      const targetFetchError = await fetchTargetBranch()
+      if (targetFetchError) {
+        return targetFetchError
+      }
+      return { baseBranch: sha, ...(compareBaseRef ? { compareBaseRef } : {}) }
     }
 
     try {
@@ -12158,7 +12187,15 @@ export class OrcaRuntimeService {
     } catch {
       return { error: `Remote ref ${remoteRef} does not exist after fetch.` }
     }
-    return { baseBranch: remoteRef, pushTarget: { remoteName: remote, branchName: sourceBranch } }
+    const targetFetchError = await fetchTargetBranch()
+    if (targetFetchError) {
+      return targetFetchError
+    }
+    return {
+      baseBranch: remoteRef,
+      ...(compareBaseRef ? { compareBaseRef } : {}),
+      pushTarget: { remoteName: remote, branchName: sourceBranch }
+    }
   }
 
   private async resolveGitLabIssueSourceRemote(

@@ -2667,6 +2667,8 @@ const api = {
       title: string
       body: string
       draft: boolean
+      provider?: unknown
+      useTemplate?: boolean
       connectionId?: string
       sourceControlAiResolvedParams?: unknown
       sourceControlAi?: unknown
