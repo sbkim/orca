@@ -314,7 +314,12 @@ function setLineageState(options: { deletingChild?: boolean } = {}): void {
     workspaceHostScope: 'all',
     workspacePortScan: null,
     workspaceStatuses: [],
-    worktreeCardProperties: ['status', 'comment', 'inline-agents'] satisfies WorktreeCardProperty[],
+    worktreeCardProperties: [
+      'status',
+      'pr',
+      'comment',
+      'inline-agents'
+    ] satisfies WorktreeCardProperty[],
     worktreeLineageById: {
       [child.id]: makeLineage(child, parent)
     },

@@ -314,7 +314,7 @@ describe('WorktreeCard quick actions', () => {
 
     expect(markup).toContain('primary')
     expect(markup).not.toContain('aria-label="Primary worktree"')
-    expect(markup).not.toContain('data-worktree-card-meta-row=""')
+    expect(markup).toContain('data-worktree-card-meta-row=""')
   })
 
   it('keeps unread in the status lane and moves primary into the title row when compact cards are enabled', () => {
