@@ -130,17 +130,21 @@ export function SourceControlBranchContextRow({
   })
 
   return (
-    <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-      <span className="shrink-0">
-        {translate('auto.components.right.sidebar.SourceControl.e8a1c4b203', 'vs')}
-      </span>
-      <BaseRefButton baseRef={displayedBaseRef} onClick={onChangeBaseRef} title={changeBaseTitle} />
-      <span className="min-w-0 flex-1 truncate">
-        <span className="inline-flex min-w-0 items-center gap-1.5">
-          {stats.map((stat) => (
-            <ContextStat key={stat.key} stat={stat} />
-          ))}
+    <div className="flex min-w-0 items-center justify-between gap-1.5 text-[11px] text-muted-foreground">
+      <div className="flex min-w-0 items-center gap-1.5">
+        <span className="shrink-0">
+          {translate('auto.components.right.sidebar.SourceControl.e8a1c4b203', 'vs')}
         </span>
+        <BaseRefButton
+          baseRef={displayedBaseRef}
+          onClick={onChangeBaseRef}
+          title={changeBaseTitle}
+        />
+      </div>
+      <span className="inline-flex shrink-0 items-center gap-1.5">
+        {stats.map((stat) => (
+          <ContextStat key={stat.key} stat={stat} />
+        ))}
       </span>
     </div>
   )

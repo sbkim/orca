@@ -189,7 +189,7 @@ export function SourceControlHeaderToolbar({
   return (
     <div className="border-b border-border px-3 pt-1.5 pb-1">
       <div
-        className={cn('flex min-w-0 items-center gap-1', filterExpanded && 'gap-1.5')}
+        className={cn('flex min-w-0 items-center gap-1', filterExpanded && 'w-full gap-1.5')}
         data-filter-expanded={filterExpanded ? 'true' : 'false'}
       >
         {showCollapsedToolbar ? (
@@ -230,7 +230,9 @@ export function SourceControlHeaderToolbar({
           </>
         ) : (
           <>
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            {/* Why: expanded filter owns the toolbar row so typing isn't squeezed
+                beside PR links or overflow actions — collapse to reach those. */}
+            <div className="flex min-w-0 w-full flex-1 items-center gap-1.5">
               <Search className="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 ref={filterInputRef}
@@ -248,21 +250,13 @@ export function SourceControlHeaderToolbar({
                   'auto.components.right.sidebar.SourceControl.c35baf2f1e',
                   'Filter files…'
                 )}
-                className="min-w-0 flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
+                className="min-w-0 w-full flex-1 bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/60"
                 aria-label={translate(
                   'auto.components.right.sidebar.SourceControl.c35baf2f1e',
                   'Filter files…'
                 )}
               />
             </div>
-            {hostedReview ? (
-              <HostedReviewToolbarLink
-                review={hostedReview}
-                onOpenHostedReviewInChecks={onOpenHostedReviewInChecks}
-                compact
-              />
-            ) : null}
-            {renderOverflowMenu(overflowProps)}
             <Button
               type="button"
               variant="ghost"
