@@ -259,7 +259,7 @@ describe('FolderWorkspacePrChecksPanel', () => {
   it('keeps aggregate counts out of the compact panel header', () => {
     renderPanel()
 
-    expect(container.textContent).toContain('Folder parent')
+    expect(container.textContent).toContain('Child worktree PR checks')
     expect(container.textContent).not.toContain('1 attached')
     expect(container.textContent).not.toContain('with PR/MR')
     expect(container.textContent).not.toContain('unknown')

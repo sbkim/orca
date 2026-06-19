@@ -210,7 +210,10 @@ export default function FolderWorkspacePrChecksPanel({
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-foreground">
-              {folderWorkspace.name}
+              {translate(
+                'auto.components.rightSidebar.FolderWorkspacePrChecksPanel.childWorktreePrChecks',
+                'Child worktree PR checks'
+              )}
             </div>
           </div>
           <Tooltip>
