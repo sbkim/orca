@@ -27,6 +27,10 @@ const reactRefState = vi.hoisted(() => ({
   index: 0
 }))
 
+const reactEffectPhaseState = vi.hoisted(() => ({
+  current: 'idle' as 'idle' | 'layout' | 'effect'
+}))
+
 function beginHookRender(): void {
   reactRefState.index = 0
 }
@@ -42,7 +46,20 @@ vi.mock('react', async (importOriginal) => {
     ...actual,
     useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
     useEffect: (effect: () => void | (() => void)) => {
-      effect()
+      reactEffectPhaseState.current = 'effect'
+      try {
+        effect()
+      } finally {
+        reactEffectPhaseState.current = 'idle'
+      }
+    },
+    useLayoutEffect: (effect: () => void | (() => void)) => {
+      reactEffectPhaseState.current = 'layout'
+      try {
+        effect()
+      } finally {
+        reactEffectPhaseState.current = 'idle'
+      }
     },
     useRef: <T>(value: T) => {
       const index = reactRefState.index
@@ -261,6 +278,53 @@ describe('useTerminalPaneGlobalEffects', () => {
     expect(mocks.fitPanes).not.toHaveBeenCalled()
     expect(isActiveRef.current).toBe(true)
     expect(isVisibleRef.current).toBe(true)
+  })
+
+  it('resumes hidden terminal rendering before the visible workspace paints', () => {
+    const observedPhases: string[] = []
+    const manager = {
+      getPanes: vi.fn(() => [{ id: 1, terminal: { name: 'terminal-a' } }]),
+      resumeRendering: vi.fn(() => observedPhases.push(`resume:${reactEffectPhaseState.current}`)),
+      resetWebglTextureAtlases: vi.fn(() =>
+        observedPhases.push(`reset:${reactEffectPhaseState.current}`)
+      ),
+      suspendRendering: vi.fn(() =>
+        observedPhases.push(`suspend:${reactEffectPhaseState.current}`)
+      ),
+      fitAllPanes: vi.fn(),
+      getActivePane: vi.fn(() => null),
+      setActivePane: vi.fn()
+    }
+    registerManagerForReset(manager)
+
+    const baseArgs = {
+      tabId: 'tab-1',
+      worktreeId: 'wt-1',
+      isSyncFitEnabled: true,
+      paneCount: 1,
+      managerRef: { current: manager as never },
+      containerRef: { current: null },
+      paneTransportsRef: { current: new Map() },
+      isActiveRef: { current: false },
+      isVisibleRef: { current: false },
+      toggleExpandPane: vi.fn()
+    }
+
+    beginHookRender()
+    useTerminalPaneGlobalEffects({
+      ...baseArgs,
+      isActive: false,
+      isVisible: false
+    })
+
+    beginHookRender()
+    useTerminalPaneGlobalEffects({
+      ...baseArgs,
+      isActive: true,
+      isVisible: true
+    })
+
+    expect(observedPhases).toEqual(['suspend:layout', 'resume:layout', 'reset:layout'])
   })
 
   it('reports the active local PTY to the main output scheduler', () => {
