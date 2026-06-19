@@ -72,36 +72,18 @@ export function ResolveButton({
   onResolve: (threadId: string, resolve: boolean) => boolean | Promise<boolean>
 }): React.JSX.Element {
   const [loading, setLoading] = useState(false)
-  const loadingResetTimerRef = useRef<number | null>(null)
-
-  const clearLoadingResetTimer = useCallback((): void => {
-    if (loadingResetTimerRef.current !== null) {
-      window.clearTimeout(loadingResetTimerRef.current)
-      loadingResetTimerRef.current = null
-    }
-  }, [])
-
-  const setResolveButtonRootRef = useCallback(
-    (node: HTMLSpanElement | null) => {
-      if (node === null) {
-        clearLoadingResetTimer()
-      }
-    },
-    [clearLoadingResetTimer]
-  )
 
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation()
-      clearLoadingResetTimer()
       setLoading(true)
       void Promise.resolve(onResolve(threadId, !isResolved)).finally(() => setLoading(false))
     },
-    [clearLoadingResetTimer, threadId, isResolved, onResolve]
+    [threadId, isResolved, onResolve]
   )
 
   return (
-    <span ref={setResolveButtonRootRef} className="contents">
+    <span className="contents">
       {loading ? (
         <LoaderCircle className="size-3 animate-spin text-muted-foreground shrink-0" />
       ) : (

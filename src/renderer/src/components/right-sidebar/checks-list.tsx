@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
@@ -50,7 +50,7 @@ export function ChecksList({
     shouldConstrainCheckList && checks.length > 0
   )
   detailsContextRef.current = checkDetailsContextKey
-  const sorted = React.useMemo(
+  const sorted = useMemo(
     () =>
       [...checks].sort(
         (a, b) =>
@@ -59,7 +59,7 @@ export function ChecksList({
       ),
     [checks]
   )
-  const rows = React.useMemo(
+  const rows = useMemo(
     () =>
       sorted.map((check, index) => ({
         check,
@@ -169,7 +169,12 @@ export function ChecksList({
             [row.key]: {
               loading: false,
               details,
-              error: details ? null : 'No inline details are available for this check.'
+              error: details
+                ? null
+                : translate(
+                    'auto.components.right.sidebar.checks.panel.content.e15a8b77ef',
+                    'No inline details are available for this check.'
+                  )
             }
           }))
         })
@@ -182,7 +187,13 @@ export function ChecksList({
             [row.key]: {
               loading: false,
               details: null,
-              error: err instanceof Error ? err.message : 'Failed to load check details.'
+              error:
+                err instanceof Error
+                  ? err.message
+                  : translate(
+                      'auto.components.right.sidebar.checks.panel.content.4e0f0a5d3d',
+                      'Failed to load check details.'
+                    )
             }
           }))
         })

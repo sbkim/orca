@@ -18,19 +18,34 @@ export function getCommitGenerationDisabledReason({
   hasMessage: boolean
 }): string | undefined {
   if (isGenerating) {
-    return 'Generating commit message…'
+    return translate(
+      'auto.components.right.sidebar.SourceControl.2a9ea1d3f6',
+      'Generating commit message…'
+    )
   }
   if (isCommitting) {
-    return 'Commit in progress…'
+    return translate(
+      'auto.components.right.sidebar.SourceControl.6d59e0896d',
+      'Commit in progress…'
+    )
   }
   if (!aiAgentConfigured) {
-    return 'Pick an agent in Settings -> Git -> Source Control AI.'
+    return translate(
+      'auto.components.right.sidebar.SourceControl.833876a999',
+      'Pick an agent in Settings -> Git -> Source Control AI.'
+    )
   }
   if (stagedCount === 0) {
-    return 'Stage at least one file to generate a message.'
+    return translate(
+      'auto.components.right.sidebar.SourceControl.52f2f5137d',
+      'Stage at least one file to generate a message.'
+    )
   }
   if (hasMessage) {
-    return 'Clear the message to regenerate.'
+    return translate(
+      'auto.components.right.sidebar.SourceControl.b60ea73cbf',
+      'Clear the message to regenerate.'
+    )
   }
   return undefined
 }

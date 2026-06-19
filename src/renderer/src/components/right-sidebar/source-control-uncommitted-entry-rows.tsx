@@ -41,10 +41,21 @@ import type { SourceControlDirectoryActionPaths } from './source-control-directo
 import type { SourceControlTreeDirectoryNode } from './source-control-tree'
 import type { GitStatusEntry } from '../../../../shared/types'
 
-const SUBMODULE_WORKTREE_ONLY_LABEL = 'Submodule changes - stage inside submodule'
-const SUBMODULE_WORKTREE_ONLY_STAGE_TOOLTIP = 'Stage these changes inside the submodule'
-
 type GitStatusSourceControlTreeDirectoryNode = SourceControlTreeDirectoryNode<GitStatusEntry>
+
+function getSubmoduleWorktreeOnlyLabel(): string {
+  return translate(
+    'auto.components.right.sidebar.SourceControl.5c7a31d8fa',
+    'Submodule changes - stage inside submodule'
+  )
+}
+
+function getSubmoduleWorktreeOnlyStageTooltip(): string {
+  return translate(
+    'auto.components.right.sidebar.SourceControl.903693db8b',
+    'Stage these changes inside the submodule'
+  )
+}
 
 export function SourceControlTreeDirectoryRow({
   node,
@@ -278,7 +289,7 @@ export const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
           </span>
           {(conflictLabel || isSubmoduleWorktreeOnly) && (
             <div className="truncate text-[11px] text-muted-foreground">
-              {conflictLabel ?? SUBMODULE_WORKTREE_ONLY_LABEL}
+              {conflictLabel ?? getSubmoduleWorktreeOnlyLabel()}
             </div>
           )}
         </div>
@@ -342,7 +353,7 @@ export const UncommittedEntryRow = React.memo(function UncommittedEntryRow({
               icon={Plus}
               title={
                 isSubmoduleWorktreeOnly
-                  ? SUBMODULE_WORKTREE_ONLY_STAGE_TOOLTIP
+                  ? getSubmoduleWorktreeOnlyStageTooltip()
                   : translate('auto.components.right.sidebar.SourceControl.8cde1a2fb0', 'Stage')
               }
               onClick={(event) => {

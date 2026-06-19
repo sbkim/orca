@@ -18,6 +18,36 @@ type ConflictReview = {
   conflictSummary?: PRConflictSummary
 }
 
+function getCommitCountLabel(count: number): string {
+  return count === 1
+    ? translate('auto.components.right.sidebar.checks.panel.content.0f71e2a2df', '1 commit')
+    : translate(
+        'auto.components.right.sidebar.checks.panel.content.8c2c5b2d4a',
+        '{{value0}} commits',
+        { value0: count }
+      )
+}
+
+function getFailingCheckCountLabel(count: number): string {
+  return count === 1
+    ? translate('auto.components.right.sidebar.checks.panel.content.12a79e934c', '1 failing check')
+    : translate(
+        'auto.components.right.sidebar.checks.panel.content.d721e8ed38',
+        '{{value0}} failing checks',
+        { value0: count }
+      )
+}
+
+function getPendingCheckCountLabel(count: number): string {
+  return count === 1
+    ? translate('auto.components.right.sidebar.checks.panel.content.2eab51fe3c', '1 check pending')
+    : translate(
+        'auto.components.right.sidebar.checks.panel.content.f0b7c41dde',
+        '{{value0}} checks pending',
+        { value0: count }
+      )
+}
+
 export function ConflictingFilesSection({ pr }: { pr: ConflictReview }): React.JSX.Element | null {
   const files = pr.conflictSummary?.files ?? []
   if (pr.mergeable !== 'CONFLICTING' || files.length === 0) {
@@ -29,9 +59,7 @@ export function ConflictingFilesSection({ pr }: { pr: ConflictReview }): React.J
   return (
     <div className="border-b border-border px-3 py-3">
       <div className="text-[11px] text-muted-foreground">
-        {pr.conflictSummary!.commitsBehind}{' '}
-        {translate('auto.components.right.sidebar.checks.panel.content.6fa7f8723f', 'commit')}
-        {pr.conflictSummary!.commitsBehind === 1 ? '' : 's'}{' '}
+        {getCommitCountLabel(pr.conflictSummary!.commitsBehind)}{' '}
         {translate(
           'auto.components.right.sidebar.checks.panel.content.3916814392',
           'behind (base commit:'
@@ -150,12 +178,7 @@ export function PRTriageStrip({
           <CircleX className="size-3.5 shrink-0 text-rose-500" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[11px] font-medium text-foreground">
-              {failingCount}{' '}
-              {translate(
-                'auto.components.right.sidebar.checks.panel.content.b652f38caf',
-                'failing check'
-              )}
-              {failingCount === 1 ? '' : 's'}
+              {getFailingCheckCountLabel(failingCount)}
             </div>
             <div className="truncate text-[10px] text-muted-foreground">
               {translate(
@@ -191,13 +214,7 @@ export function PRTriageStrip({
           <LoaderCircle className="size-3.5 shrink-0 animate-spin text-amber-500" />
           <div className="min-w-0 flex-1">
             <div className="truncate text-[11px] font-medium text-foreground">
-              {pendingCount}{' '}
-              {translate('auto.components.right.sidebar.checks.panel.content.5341023167', 'check')}
-              {pendingCount === 1 ? '' : 's'}{' '}
-              {translate(
-                'auto.components.right.sidebar.checks.panel.content.9ad98f2a17',
-                'pending'
-              )}
+              {getPendingCheckCountLabel(pendingCount)}
             </div>
             <div className="truncate text-[10px] text-muted-foreground">
               {translate(

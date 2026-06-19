@@ -3,6 +3,14 @@ import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
 
+function getConflictCountLabel(count: number): string {
+  return count === 1
+    ? translate('auto.components.right.sidebar.SourceControl.f71ea9e6e4', '1 conflict')
+    : translate('auto.components.right.sidebar.SourceControl.1a9a7c183c', '{{value0}} conflicts', {
+        value0: count
+      })
+}
+
 export function SectionHeader({
   label,
   count,
@@ -37,9 +45,7 @@ export function SectionHeader({
           <span className="text-[11px] font-medium tabular-nums">{count}</span>
           {conflictCount > 0 && (
             <span className="text-[11px] font-medium text-destructive/80">
-              · {conflictCount}{' '}
-              {translate('auto.components.right.sidebar.SourceControl.413a3ba113', 'conflict')}
-              {conflictCount === 1 ? '' : 's'}
+              · {getConflictCountLabel(conflictCount)}
             </span>
           )}
         </button>

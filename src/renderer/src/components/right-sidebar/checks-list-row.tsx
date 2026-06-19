@@ -3,6 +3,7 @@ import { ChevronRight, CircleDashed, ExternalLink } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { openHttpLink } from '@/lib/http-link-routing'
 import { translate } from '@/i18n/i18n'
 import { CHECK_COLOR, CHECK_ICON } from './checks-panel-status-style'
 import { CheckRunDetails, type CheckDetailsStickySurface } from './checks-list-details'
@@ -36,14 +37,33 @@ export function ChecksListRow({
   const Icon = CHECK_ICON[conclusion] ?? CircleDashed
   const color = CHECK_COLOR[conclusion] ?? 'text-muted-foreground'
   const openUrl = check.url
+  const toggleDetailsLabel = translate(
+    'auto.components.right.sidebar.checks.panel.content.1f7d1f8a55',
+    'Toggle check details for {{value0}}',
+    { value0: check.name }
+  )
   return (
     <div className="min-w-0">
       <div
+        role="button"
+        tabIndex={0}
         className={cn(
-          'group/check-row flex min-w-0 cursor-pointer items-center gap-2 px-3 py-1.5 transition-colors hover:bg-accent/40',
+          'group/check-row flex min-w-0 cursor-pointer items-center gap-2 px-3 py-1.5 transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
           expanded && 'bg-accent/25'
         )}
         onClick={() => onToggle(row)}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) {
+            return
+          }
+          if (event.key !== 'Enter' && event.key !== ' ') {
+            return
+          }
+          event.preventDefault()
+          onToggle(row)
+        }}
+        aria-expanded={expanded}
+        aria-label={toggleDetailsLabel}
       >
         <ChevronRight
           className={cn(
@@ -71,8 +91,9 @@ export function ChecksListRow({
                   )}
                   onClick={(event) => {
                     event.stopPropagation()
-                    window.api.shell.openUrl(openUrl)
+                    openHttpLink(openUrl)
                   }}
+                  onKeyDown={(event) => event.stopPropagation()}
                 >
                   <ExternalLink className="size-3" />
                 </Button>

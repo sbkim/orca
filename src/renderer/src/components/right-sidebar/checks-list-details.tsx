@@ -141,7 +141,7 @@ export function CheckRunDetails({
                 {translate(
                   'auto.components.right.sidebar.checks.panel.content.fd46a70f1a',
                   'Started'
-                )}
+                )}{' '}
                 {startedAt}
               </span>
             )}
@@ -150,7 +150,7 @@ export function CheckRunDetails({
                 {translate(
                   'auto.components.right.sidebar.checks.panel.content.00e1c1658a',
                   'Completed'
-                )}
+                )}{' '}
                 {completedAt}
               </span>
             )}

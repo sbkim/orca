@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LoaderCircle, Sparkles } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Button } from '@/components/ui/button'
@@ -64,7 +64,7 @@ export function PRCommentsList({
   const [isAddingComment, setIsAddingComment] = useState(false)
   const addCommentSurfaceRef = useRef<HTMLDivElement>(null)
   const shouldScrollAddCommentRef = useRef(false)
-  const commentCounts = React.useMemo(() => getPRCommentAudienceCounts(comments), [comments])
+  const commentCounts = useMemo(() => getPRCommentAudienceCounts(comments), [comments])
   const {
     isSelectingForAI,
     selectedGroupIds,
@@ -75,11 +75,11 @@ export function PRCommentsList({
     clearSelection,
     toggleGroupSelection
   } = usePRCommentsListSelection(comments, selectionContextKey)
-  const visibleComments = React.useMemo(
+  const visibleComments = useMemo(
     () => filterPRCommentsByAudience(comments, commentFilter),
     [commentFilter, comments]
   )
-  const groups = React.useMemo(() => groupPRComments(visibleComments), [visibleComments])
+  const groups = useMemo(() => groupPRComments(visibleComments), [visibleComments])
   const canShowResolveWithAI = Boolean(
     onResolveSelectedCommentsWithAI && selectableGroups.length > 0
   )
