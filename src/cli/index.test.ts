@@ -1484,6 +1484,68 @@ describe('orca cli worktree awareness', () => {
     })
   })
 
+  it('routes active/current folder workspace parent selectors through parentWorkspace on create', async () => {
+    const folderWorkspace = {
+      ...buildWorktree('/tmp/folder', '', '', 'folder-workspace:group-1'),
+      id: 'folder:folder-1',
+      repoId: 'folder-workspace:group-1',
+      displayName: 'Folder'
+    }
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    for (const parentSelector of ['current', 'active']) {
+      callMock.mockReset()
+      queueFixtures(
+        callMock,
+        worktreeListFixture([folderWorkspace]),
+        okFixture('req_create', {
+          worktree: buildWorktree('/tmp/repo/child', 'child', 'abc', 'repo-1'),
+          lineage: null,
+          workspaceLineage: {
+            childWorkspaceKey: 'worktree:repo-1::/tmp/repo/child',
+            childInstanceId: 'child-instance',
+            parentWorkspaceKey: 'folder:folder-1',
+            parentInstanceId: null,
+            origin: 'cli',
+            capture: { source: 'explicit-cli-flag', confidence: 'explicit' },
+            createdAt: 1
+          },
+          warnings: []
+        })
+      )
+
+      await main(
+        [
+          'worktree',
+          'create',
+          '--repo',
+          'id:repo-1',
+          '--name',
+          'child',
+          '--parent-worktree',
+          parentSelector,
+          '--json'
+        ],
+        '/tmp/folder/src'
+      )
+
+      expect(callMock).toHaveBeenNthCalledWith(2, 'worktree.create', {
+        repo: 'id:repo-1',
+        name: 'child',
+        baseBranch: undefined,
+        linkedIssue: undefined,
+        comment: undefined,
+        runHooks: false,
+        activate: false,
+        parentWorktree: undefined,
+        parentWorkspace: 'folder:folder-1',
+        noParent: false,
+        callerTerminalHandle: undefined
+      })
+    }
+  })
+
   it('rejects contradictory parent flags on worktree.create before resolving selectors', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})

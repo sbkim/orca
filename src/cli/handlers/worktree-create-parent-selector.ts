@@ -45,7 +45,16 @@ export async function resolveCreateParentSelector(
     return { parentWorkspace }
   }
 
+  const parentWorktree = await getOptionalWorktreeSelector(flags, 'parent-worktree', cwd, client)
+  const resolvedParentWorkspace = parentWorktree
+    ? getWorkspaceKeyParentSelector(parentWorktree)
+    : undefined
+  if (resolvedParentWorkspace) {
+    // Why: active/current may resolve to a folder workspace pseudo-worktree id.
+    return { parentWorkspace: resolvedParentWorkspace }
+  }
+
   return {
-    parentWorktree: await getOptionalWorktreeSelector(flags, 'parent-worktree', cwd, client)
+    parentWorktree
   }
 }
