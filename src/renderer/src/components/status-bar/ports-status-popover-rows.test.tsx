@@ -162,6 +162,8 @@ describe('status bar port row open routing', () => {
   it('keeps no-pointer activations on the saved link-routing setting', async () => {
     const openButton = renderPortRow()
 
+    expect(openButton.disabled).toBe(false)
+
     await act(async () => {
       openButton.dispatchEvent(
         new window.MouseEvent('click', {
@@ -174,6 +176,7 @@ describe('status bar port row open routing', () => {
       await Promise.resolve()
     })
 
+    expect(recordFeatureInteractionMock).toHaveBeenCalledWith('ports')
     expect(openUrlMock).not.toHaveBeenCalled()
     expect(createBrowserTabMock).not.toHaveBeenCalled()
   })
