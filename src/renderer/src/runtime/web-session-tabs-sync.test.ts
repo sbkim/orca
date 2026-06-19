@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- Why: these tests cover one reconciliation boundary
  * across ready, pending, split, and batched session snapshots. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { posix as pathPosix } from 'path'
 import type { RuntimeMobileSessionTabsResult } from '../../../shared/runtime-types'
 import { makePaneKey } from '../../../shared/stable-pane-id'
 import { toWebTerminalSurfaceTabId } from '../../../shared/terminal-surface-id'
@@ -2352,9 +2353,10 @@ describe('applyWebSessionTabsSnapshot', () => {
       loadError: null,
       createdAt: NOW - 10
     }
+    const readmePath = pathPosix.join('/repo', 'README.md')
     const file: OpenFile = {
-      id: '/repo/README.md',
-      filePath: '/repo/README.md',
+      id: readmePath,
+      filePath: readmePath,
       relativePath: 'README.md',
       worktreeId: WT,
       language: 'markdown',
@@ -2423,16 +2425,16 @@ describe('applyWebSessionTabsSnapshot', () => {
             type: 'markdown',
             id: 'host-readme-unified',
             title: 'README.md',
-            filePath: '/repo/README.md',
+            filePath: readmePath,
             relativePath: 'README.md',
             language: 'markdown',
             mode: 'edit',
             isDirty: false,
             isActive: true,
-            sourceFileId: '/repo/README.md',
-            sourceFilePath: '/repo/README.md',
+            sourceFileId: readmePath,
+            sourceFilePath: readmePath,
             sourceRelativePath: 'README.md',
-            documentVersion: 'file:/repo/README.md',
+            documentVersion: `file:${readmePath}`,
             color: null,
             isPinned: false
           }
