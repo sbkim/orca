@@ -150,7 +150,12 @@ describe('applyWebSessionTabsSnapshot', () => {
     }
     // Client closed host-tab-1; an in-flight pre-close snapshot still lists it.
     recordWebSessionCloseIntent(WT, 'host-tab-1', NOW)
-    const stalePreClose = applyWebSessionTabsSnapshot(makeState(), makeSnapshot([surface]), ENV, NOW)
+    const stalePreClose = applyWebSessionTabsSnapshot(
+      makeState(),
+      makeSnapshot([surface]),
+      ENV,
+      NOW
+    )
     expect((stalePreClose.tabsByWorktree?.[WT] ?? []).map((tab) => tab.id)).not.toContain(
       toWebTerminalSurfaceTabId('host-tab-1')
     )
@@ -1867,6 +1872,8 @@ describe('applyWebSessionTabsSnapshot', () => {
             loading: false,
             canGoBack: true,
             canGoForward: false,
+            color: '#3b82f6',
+            isPinned: true,
             isActive: true
           }
         ],
@@ -1914,7 +1921,9 @@ describe('applyWebSessionTabsSnapshot', () => {
           id: 'host-browser-unified',
           entityId: 'host-browser-workspace',
           contentType: 'browser',
-          label: 'Example Domain'
+          label: 'Example Domain',
+          color: '#3b82f6',
+          isPinned: true
         })
       ])
     )
@@ -2269,7 +2278,9 @@ describe('applyWebSessionTabsSnapshot', () => {
             sourceFileId: '/repo/README.md',
             sourceFilePath: '/repo/README.md',
             sourceRelativePath: 'README.md',
-            documentVersion: 'draft:1'
+            documentVersion: 'draft:1',
+            color: '#16a34a',
+            isPinned: true
           }
         ],
         { activeTabId: 'host-readme-unified', activeTabType: 'markdown' }
@@ -2297,7 +2308,9 @@ describe('applyWebSessionTabsSnapshot', () => {
           id: 'host-readme-unified',
           entityId: '/repo/README.md',
           contentType: 'editor',
-          label: 'README.md'
+          label: 'README.md',
+          color: '#16a34a',
+          isPinned: true
         })
       ])
     )

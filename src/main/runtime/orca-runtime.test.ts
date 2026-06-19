@@ -9,6 +9,7 @@ import { ipcMain } from 'electron'
 import type {
   FolderWorkspace,
   ProjectGroup,
+  Tab,
   TerminalLayoutSnapshot,
   WorktreeLineage,
   WorktreeMeta,
@@ -10860,8 +10861,18 @@ describe('OrcaRuntimeService', () => {
       },
       tabGroups: {
         [TEST_WORKTREE_ID]: [
-          { id: 'group-left', worktreeId: TEST_WORKTREE_ID, activeTabId: 'host-tab', tabOrder: ['host-tab'] },
-          { id: 'group-right', worktreeId: TEST_WORKTREE_ID, activeTabId: 'host-tab-2', tabOrder: ['host-tab-2'] }
+          {
+            id: 'group-left',
+            worktreeId: TEST_WORKTREE_ID,
+            activeTabId: 'host-tab',
+            tabOrder: ['host-tab']
+          },
+          {
+            id: 'group-right',
+            worktreeId: TEST_WORKTREE_ID,
+            activeTabId: 'host-tab-2',
+            tabOrder: ['host-tab-2']
+          }
         ]
       },
       tabGroupLayouts: {
@@ -10985,6 +10996,74 @@ describe('OrcaRuntimeService', () => {
     )
     expect(surface?.type === 'terminal' && surface.color).toBe('#ff8800')
     expect(surface?.type === 'terminal' && surface.isPinned).toBe(true)
+  })
+
+  it('persists headless browser tab color + pin and surfaces them through a cold rehydrate', async () => {
+    const browserTab: Tab = {
+      id: 'browser-page-1',
+      entityId: 'browser-page-1',
+      groupId: 'group-1',
+      worktreeId: TEST_WORKTREE_ID,
+      contentType: 'browser',
+      label: 'Live Browser',
+      customLabel: null,
+      color: null,
+      sortOrder: 1,
+      createdAt: 2,
+      isPreview: false,
+      isPinned: false
+    }
+    const session = makeWorkspaceSessionWithHeadlessTerminal({
+      unifiedTabs: { [TEST_WORKTREE_ID]: [browserTab] },
+      tabGroups: {
+        [TEST_WORKTREE_ID]: [
+          {
+            id: 'group-1',
+            worktreeId: TEST_WORKTREE_ID,
+            activeTabId: 'browser-page-1',
+            tabOrder: ['browser-page-1']
+          }
+        ]
+      }
+    })
+    const { runtimeStore, getSession } = makeRuntimeStoreWithWorkspaceSession(session)
+    const runtime = new OrcaRuntimeService(runtimeStore as never)
+    runtime.setOffscreenBrowserBackend({ createTab: vi.fn(), closeTab: vi.fn() })
+    runtime.setAgentBrowserBridge({
+      tabList: vi.fn(() => ({
+        tabs: [
+          {
+            browserPageId: 'browser-page-1',
+            index: 0,
+            url: 'https://example.com/',
+            title: 'Live Browser',
+            active: true
+          }
+        ]
+      }))
+    } as never)
+
+    await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    await runtime.setMobileSessionTabProps(`id:${TEST_WORKTREE_ID}`, {
+      tabId: 'browser-page-1',
+      color: '#3b82f6',
+      isPinned: true
+    })
+
+    const persisted = getSession().unifiedTabs?.[TEST_WORKTREE_ID]?.find(
+      (tab) => tab.id === 'browser-page-1'
+    )
+    expect(persisted?.color).toBe('#3b82f6')
+    expect(persisted?.isPinned).toBe(true)
+
+    runtime['mobileSessionTabsByWorktree'].delete(TEST_WORKTREE_ID)
+    runtime['hydrateHeadlessMobileSessionTabsFromWorkspaceSession'](TEST_WORKTREE_ID)
+    const rehydrated = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+    const surface = rehydrated.tabs.find(
+      (tab) => tab.type === 'browser' && tab.id === 'browser-page-1'
+    )
+    expect(surface?.type === 'browser' && surface.color).toBe('#3b82f6')
+    expect(surface?.type === 'browser' && surface.isPinned).toBe(true)
   })
 
   it('still persists tab props in serve mode after syncWindowGraph(0) (gate does not fire)', async () => {

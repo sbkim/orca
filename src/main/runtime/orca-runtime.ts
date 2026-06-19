@@ -95,12 +95,14 @@ import type {
   ProjectGroupImportMode,
   ProjectGroupImportResult,
   MemorySnapshot,
+  Tab,
   TabGroupLayoutNode,
   TerminalLayoutSnapshot,
   TerminalPaneLayoutNode,
   TerminalTab,
   TuiAgent,
   WorkspaceCreateTelemetrySource,
+  WorkspaceSessionState,
   DirEntry
 } from '../../shared/types'
 import type { RuntimeClientEvent } from '../../shared/runtime-client-events'
@@ -3168,20 +3170,38 @@ export class OrcaRuntimeService {
     if (!this.offscreenBrowserBackend || !this.agentBrowserBridge?.tabList) {
       return []
     }
-    return this.agentBrowserBridge.tabList(worktreeId).tabs.map((tab) => ({
-      type: 'browser' as const,
-      // Why: an offscreen page has no separate workspace identity, so the page id
-      // is its own workspace id (matches the server's browserWorkspaceId fallback).
-      id: tab.browserPageId,
-      title: tab.title || tab.url || 'Browser',
-      browserWorkspaceId: tab.browserPageId,
-      browserPageId: tab.browserPageId,
-      url: tab.url || 'about:blank',
-      loading: false,
-      canGoBack: false,
-      canGoForward: false,
-      isActive: tab.active === true
-    }))
+    return this.agentBrowserBridge.tabList(worktreeId).tabs.map((tab) => {
+      const persistedProps = this.getPersistedUnifiedSessionTabProps(worktreeId, tab.browserPageId)
+      return {
+        type: 'browser' as const,
+        // Why: an offscreen page has no separate workspace identity, so the page id
+        // is its own workspace id (matches the server's browserWorkspaceId fallback).
+        id: tab.browserPageId,
+        title: tab.title || tab.url || 'Browser',
+        browserWorkspaceId: tab.browserPageId,
+        browserPageId: tab.browserPageId,
+        url: tab.url || 'about:blank',
+        loading: false,
+        canGoBack: false,
+        canGoForward: false,
+        ...(persistedProps ? { color: persistedProps.color } : {}),
+        ...(persistedProps?.isPinned ? { isPinned: true } : {}),
+        isActive: tab.active === true
+      }
+    })
+  }
+
+  private getPersistedUnifiedSessionTabProps(
+    worktreeId: string,
+    tabId: string
+  ): Pick<Tab, 'color' | 'isPinned'> | null {
+    const tab =
+      this.store
+        ?.getWorkspaceSession?.()
+        ?.unifiedTabs?.[worktreeId]?.find(
+          (candidate) => candidate.id === tabId || candidate.entityId === tabId
+        ) ?? null
+    return tab ? { color: tab.color, isPinned: tab.isPinned } : null
   }
 
   private collectPersistedTerminalLeafIds(layout: TerminalLayoutSnapshot | undefined): string[] {
@@ -3991,12 +4011,12 @@ export class OrcaRuntimeService {
     const hostTabId = snapshot
       ? (this.resolveMobileSessionHostTabId(snapshot, args.tabId) ?? args.tabId)
       : args.tabId
-    this.persistHeadlessTerminalTabProps(worktreeId, hostTabId, args)
-    this.applyHeadlessTerminalTabPropsToSnapshot(worktreeId, hostTabId, args)
+    this.persistHeadlessSessionTabProps(worktreeId, hostTabId, args)
+    this.applyHeadlessSessionTabPropsToSnapshot(worktreeId, hostTabId, args)
     return { updated: true }
   }
 
-  private persistHeadlessTerminalTabProps(
+  private persistHeadlessSessionTabProps(
     worktreeId: string,
     tabId: string,
     props: { color?: string | null; isPinned?: boolean }
@@ -4006,12 +4026,11 @@ export class OrcaRuntimeService {
       return
     }
     const tabs = session.tabsByWorktree[worktreeId]
-    if (!tabs?.some((tab) => tab.id === tabId)) {
-      return
-    }
-    this.store.setWorkspaceSession({
-      ...session,
-      tabsByWorktree: {
+    const nextSession: WorkspaceSessionState = { ...session }
+    let changed = false
+    if (tabs?.some((tab) => tab.id === tabId)) {
+      changed = true
+      nextSession.tabsByWorktree = {
         ...session.tabsByWorktree,
         [worktreeId]: tabs.map((tab) =>
           tab.id === tabId
@@ -4023,10 +4042,32 @@ export class OrcaRuntimeService {
             : tab
         )
       }
-    })
+    }
+
+    const unifiedTabs = session.unifiedTabs?.[worktreeId]
+    if (unifiedTabs?.some((tab) => tab.id === tabId || tab.entityId === tabId)) {
+      changed = true
+      nextSession.unifiedTabs = {
+        ...session.unifiedTabs,
+        [worktreeId]: unifiedTabs.map((tab) =>
+          tab.id === tabId || tab.entityId === tabId
+            ? {
+                ...tab,
+                ...(props.color !== undefined ? { color: props.color } : {}),
+                ...(props.isPinned !== undefined ? { isPinned: props.isPinned } : {})
+              }
+            : tab
+        )
+      }
+    }
+
+    if (!changed) {
+      return
+    }
+    this.store.setWorkspaceSession(nextSession)
   }
 
-  private applyHeadlessTerminalTabPropsToSnapshot(
+  private applyHeadlessSessionTabPropsToSnapshot(
     worktreeId: string,
     tabId: string,
     props: { color?: string | null; isPinned?: boolean }
@@ -4035,12 +4076,9 @@ export class OrcaRuntimeService {
     if (!snapshot) {
       return
     }
-    // Why: only terminal tabs persist color/pin today (browser/editor are
-    // tracked in #5729). Applying to a browser surface here would show a
-    // transient that reverts on the next rebuild — apply only what we persist.
     let changed = false
     const tabs = snapshot.tabs.map((tab) => {
-      if (tab.type !== 'terminal' || tab.parentTabId !== tabId) {
+      if (this.getMobileSessionTopLevelTabId(tab) !== tabId) {
         return tab
       }
       changed = true
@@ -4061,6 +4099,10 @@ export class OrcaRuntimeService {
     }
     this.mobileSessionTabsByWorktree.set(worktreeId, nextSnapshot)
     this.emitMobileSessionTabsSnapshot(nextSnapshot)
+  }
+
+  private getMobileSessionTopLevelTabId(tab: RuntimeMobileSessionSnapshotTab): string {
+    return tab.type === 'terminal' ? tab.parentTabId : tab.id
   }
 
   // Merge the client's pane structure into the persisted tab layout. PTY
