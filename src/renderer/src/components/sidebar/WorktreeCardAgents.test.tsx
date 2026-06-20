@@ -193,6 +193,26 @@ describe('WorktreeCardAgents', () => {
     expect(markup).not.toContain('aria-expanded')
   }, 30_000)
 
+  it('uses quiet row UX when requested by the new card style', async () => {
+    mockAgentActivityDisplayMode = 'full'
+    mockAgents = [
+      mockAgent({
+        agentType: 'codex',
+        startedAt: 1000,
+        prompt: 'Run tests',
+        lastAssistantMessage: 'Inspecting changes'
+      })
+    ]
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    const markup = renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" useQuietAgentRows />)
+
+    expect(markup).toContain('compact-agent-row')
+    expect(markup).toContain('<span class="text-muted-foreground/90">Run tests</span>')
+    expect(markup).toContain('<span class="text-muted-foreground/65"> - Inspecting changes</span>')
+    expect(markup).not.toContain('data-testid="agent-row"')
+  })
+
   it('uses compact mode when the display preference is absent', async () => {
     mockAgents = [mockAgent({ agentType: 'codex', startedAt: 1000, prompt: 'Run tests' })]
     const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')

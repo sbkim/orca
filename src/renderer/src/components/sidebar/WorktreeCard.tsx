@@ -1596,6 +1596,7 @@ const WorktreeCard = React.memo(function WorktreeCard({
         {showInlineAgentList && (
           <WorktreeCardAgents
             worktreeId={worktree.id}
+            useQuietAgentRows={newCardStyle}
             className={hasMetaRow || remoteBranchConflict ? 'mt-0' : '-mt-1'}
           />
         )}

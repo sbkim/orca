@@ -42,6 +42,7 @@ function revealCompactAgentCard(agentListRoot: HTMLElement | null): void {
 
 type Props = {
   worktreeId: string
+  useQuietAgentRows?: boolean
   /** Controls spacing from the card body above. Passed in so the parent can
    *  decide whether a divider is appropriate — e.g. suppressed when the card
    *  chrome already provides visual separation. */
@@ -58,6 +59,7 @@ type Props = {
  */
 const WorktreeCardAgents = React.memo(function WorktreeCardAgents({
   worktreeId,
+  useQuietAgentRows = false,
   className
 }: Props) {
   const agents = useWorktreeAgentRows(worktreeId)
@@ -67,22 +69,35 @@ const WorktreeCardAgents = React.memo(function WorktreeCardAgents({
   // Why: gate the 30s tick behind non-empty rows by mounting the inner body
   // only when there's something to show. The setInterval lives in the inner
   // component's useNow, so idle worktrees don't pay per-card timer cost.
-  return <WorktreeCardAgentsBody worktreeId={worktreeId} agents={agents} className={className} />
+  return (
+    <WorktreeCardAgentsBody
+      worktreeId={worktreeId}
+      agents={agents}
+      useQuietAgentRows={useQuietAgentRows}
+      className={className}
+    />
+  )
 })
 
 type BodyProps = {
   worktreeId: string
   agents: DashboardAgentRowData[]
+  useQuietAgentRows: boolean
   className?: string
 }
 
 const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
   worktreeId,
   agents,
+  useQuietAgentRows,
   className
 }: BodyProps) {
-  const agentActivityDisplayMode =
+  const configuredAgentActivityDisplayMode =
     useAppStore((s) => s.agentActivityDisplayMode) ?? DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE
+  // Why: the new sidebar card is the future path and no longer exposes the
+  // legacy compact/full inline-agent choice; it always uses the quiet row UX.
+  const isCompactAgentDisplay =
+    useQuietAgentRows || configuredAgentActivityDisplayMode === 'compact'
   const dropAgentStatus = useAppStore((s) => s.dropAgentStatus)
   const dismissRetainedAgent = useAppStore((s) => s.dismissRetainedAgent)
   const agentSendPopoverTargetMode = useAppStore((s) => s.agentSendPopoverTargetMode)
@@ -230,7 +245,7 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
   const [compactRootListExpanded, setCompactRootListExpanded] = useState(false)
 
   useLayoutEffect(() => {
-    if (compactRootListExpanded && agentActivityDisplayMode === 'compact') {
+    if (compactRootListExpanded && isCompactAgentDisplay) {
       dispatchSuppressScrollAdjustment()
       // Why: defer the reveal scroll out of the expand commit. Running it inline
       // forces a synchronous sidebar layout that blocks the animation's opening
@@ -242,7 +257,7 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
       return () => cancelAnimationFrame(handle)
     }
     return undefined
-  }, [agentActivityDisplayMode, compactRootListExpanded])
+  }, [compactRootListExpanded, isCompactAgentDisplay])
   const toggleLineageParent = useCallback((paneKey: string) => {
     dispatchSuppressScrollAdjustment()
     setCollapsedLineageParents((current) => {
@@ -397,7 +412,7 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
     )
   }
 
-  if (agentActivityDisplayMode === 'compact') {
+  if (isCompactAgentDisplay) {
     const summaryAgents = hasLineage ? rootAgents : agents
     // Why: compact worktree cards keep multiple active agents to a single
     // predictable status line, even when there are only two agents. In

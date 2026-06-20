@@ -65,7 +65,12 @@ vi.mock('./CacheTimer', () => ({
 }))
 
 vi.mock('./WorktreeCardAgents', () => ({
-  default: () => null
+  default: ({ useQuietAgentRows }: { useQuietAgentRows?: boolean }) => (
+    <div
+      data-worktree-card-agents=""
+      data-use-quiet-agent-rows={useQuietAgentRows ? 'true' : 'false'}
+    />
+  )
 }))
 
 vi.mock('./SshDisconnectedDialog', () => ({
@@ -357,6 +362,18 @@ describe('WorktreeCard quick actions', () => {
     expect(markup).toContain('aria-label="Primary worktree"')
     expect(markup).not.toContain('>primary<')
     expect(markup).not.toContain('data-worktree-card-meta-row=""')
+  })
+
+  it('uses quiet inline agent rows for the new card style', () => {
+    worktreeCardProperties = ['inline-agents']
+    settings = { experimentalNewWorktreeCardStyle: true }
+
+    const markup = renderToStaticMarkup(
+      <WorktreeCard worktree={makeWorktree()} repo={makeRepo()} isActive={false} />
+    )
+
+    expect(markup).toContain('data-worktree-card-agents=""')
+    expect(markup).toContain('data-use-quiet-agent-rows="true"')
   })
 
   it('renders a hover-revealed delete action for deletable workspaces', () => {
