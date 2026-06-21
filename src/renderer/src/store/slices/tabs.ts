@@ -1419,7 +1419,7 @@ export const createTabsSlice: StateCreator<AppState, [], [], TabsSlice> = (set, 
                 activeGroupIdByWorktree: nextActiveGroupIdByWorktreeResolved
               },
               worktreeId,
-              targetGroupId
+              nextActiveGroupIdByWorktreeResolved[worktreeId] ?? null
             )
           : {})
       }

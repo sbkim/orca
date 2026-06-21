@@ -30,9 +30,18 @@ export type ActivePaneColumnSplitTarget = (PaneColumnSplitTarget | TabPaneColumn
   panelRect?: DOMRect
 }
 
+function escapeCssAttrValue(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value)
+  }
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
 function getTabGroupBodyElement(groupId: string, worktreeId: string): HTMLElement | null {
+  const escapedGroupId = escapeCssAttrValue(groupId)
+  const escapedWorktreeId = escapeCssAttrValue(worktreeId)
   return document.querySelector<HTMLElement>(
-    `[data-tab-group-body-id="${groupId}"][data-worktree-id="${worktreeId}"]`
+    `[data-tab-group-body-id="${escapedGroupId}"][data-worktree-id="${escapedWorktreeId}"]`
   )
 }
 
@@ -47,8 +56,9 @@ export function getTabGroupBodyRect(groupId: string, worktreeId: string): DOMRec
 export function captureTabGroupPanelGeometrySnapshot(
   worktreeId: string
 ): TabGroupPanelGeometrySnapshot {
+  const escapedWorktreeId = escapeCssAttrValue(worktreeId)
   const bodies = document.querySelectorAll<HTMLElement>(
-    `[data-tab-group-body-id][data-worktree-id="${worktreeId}"]`
+    `[data-tab-group-body-id][data-worktree-id="${escapedWorktreeId}"]`
   )
   const entries: TabGroupPanelGeometryEntry[] = []
   for (const body of bodies) {
@@ -94,8 +104,9 @@ export function findTabGroupPanelUnderPointer(
   }
 
   const getPanelRect = options.getPanelRect ?? getTabGroupPanelRect
+  const escapedWorktreeId = escapeCssAttrValue(worktreeId)
   const bodies = document.querySelectorAll<HTMLElement>(
-    `[data-tab-group-body-id][data-worktree-id="${worktreeId}"]`
+    `[data-tab-group-body-id][data-worktree-id="${escapedWorktreeId}"]`
   )
   for (const body of bodies) {
     const groupId = body.dataset.tabGroupBodyId

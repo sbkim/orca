@@ -65,10 +65,12 @@ describe('SortableTabContextMenu', () => {
       SortableTabContextMenu({
         tab: {
           id: 'term-1',
+          ptyId: null,
+          worktreeId: 'wt-1',
           title: 'bash',
           customTitle: null,
-          type: 'terminal',
-          worktreeId: 'wt-1',
+          color: null,
+          sortOrder: 0,
           createdAt: 0
         },
         unifiedTabId: 'term-1',
@@ -84,7 +86,7 @@ describe('SortableTabContextMenu', () => {
         onClose: vi.fn(),
         onCloseOthers: vi.fn(),
         onCloseToRight: vi.fn(),
-        onSetCustomTitle: vi.fn(),
+        onRenameOpen: vi.fn(),
         onSetTabColor: vi.fn(),
         onTogglePin: vi.fn()
       })

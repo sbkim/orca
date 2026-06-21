@@ -219,6 +219,12 @@
   pointer-events: none;
 }
 
+.tab-drop-overlay__label {
+  font-size: 11px;
+  color: var(--primary-foreground);
+  background: color-mix(in srgb, var(--chart-2) 20%, transparent);
+}
+
 /* ── Pane title bar ──────────────────────────────────── */
 
 :root {

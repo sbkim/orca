@@ -128,9 +128,6 @@ export function restoreTabDragActivationSnapshot(
     )
     const focusUnchanged =
       (state.activeGroupIdByWorktree[worktreeId] ?? null) === snapshot.activeGroupId
-    if (groupsUnchanged && focusUnchanged) {
-      return {}
-    }
 
     const next: Partial<AppState> = {}
     if (!groupsUnchanged) {
@@ -154,6 +151,20 @@ export function restoreTabDragActivationSnapshot(
         }
       }
     }
+
+    const restoredGroupId = snapshot.activeGroupId
+    if (restoredGroupId) {
+      const restoredTabId = snapshot.activeTabIdByGroup[restoredGroupId] ?? null
+      Object.assign(
+        next,
+        previewActiveSurfacePatch(state, worktreeId, restoredGroupId, restoredTabId)
+      )
+    }
+
+    if (Object.keys(next).length === 0) {
+      return {}
+    }
+
     return next
   })
 }
