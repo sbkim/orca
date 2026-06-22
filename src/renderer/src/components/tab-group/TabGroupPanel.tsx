@@ -288,41 +288,47 @@ export default function TabGroupPanel({
                 <TabBarQuickCommandsButton worktreeId={worktreeId} groupId={groupId} />
               ) : null}
               {isFocused && hasSplitGroups ? (
-                <DropdownMenu modal={false}>
-                  <DropdownMenuTrigger asChild>
-                    <button
-                      type="button"
-                      aria-label={translate(
-                        'auto.components.tab.group.TabGroupPanel.9acaf92093',
-                        'Pane Actions'
-                      )}
-                      title={translate(
-                        'auto.components.tab.group.TabGroupPanel.9acaf92093',
-                        'Pane Actions'
-                      )}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                      }}
-                      className={menuButtonClassName}
-                    >
-                      <Ellipsis className="size-4" />
-                    </button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
-                    <DropdownMenuItem
-                      variant="destructive"
-                      onSelect={() => {
-                        commands.closeGroup()
-                      }}
-                    >
-                      <X className="size-4" />
-                      {translate(
-                        'auto.components.tab.group.TabGroupPanel.closePaneColumn',
-                        'Close pane column'
-                      )}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <Tooltip>
+                  <DropdownMenu modal={false}>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          type="button"
+                          aria-label={translate(
+                            'auto.components.tab.group.TabGroupPanel.9acaf92093',
+                            'Pane Actions'
+                          )}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                          }}
+                          className={menuButtonClassName}
+                        >
+                          <Ellipsis className="size-4" />
+                        </button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <DropdownMenuContent align="end" side="bottom" sideOffset={4}>
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onSelect={() => {
+                          commands.closeGroup()
+                        }}
+                      >
+                        <X className="size-4" />
+                        {translate(
+                          'auto.components.tab.group.TabGroupPanel.closePaneColumn',
+                          'Close pane column'
+                        )}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <TooltipContent side="bottom" sideOffset={6}>
+                    {translate(
+                      'auto.components.tab.group.TabGroupPanel.9acaf92093',
+                      'Pane Actions'
+                    )}
+                  </TooltipContent>
+                </Tooltip>
               ) : null}
             </div>
           </div>

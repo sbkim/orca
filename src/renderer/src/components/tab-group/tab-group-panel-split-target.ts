@@ -152,6 +152,17 @@ export function resolvePanelEdgePaneColumnSplit({
   if (!panelRect) {
     return null
   }
+  // Why: dnd-kit can keep a closest-center `over` target after the pointer
+  // leaves the pane; edge splits must only resolve inside the actual panel.
+  if (
+    pointer.x < panelRect.left ||
+    pointer.x > panelRect.left + panelRect.width ||
+    pointer.y < panelRect.top ||
+    pointer.y > panelRect.top + panelRect.height
+  ) {
+    return null
+  }
+
   const bodyRect = providedBodyRect ?? getTabGroupBodyRect(targetGroupId, worktreeId)
 
   const zone = resolvePaneColumnEdgeZone(panelRect, pointer, {
@@ -218,11 +229,13 @@ export function resolveActivePaneColumnSplitTarget({
   }
 
   const overData = event.over?.data.current
+  const panelHit = findTabGroupPanelUnderPointer(worktreeId, pointer, { geometry })
 
   if (isTabDragData(overData)) {
     const tabSplit = resolveTabPaneColumnSplitOverTab(event, isTabDragData, () => pointer)
     if (
       tabSplit &&
+      panelHit?.groupId === tabSplit.groupId &&
       canDropTabForPaneColumnSplit({
         activeDrag: activeData,
         groupsByWorktree,
@@ -238,11 +251,12 @@ export function resolveActivePaneColumnSplitTarget({
     // Why: cross-pane tab-strip drags target insertion slots. Body-edge splits
     // stay on the pane content area, not the tab row.
     if (activeData.groupId !== overData.groupId) {
-      return null
+      if (!panelHit || pointer.y < panelHit.panelRect.top + TAB_GROUP_TAB_STRIP_HEIGHT_PX) {
+        return null
+      }
     }
   }
 
-  const panelHit = findTabGroupPanelUnderPointer(worktreeId, pointer, { geometry })
   const targetGroupId =
     panelHit?.groupId ??
     (isTabDragData(overData) ? overData.groupId : null) ??

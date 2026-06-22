@@ -29,7 +29,8 @@ export function splitTerminalPaneWithInheritedCwd(args: {
     return
   }
   const paneId = args.pane.id
-  const resolveManager = (): PaneManager | null => args.getManager?.() ?? args.manager
+  const resolveManager = (): PaneManager | null =>
+    args.getManager ? args.getManager() : args.manager
   void (async () => {
     const cwd = await resolveSplitCwd({
       paneCwdMap: args.paneCwdMap,

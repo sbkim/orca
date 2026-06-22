@@ -5,8 +5,17 @@ import { canMoveTabToNewPaneColumn, moveTabToNewPaneColumn } from './tab-move-to
 
 const WT = 'wt-1'
 
+const mocks = vi.hoisted(() => ({
+  mirrorWebRuntimeTabMove: vi.fn()
+}))
+
+vi.mock('./web-runtime-tab-move-mirror', () => ({
+  mirrorWebRuntimeTabMove: mocks.mirrorWebRuntimeTabMove
+}))
+
 describe('tab-move-to-pane-column', () => {
   beforeEach(() => {
+    mocks.mirrorWebRuntimeTabMove.mockReset()
     useAppStore.setState({
       activeWorktreeId: WT,
       groupsByWorktree: {
@@ -88,5 +97,22 @@ describe('tab-move-to-pane-column', () => {
       groupId: 'group-1',
       splitDirection: 'right'
     })
+    expect(mocks.mirrorWebRuntimeTabMove).toHaveBeenCalledWith({
+      kind: 'split',
+      worktreeId: WT,
+      tabId: 'tab-b',
+      targetGroupId: 'group-1',
+      splitDirection: 'right'
+    })
+  })
+
+  it('does not mirror when the local store rejects the move', () => {
+    const dropUnifiedTab = vi.fn(() => false)
+    useAppStore.setState({ dropUnifiedTab } as Partial<ReturnType<typeof useAppStore.getState>>)
+
+    expect(
+      moveTabToNewPaneColumn({ unifiedTabId: 'tab-b', groupId: 'group-1', direction: 'right' })
+    ).toBe(false)
+    expect(mocks.mirrorWebRuntimeTabMove).not.toHaveBeenCalled()
   })
 })

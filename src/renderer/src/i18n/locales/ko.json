@@ -2432,8 +2432,8 @@
             "1bce81dba6": "시뮬레이터",
             "1ff1c77616": "브라우저",
             "586d2ac445": "terminal",
-            "addSplitPane": "Add split pane",
-            "closePaneColumn": "Close pane column"
+            "addSplitPane": "분할 창 추가",
+            "closePaneColumn": "창 열 닫기"
           },
           "AiVaultSessionDropLayer": {
             "dropOntoTerminalPane": "이 세션을 재개하려면 terminal 창에 놓으세요.",
@@ -2443,7 +2443,7 @@
             "sessionQueued": "세션이 대기열에 추가됨"
           },
           "TabGroupDropOverlay": {
-            "paneColumnLabel": "New pane column"
+            "paneColumnLabel": "새 창 열"
           }
         },
         "bar": {
@@ -2515,9 +2515,9 @@
             "20baa43c05": "없음",
             "60f958ec75": "탭 고정",
             "417722e9c2": "탭 고정 해제",
-            "thisTerminalTab": "This terminal tab",
-            "splitTerminalRight": "Split terminal right",
-            "splitTerminalDown": "Split terminal down"
+            "thisTerminalTab": "이 터미널 탭",
+            "splitTerminalRight": "터미널을 오른쪽으로 분할",
+            "splitTerminalDown": "터미널을 아래로 분할"
           },
           "TabBar": {
             "b1a132357f": "새 탭",
@@ -2611,12 +2611,12 @@
             }
           },
           "TabWorkspaceLayoutMenuSection": {
-            "right": "Right",
-            "left": "Left",
-            "down": "Down",
-            "up": "Up",
-            "workspaceLayout": "Workspace layout",
-            "moveToPaneColumn": "Move Tab to Split"
+            "right": "오른쪽",
+            "left": "왼쪽",
+            "down": "아래",
+            "up": "위",
+            "workspaceLayout": "작업 공간 레이아웃",
+            "moveToPaneColumn": "탭을 분할로 이동"
           }
         }
       },
@@ -9122,15 +9122,15 @@
             "monthsAgo": "{{value0}}개월 전",
             "yearsAgo": "{{value0}}년 전",
             "sessionId": "세션 ID",
-            "originalAsk": "Original ask",
-            "latestTurns": "Latest turns",
-            "noPreviewAvailable": "No conversation preview available",
-            "messageCount": "{{value0}} msgs",
-            "userRole": "You",
-            "agentRole": "Agent",
-            "toolRole": "Tool",
-            "systemRole": "System",
-            "sessionRole": "Session"
+            "originalAsk": "원래 요청",
+            "latestTurns": "최근 대화",
+            "noPreviewAvailable": "대화 미리보기를 사용할 수 없습니다",
+            "messageCount": "메시지 {{value0}}개",
+            "userRole": "나",
+            "agentRole": "에이전트",
+            "toolRole": "도구",
+            "systemRole": "시스템",
+            "sessionRole": "세션"
           },
           "AiVaultSessionRow": {
             "resumeAgentSession": "{{value0}} 세션 재개",
@@ -9148,13 +9148,13 @@
             "showDetails": "세부정보 표시",
             "moreSessionActions": "세션 추가 작업",
             "moreActions": "추가 작업",
-            "noPreviewAvailable": "No conversation preview available",
-            "dragToResume": "Drag to resume in a new tab",
-            "userRole": "You",
-            "agentRole": "Agent",
-            "toolRole": "Tool",
-            "systemRole": "System",
-            "sessionRole": "Session"
+            "noPreviewAvailable": "대화 미리보기를 사용할 수 없습니다",
+            "dragToResume": "새 탭에서 재개하려면 드래그",
+            "userRole": "나",
+            "agentRole": "에이전트",
+            "toolRole": "도구",
+            "systemRole": "시스템",
+            "sessionRole": "세션"
           },
           "FileExplorerNameFilter": {
             "26fb73c6e3": "파일 찾기",

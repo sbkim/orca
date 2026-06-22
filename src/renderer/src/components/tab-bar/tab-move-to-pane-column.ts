@@ -1,5 +1,6 @@
 import { useAppStore } from '../../store'
 import type { TabSplitDirection } from '../../store/slices/tabs'
+import { mirrorWebRuntimeTabMove } from './web-runtime-tab-move-mirror'
 
 type TabMovePaneColumnState = Pick<
   ReturnType<typeof useAppStore.getState>,
@@ -38,11 +39,27 @@ export function moveTabToNewPaneColumn(args: {
   groupId: string
   direction: TabSplitDirection
 }): boolean {
-  if (!canMoveTabToNewPaneColumn(args.unifiedTabId, args.groupId)) {
+  const state = useAppStore.getState()
+  const worktreeId = Object.entries(state.unifiedTabsByWorktree).find(([, tabs]) =>
+    tabs.some(
+      (candidate) => candidate.id === args.unifiedTabId && candidate.groupId === args.groupId
+    )
+  )?.[0]
+  if (!worktreeId || !canMoveTabToNewPaneColumnFromState(state, args.unifiedTabId, args.groupId)) {
     return false
   }
-  return useAppStore.getState().dropUnifiedTab(args.unifiedTabId, {
+  const moved = state.dropUnifiedTab(args.unifiedTabId, {
     groupId: args.groupId,
     splitDirection: args.direction
   })
+  if (moved) {
+    mirrorWebRuntimeTabMove({
+      kind: 'split',
+      worktreeId,
+      tabId: args.unifiedTabId,
+      targetGroupId: args.groupId,
+      splitDirection: args.direction
+    })
+  }
+  return moved
 }

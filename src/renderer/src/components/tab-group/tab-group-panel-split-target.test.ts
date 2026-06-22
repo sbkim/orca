@@ -326,6 +326,20 @@ describe('resolvePanelEdgePaneColumnSplit', () => {
       })
     ).toBeNull()
   })
+
+  it('rejects stale panel targets when the pointer has left the panel bounds', () => {
+    expect(
+      resolvePanelEdgePaneColumnSplit({
+        activeDrag: makeDragData({ groupId: 'group-1' }),
+        targetGroupId: 'group-2',
+        worktreeId: 'wt-1',
+        pointer: { x: 499, y: 300 },
+        groupsByWorktree: twoGroupLayout,
+        layoutByWorktree,
+        panelRect
+      })
+    ).toBeNull()
+  })
 })
 
 describe('resolveActivePaneColumnSplitTarget', () => {
@@ -391,6 +405,58 @@ describe('resolveActivePaneColumnSplitTarget', () => {
     ).toBeNull()
   })
 
+  it('resolves body-edge splits when a stale cross-group tab hover remains active', () => {
+    expect(
+      resolveActivePaneColumnSplitTarget({
+        event: makeEvent({
+          activeData: makeDragData({ groupId: 'group-1' }),
+          overData: makeDragData({
+            groupId: 'group-2',
+            unifiedTabId: 'tab-2',
+            visibleTabId: 'tab-2'
+          }),
+          pointer: { x: 880, y: 300 }
+        }),
+        groupsByWorktree: twoGroupLayout,
+        layoutByWorktree,
+        worktreeId: 'wt-1',
+        getDragPointer: () => ({ x: 880, y: 300 })
+      })
+    ).toEqual(expect.objectContaining({ groupId: 'group-2', zone: 'right' }))
+  })
+
+  it('ignores stale over targets after the pointer leaves the cached panel', () => {
+    const geometry = {
+      entries: [
+        {
+          groupId: 'group-2',
+          panelRect,
+          bodyRect
+        }
+      ],
+      byGroupId: new Map([['group-2', { groupId: 'group-2', panelRect, bodyRect }]])
+    }
+
+    expect(
+      resolveActivePaneColumnSplitTarget({
+        event: makeEvent({
+          activeData: makeDragData({ groupId: 'group-1' }),
+          overData: makeDragData({
+            groupId: 'group-2',
+            unifiedTabId: 'tab-2',
+            visibleTabId: 'tab-2'
+          }),
+          pointer: { x: 499, y: 300 }
+        }),
+        groupsByWorktree: twoGroupLayout,
+        layoutByWorktree,
+        worktreeId: 'wt-1',
+        getDragPointer: () => ({ x: 499, y: 300 }),
+        geometry
+      })
+    ).toBeNull()
+  })
+
   it('attaches cached panel bounds to same-group tab-strip pane split targets', () => {
     const panelRect = rect({ left: 500, top: 0, width: 400, height: 600 })
     mockTabGroupGeometry([
@@ -436,6 +502,53 @@ describe('resolveActivePaneColumnSplitTarget', () => {
         geometry
       })
     ).toEqual(expect.objectContaining({ groupId: 'group-1', zone: 'right', panelRect }))
+  })
+
+  it('ignores stale same-group tab split targets after the pointer leaves the panel', () => {
+    const panelRect = rect({ left: 500, top: 0, width: 400, height: 600 })
+    mockTabGroupGeometry([
+      {
+        groupId: 'group-1',
+        panelRect,
+        bodyRect: rect({
+          left: 500,
+          top: TAB_GROUP_TAB_STRIP_HEIGHT_PX,
+          width: 400,
+          height: 600 - TAB_GROUP_TAB_STRIP_HEIGHT_PX
+        })
+      }
+    ])
+    const geometry = captureTabGroupPanelGeometrySnapshot('wt-1')
+
+    expect(
+      resolveActivePaneColumnSplitTarget({
+        event: makeEvent({
+          activeData: makeDragData({ groupId: 'group-1', unifiedTabId: 'tab-1' }),
+          overData: makeDragData({
+            groupId: 'group-1',
+            unifiedTabId: 'tab-2',
+            visibleTabId: 'tab-2'
+          }),
+          pointer: { x: 560, y: 601 }
+        }),
+        groupsByWorktree: {
+          'wt-1': [
+            {
+              id: 'group-1',
+              worktreeId: 'wt-1',
+              activeTabId: 'tab-1',
+              tabOrder: ['tab-1', 'tab-2']
+            }
+          ]
+        },
+        layoutByWorktree: {
+          'wt-1': { type: 'leaf', groupId: 'group-1' }
+        },
+        worktreeId: 'wt-1',
+        getDragPointer: () => ({ x: 560, y: 601 }),
+        geometry
+      })
+    ).toBeNull()
   })
 
   it('reuses one geometry snapshot across drag frames instead of measuring layout per move', () => {

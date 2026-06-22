@@ -322,6 +322,7 @@ export function useTerminalPaneContextMenu({
       }
       splitTerminalPaneWithInheritedCwd({
         manager,
+        getManager: () => managerRef.current,
         paneTransports: paneTransportsRef.current,
         paneCwdMap: paneCwdRef.current,
         fallbackCwd,

@@ -1,5 +1,5 @@
 import type { CSSProperties, RefObject } from 'react'
-import { X } from 'lucide-react'
+import { SquareSplitVertical, X } from 'lucide-react'
 import type { ManagedPane, PaneManager } from '@/lib/pane-manager/pane-manager'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -7,7 +7,6 @@ import { translate } from '@/i18n/i18n'
 import { WORKSPACE_FILE_PATH_MIME, WORKSPACE_FILE_PATHS_MIME } from '@/lib/workspace-file-drag'
 import type { PtyTransport } from './pty-transport'
 import { handleInternalTerminalFileDrop } from './terminal-drop-handler'
-import { TerminalPaneSplitIcon } from './terminal-pane-split-icon'
 
 export type PaneTitleOverlayRect = {
   left: number
@@ -224,7 +223,7 @@ export default function TerminalPaneHeaderOverlay({
                             onSplitPane(pane, 'vertical')
                           }}
                         >
-                          <TerminalPaneSplitIcon className="size-3" />
+                          <SquareSplitVertical className="size-3" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent side="bottom" sideOffset={4}>
@@ -232,34 +231,7 @@ export default function TerminalPaneHeaderOverlay({
                       </TooltipContent>
                     </Tooltip>
                   ) : null}
-                  {paneCount > 1 && showAlwaysOnHeaders ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon-xs"
-                          className="pane-title-close"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            onClosePane(pane.id)
-                          }}
-                          aria-label={translate(
-                            'auto.components.terminal.pane.TerminalContextMenu.8c17d6786d',
-                            'Close Pane'
-                          )}
-                        >
-                          <X className="size-3" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="bottom" sideOffset={4}>
-                        {translate(
-                          'auto.components.terminal.pane.TerminalContextMenu.8c17d6786d',
-                          'Close Pane'
-                        )}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : title && !showAlwaysOnHeaders ? (
+                  {title ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -284,6 +256,33 @@ export default function TerminalPaneHeaderOverlay({
                         {translate(
                           'auto.components.terminal.pane.TerminalPane.ac112e9036',
                           'Remove title'
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : paneCount > 1 && showAlwaysOnHeaders ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="pane-title-close"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            onClosePane(pane.id)
+                          }}
+                          aria-label={translate(
+                            'auto.components.terminal.pane.TerminalContextMenu.8c17d6786d',
+                            'Close Pane'
+                          )}
+                        >
+                          <X className="size-3" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={4}>
+                        {translate(
+                          'auto.components.terminal.pane.TerminalContextMenu.8c17d6786d',
+                          'Close Pane'
                         )}
                       </TooltipContent>
                     </Tooltip>

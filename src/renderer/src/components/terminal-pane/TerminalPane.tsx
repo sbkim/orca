@@ -2313,6 +2313,7 @@ export default function TerminalPane({
       }
       splitTerminalPaneWithInheritedCwd({
         manager,
+        getManager: () => managerRef.current,
         paneTransports: paneTransportsRef.current,
         paneCwdMap: paneCwdRef.current,
         fallbackCwd: cwd ?? '',

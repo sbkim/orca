@@ -2432,8 +2432,8 @@
             "1bce81dba6": "simulador",
             "1ff1c77616": "navegador",
             "586d2ac445": "terminal",
-            "addSplitPane": "Add split pane",
-            "closePaneColumn": "Close pane column"
+            "addSplitPane": "Agregar panel dividido",
+            "closePaneColumn": "Cerrar columna de panel"
           },
           "AiVaultSessionDropLayer": {
             "dropOntoTerminalPane": "Drop onto a terminal pane to resume this session.",
@@ -2443,7 +2443,7 @@
             "sessionQueued": "Session queued"
           },
           "TabGroupDropOverlay": {
-            "paneColumnLabel": "New pane column"
+            "paneColumnLabel": "Nueva columna de panel"
           }
         },
         "bar": {
@@ -2515,9 +2515,9 @@
             "20baa43c05": "Ninguno",
             "60f958ec75": "Pestaña Fijar",
             "417722e9c2": "Desanclar pestaña",
-            "thisTerminalTab": "This terminal tab",
-            "splitTerminalRight": "Split terminal right",
-            "splitTerminalDown": "Split terminal down"
+            "thisTerminalTab": "Esta pestaña de terminal",
+            "splitTerminalRight": "Dividir terminal a la derecha",
+            "splitTerminalDown": "Dividir terminal hacia abajo"
           },
           "TabBar": {
             "b1a132357f": "Nueva pestaña",
@@ -2611,12 +2611,12 @@
             }
           },
           "TabWorkspaceLayoutMenuSection": {
-            "right": "Right",
-            "left": "Left",
-            "down": "Down",
-            "up": "Up",
-            "workspaceLayout": "Workspace layout",
-            "moveToPaneColumn": "Move Tab to Split"
+            "right": "Derecha",
+            "left": "Izquierda",
+            "down": "Abajo",
+            "up": "Arriba",
+            "workspaceLayout": "Diseño del espacio de trabajo",
+            "moveToPaneColumn": "Mover pestaña a división"
           }
         }
       },
@@ -9122,15 +9122,15 @@
             "monthsAgo": "{{value0}}mo ago",
             "yearsAgo": "{{value0}}y ago",
             "sessionId": "ID de sesión",
-            "originalAsk": "Original ask",
-            "latestTurns": "Latest turns",
-            "noPreviewAvailable": "No conversation preview available",
-            "messageCount": "{{value0}} msgs",
-            "userRole": "You",
-            "agentRole": "Agent",
-            "toolRole": "Tool",
-            "systemRole": "System",
-            "sessionRole": "Session"
+            "originalAsk": "Solicitud original",
+            "latestTurns": "Últimos turnos",
+            "noPreviewAvailable": "No hay vista previa de conversación disponible",
+            "messageCount": "{{value0}} mensajes",
+            "userRole": "Tú",
+            "agentRole": "Agente",
+            "toolRole": "Herramienta",
+            "systemRole": "Sistema",
+            "sessionRole": "Sesión"
           },
           "AiVaultSessionRow": {
             "resumeAgentSession": "Resume {{value0}} session",
@@ -9148,13 +9148,13 @@
             "showDetails": "Mostrar detalles",
             "moreSessionActions": "Más acciones de sesión",
             "moreActions": "Más acciones",
-            "noPreviewAvailable": "No conversation preview available",
-            "dragToResume": "Drag to resume in a new tab",
-            "userRole": "You",
-            "agentRole": "Agent",
-            "toolRole": "Tool",
-            "systemRole": "System",
-            "sessionRole": "Session"
+            "noPreviewAvailable": "No hay vista previa de conversación disponible",
+            "dragToResume": "Arrastra para reanudar en una pestaña nueva",
+            "userRole": "Tú",
+            "agentRole": "Agente",
+            "toolRole": "Herramienta",
+            "systemRole": "Sistema",
+            "sessionRole": "Sesión"
           },
           "FileExplorerNameFilter": {
             "26fb73c6e3": "Buscar archivos",

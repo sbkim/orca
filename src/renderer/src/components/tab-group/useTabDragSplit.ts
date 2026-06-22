@@ -16,20 +16,15 @@ import {
   useSensors
 } from '@dnd-kit/core'
 import type { TabGroup, TuiAgent } from '../../../../shared/types'
-import type { RuntimeMobileSessionTabMove } from '../../../../shared/runtime-types'
 import { useAppStore } from '../../store'
-import {
-  isWebRuntimeSessionActive,
-  moveWebRuntimeSessionTab
-} from '../../runtime/web-runtime-session'
 import type { TabSplitDirection } from '../../store/slices/tabs'
+import { mirrorWebRuntimeTabMove } from '../tab-bar/web-runtime-tab-move-mirror'
 import {
   resolveTabInsertion,
   useHoveredTabInsertion,
   type HoveredTabInsertion
 } from './tab-insertion'
 import { acquireWebviewsDragPassthrough } from '../browser-pane/webview-registry'
-import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import {
   applyDragPreviewTab,
   captureTabDragActivationSnapshot,
@@ -81,21 +76,6 @@ export type HoveredTabDropTarget = {
   groupId: string
   zone: TabDropZone
   panelRect?: DOMRect
-}
-
-function mirrorWebRuntimeTabMove(
-  args: RuntimeMobileSessionTabMove & {
-    worktreeId: string
-  }
-): void {
-  const environmentId = getRuntimeEnvironmentIdForWorktree(useAppStore.getState(), args.worktreeId)
-  if (!isWebRuntimeSessionActive(environmentId)) {
-    return
-  }
-  void moveWebRuntimeSessionTab({
-    ...args,
-    environmentId
-  })
 }
 
 export function canDropTabIntoPaneBody({
@@ -400,7 +380,7 @@ export function useTabDragSplit({
       const overData = event.over?.data.current
       let shouldRestorePreDragActivation = true
 
-      if (!event.over || !isTabDragData(activeData) || activeData.worktreeId !== worktreeId) {
+      if (!isTabDragData(activeData) || activeData.worktreeId !== worktreeId) {
         finishDrag(true)
         return
       }
@@ -437,6 +417,11 @@ export function useTabDragSplit({
             shouldRestorePreDragActivation
           )
         )
+        return
+      }
+
+      if (!event.over) {
+        finishDrag(true)
         return
       }
 
