@@ -1432,7 +1432,7 @@ function GHStatusCell({
                 localState === 'open' && 'bg-accent/50'
               )}
             >
-              <CircleDot className="size-4 text-emerald-500" />
+              <CircleDot className="size-4 text-muted-foreground" />
               {translate('auto.components.TaskPage.606a85c774', 'Open')}
             </button>
             <button

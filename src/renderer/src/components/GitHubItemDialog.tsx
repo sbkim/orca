@@ -5206,7 +5206,7 @@ function GHEditSection({
                   localState === 'open' && 'bg-accent/50'
                 )}
               >
-                <CircleDot className="size-4 text-emerald-500" />
+                <CircleDot className="size-4 text-muted-foreground" />
                 {translate('auto.components.GitHubItemDialog.dc1ca081a8', 'Open')}
               </button>
               <button
