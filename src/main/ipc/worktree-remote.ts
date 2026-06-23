@@ -57,6 +57,7 @@ import type { SshGitProvider } from '../providers/ssh-git-provider'
 import { TUI_AGENT_CONFIG, isTuiAgent } from '../../shared/tui-agent-config'
 import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path'
 import { getSshGitUsername } from '../git/git-username'
+import { runWorktreeChangeInvalidators } from './worktree-change-invalidators'
 
 type CreateWorktreeArgsWithSystemProvenance = CreateWorktreeArgs & {
   automationProvenance?: AutomationWorkspaceProvenance
@@ -1346,6 +1347,9 @@ async function getRemoteLocalBaseRefUpdateSuggestionForWorktreeCreate(
 }
 
 export function notifyWorktreesChanged(mainWindow: BrowserWindow, repoId: string): void {
+  // Why: invalidate detected-worktree caches before renderer observers react,
+  // so follow-up listDetected reads post-change state.
+  runWorktreeChangeInvalidators(repoId)
   broadcastToMainWindows('worktrees:changed', { repoId })
   if (getMainWindows().length === 0 && !mainWindow.isDestroyed()) {
     sendToWindow(mainWindow, 'worktrees:changed', { repoId })

@@ -48,6 +48,7 @@ import {
   getMainWindowForWebContents,
   sendToWindow
 } from './main-window-registry'
+import { runWorktreeChangeInvalidators } from '../ipc/worktree-change-invalidators'
 
 let onBeforeAppRendererReload:
   | ((args: { webContentsId: number; ignoreCache: boolean }) => void)
@@ -335,8 +336,12 @@ function registerRuntimeWindowLifecycle(
   const broadcast = (channel: string, ...args: unknown[]): void =>
     broadcastToMainWindows(channel, ...args)
   runtime.setNotifier({
-    worktreesChanged: (repoId, renamed) =>
-      broadcast('worktrees:changed', renamed ? { repoId, renamed } : { repoId }),
+    worktreesChanged: (repoId, renamed) => {
+      // Why: clear detected-worktree scan caches before renderer listeners
+      // handle this event, preventing stale TTL reads after mutations.
+      runWorktreeChangeInvalidators(repoId)
+      broadcast('worktrees:changed', renamed ? { repoId, renamed } : { repoId })
+    },
     worktreeBaseStatus: (event) => broadcast('worktree:baseStatus', event),
     worktreeRemoteBranchConflict: (event) => broadcast('worktree:remoteBranchConflict', event),
     reposChanged: () => broadcast('repos:changed'),

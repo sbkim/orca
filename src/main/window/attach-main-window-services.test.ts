@@ -28,7 +28,8 @@ const {
   getFocusedOrLastActiveMainWindowMock,
   getMainWindowByIdMock,
   sendToWindowMock,
-  broadcastToMainWindowsMock
+  broadcastToMainWindowsMock,
+  runWorktreeChangeInvalidatorsMock
 } = vi.hoisted(() => ({
   onMock: vi.fn(),
   removeAllListenersMock: vi.fn(),
@@ -55,7 +56,8 @@ const {
   getFocusedOrLastActiveMainWindowMock: vi.fn(),
   getMainWindowByIdMock: vi.fn(),
   sendToWindowMock: vi.fn(),
-  broadcastToMainWindowsMock: vi.fn()
+  broadcastToMainWindowsMock: vi.fn(),
+  runWorktreeChangeInvalidatorsMock: vi.fn()
 }))
 
 vi.mock('electron', () => ({
@@ -87,6 +89,10 @@ vi.mock('../ipc/repos', () => ({
 
 vi.mock('../ipc/worktrees', () => ({
   registerWorktreeHandlers: registerWorktreeHandlersMock
+}))
+
+vi.mock('../ipc/worktree-change-invalidators', () => ({
+  runWorktreeChangeInvalidators: runWorktreeChangeInvalidatorsMock
 }))
 
 vi.mock('../ipc/pty', () => ({
@@ -931,6 +937,10 @@ describe('attachMainWindowServices', () => {
       ['worktrees:changed', { repoId: 'repo-1' }],
       ['repos:changed']
     ])
+    expect(runWorktreeChangeInvalidatorsMock).toHaveBeenCalledWith('repo-1')
+    expect(runWorktreeChangeInvalidatorsMock.mock.invocationCallOrder[0]).toBeLessThan(
+      broadcastToMainWindowsMock.mock.invocationCallOrder[0]
+    )
     expect(sendToWindowMock.mock.calls).toEqual([
       [
         mainWindow,

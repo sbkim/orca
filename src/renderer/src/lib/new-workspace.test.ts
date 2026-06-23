@@ -1,61 +1,58 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   mockInspectRuntimeTerminalProcess,
   mockSendRuntimePtyInputVerified,
-  mockPasteDraftWhenAgentReady,
+  mockPasteDraftToAgentPtyWhenReady,
   mockTrack,
-  mockStoreSubscribers,
-  store
+  store,
+  storeListeners,
+  startupLeafId
 } = vi.hoisted(() => ({
   mockInspectRuntimeTerminalProcess: vi.fn(),
   mockSendRuntimePtyInputVerified: vi.fn(),
-  mockPasteDraftWhenAgentReady: vi.fn(),
+  mockPasteDraftToAgentPtyWhenReady: vi.fn(),
   mockTrack: vi.fn(),
-  mockStoreSubscribers: new Set<
-    (state: {
-      settings: Record<string, unknown>
-      activeTabIdByWorktree: Record<string, string>
-      tabsByWorktree: Record<string, { id: string }[]>
-      ptyIdsByTabId: Record<string, string[]>
-      terminalLayoutsByTabId: Record<
-        string,
-        { activeLeafId: string | null; ptyIdsByLeafId: Record<string, string> }
-      >
-      agentLaunchConfigByPaneKey: Record<
-        string,
-        {
-          launchConfig: {
-            agentCommand?: string
-            agentArgs: string
-            agentEnv: Record<string, string>
-          }
-          identity: { agentType?: string }
-        }
-      >
-    }) => void
-  >(),
+  storeListeners: new Set<(state: unknown, previousState: unknown) => void>(),
+  startupLeafId: '11111111-1111-4111-8111-111111111111',
   store: {
     settings: {},
     activeTabIdByWorktree: { 'wt-1': 'tab-1' } as Record<string, string>,
     tabsByWorktree: { 'wt-1': [{ id: 'tab-1' }] } as Record<string, { id: string }[]>,
     ptyIdsByTabId: { 'tab-1': ['pty-1'] } as Record<string, string[]>,
+    pendingStartupByTabId: {} as Record<string, { launchToken?: string }>,
     terminalLayoutsByTabId: {
       'tab-1': {
-        activeLeafId: '11111111-1111-4111-8111-111111111111',
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
         ptyIdsByLeafId: { '11111111-1111-4111-8111-111111111111': 'pty-1' }
-      }
-    } as Record<string, { activeLeafId: string | null; ptyIdsByLeafId: Record<string, string> }>,
-    agentLaunchConfigByPaneKey: {
-      'tab-1:11111111-1111-4111-8111-111111111111': {
-        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
-        identity: { agentType: 'codex' }
       }
     } as Record<
       string,
       {
-        launchConfig: { agentCommand?: string; agentArgs: string; agentEnv: Record<string, string> }
-        identity: { agentType?: string }
+        root: null
+        activeLeafId: null
+        expandedLeafId: null
+        ptyIdsByLeafId?: Record<string, string>
+      }
+    >,
+    agentLaunchConfigByPaneKey: {
+      'tab-1:11111111-1111-4111-8111-111111111111': {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: {
+          tabId: 'tab-1',
+          leafId: '11111111-1111-4111-8111-111111111111',
+          launchToken: 'launch-token-1'
+        }
+      }
+    } as Record<
+      string,
+      {
+        launchConfig: { agentCommand: string; agentArgs: string; agentEnv: Record<string, string> }
+        registeredAt: number
+        identity: { tabId?: string; leafId?: string; launchToken?: string }
       }
     >
   }
@@ -64,10 +61,10 @@ const {
 vi.mock('@/store', () => ({
   useAppStore: {
     getState: () => store,
-    subscribe: (listener: (state: typeof store) => void) => {
-      mockStoreSubscribers.add(listener)
+    subscribe: (listener: (state: unknown, previousState: unknown) => void) => {
+      storeListeners.add(listener)
       return () => {
-        mockStoreSubscribers.delete(listener)
+        storeListeners.delete(listener)
       }
     }
   }
@@ -79,7 +76,12 @@ vi.mock('@/runtime/runtime-terminal-inspection', () => ({
 }))
 
 vi.mock('@/lib/agent-paste-draft', () => ({
-  pasteDraftWhenAgentReady: mockPasteDraftWhenAgentReady
+  getSettingsForAgentTabRuntimeOwner: () => store.settings,
+  pasteDraftToAgentPtyWhenReady: mockPasteDraftToAgentPtyWhenReady
+}))
+
+vi.mock('@/lib/browser-uuid', () => ({
+  createBrowserUuid: () => 'launch-token-1'
 }))
 
 vi.mock('@/lib/telemetry', () => ({
@@ -92,6 +94,7 @@ import {
   getWorkspaceSeedName,
   isGitLabIssueUrl
 } from './new-workspace'
+import { resetAgentStartupDelayedDeliveryForTests } from './agent-startup-delayed-delivery'
 
 describe('getWorkspaceSeedName', () => {
   it('prefers an explicit name', () => {
@@ -218,50 +221,28 @@ describe('isGitLabIssueUrl', () => {
 })
 
 describe('ensureAgentStartupInTerminal prompt delivery', () => {
-  function seedLaunchRegistry(args: {
-    tabId?: string
-    leafId?: string
-    ptyId?: string
-    agentType?: string
-    agentCommand?: string
-    agentArgs?: string
-  }): void {
-    const tabId = args.tabId ?? 'tab-1'
-    const leafId = args.leafId ?? '11111111-1111-4111-8111-111111111111'
-    const ptyId = args.ptyId ?? 'pty-1'
-    const agentType = args.agentType ?? 'codex'
-    const agentCommand = args.agentCommand ?? agentType
-    const agentArgs = args.agentArgs ?? ''
-    store.terminalLayoutsByTabId = {
-      ...store.terminalLayoutsByTabId,
-      [tabId]: { activeLeafId: leafId, ptyIdsByLeafId: { [leafId]: ptyId } }
-    }
-    store.agentLaunchConfigByPaneKey = {
-      ...store.agentLaunchConfigByPaneKey,
-      [`${tabId}:${leafId}`]: {
-        launchConfig: { agentCommand, agentArgs, agentEnv: {} },
-        identity: { agentType }
-      }
-    }
-  }
-
   beforeEach(() => {
+    vi.useRealTimers()
     vi.clearAllMocks()
-    mockStoreSubscribers.clear()
+    storeListeners.clear()
     store.settings = {}
     store.activeTabIdByWorktree = { 'wt-1': 'tab-1' }
     store.tabsByWorktree = { 'wt-1': [{ id: 'tab-1' }] }
     store.ptyIdsByTabId = { 'tab-1': ['pty-1'] }
+    store.pendingStartupByTabId = {}
     store.terminalLayoutsByTabId = {
       'tab-1': {
-        activeLeafId: '11111111-1111-4111-8111-111111111111',
-        ptyIdsByLeafId: { '11111111-1111-4111-8111-111111111111': 'pty-1' }
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [startupLeafId]: 'pty-1' }
       }
     }
     store.agentLaunchConfigByPaneKey = {
-      'tab-1:11111111-1111-4111-8111-111111111111': {
+      [`tab-1:${startupLeafId}`]: {
         launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
-        identity: { agentType: 'codex' }
+        registeredAt: 1,
+        identity: { tabId: 'tab-1', leafId: startupLeafId, launchToken: 'launch-token-1' }
       }
     }
     mockInspectRuntimeTerminalProcess.mockResolvedValue({
@@ -269,11 +250,15 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
       hasChildProcesses: true
     })
     mockSendRuntimePtyInputVerified.mockResolvedValue(true)
-    mockPasteDraftWhenAgentReady.mockResolvedValue(true)
+    mockPasteDraftToAgentPtyWhenReady.mockResolvedValue(true)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    resetAgentStartupDelayedDeliveryForTests()
   })
 
   it('sends a follow-up prompt through the terminal runtime without renderer telemetry', async () => {
-    seedLaunchRegistry({ agentType: 'aider' })
     await ensureAgentStartupInTerminal({
       worktreeId: 'wt-1',
       startup: {
@@ -281,7 +266,7 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
         launchCommand: 'aider',
         expectedProcess: 'aider',
         followupPrompt: 'fix the spinner',
-        launchConfig: { agentCommand: 'aider', agentArgs: '', agentEnv: {} }
+        launchConfig: { agentArgs: '', agentEnv: {} }
       }
     })
 
@@ -290,7 +275,6 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
   })
 
   it('does not track when follow-up prompt delivery is rejected by the terminal runtime', async () => {
-    seedLaunchRegistry({ agentType: 'aider' })
     mockSendRuntimePtyInputVerified.mockResolvedValue(false)
 
     await ensureAgentStartupInTerminal({
@@ -300,7 +284,7 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
         launchCommand: 'aider',
         expectedProcess: 'aider',
         followupPrompt: 'fix the spinner',
-        launchConfig: { agentCommand: 'aider', agentArgs: '', agentEnv: {} }
+        launchConfig: { agentArgs: '', agentEnv: {} }
       }
     })
 
@@ -308,7 +292,6 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
   })
 
   it('does not track when follow-up prompt delivery rejects', async () => {
-    seedLaunchRegistry({ agentType: 'aider' })
     mockSendRuntimePtyInputVerified.mockRejectedValue(new Error('runtime timeout'))
 
     await expect(
@@ -319,7 +302,7 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
           launchCommand: 'aider',
           expectedProcess: 'aider',
           followupPrompt: 'fix the spinner',
-          launchConfig: { agentCommand: 'aider', agentArgs: '', agentEnv: {} }
+          launchConfig: { agentArgs: '', agentEnv: {} }
         }
       })
     ).resolves.toBeUndefined()
@@ -327,36 +310,7 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
     expect(mockTrack).not.toHaveBeenCalledWith('agent_prompt_sent', expect.anything())
   })
 
-  it('does not send a follow-up prompt before the agent owns the foreground process', async () => {
-    seedLaunchRegistry({ agentType: 'aider' })
-    vi.useFakeTimers()
-    try {
-      mockInspectRuntimeTerminalProcess.mockResolvedValue({
-        foregroundProcess: 'zsh',
-        hasChildProcesses: false
-      })
-      const delivery = ensureAgentStartupInTerminal({
-        worktreeId: 'wt-1',
-        startup: {
-          agent: 'aider',
-          launchCommand: 'aider',
-          expectedProcess: 'aider',
-          followupPrompt: 'fix the spinner',
-          launchConfig: { agentCommand: 'aider', agentArgs: '', agentEnv: {} }
-        }
-      })
-
-      await vi.advanceTimersByTimeAsync(30 * 150)
-      await delivery
-
-      expect(mockSendRuntimePtyInputVerified).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
   it('does not track draft prompt delivery as a sent prompt', async () => {
-    seedLaunchRegistry({ agentType: 'claude', agentCommand: 'claude' })
     await ensureAgentStartupInTerminal({
       worktreeId: 'wt-1',
       startup: {
@@ -364,13 +318,14 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
         launchCommand: 'claude',
         expectedProcess: 'claude',
         followupPrompt: null,
-        launchConfig: { agentCommand: 'claude', agentArgs: '', agentEnv: {} },
+        launchConfig: { agentArgs: '', agentEnv: {} },
         draftPrompt: 'review this before sending'
       }
     })
 
-    expect(mockPasteDraftWhenAgentReady).toHaveBeenCalledWith({
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledWith({
       tabId: 'tab-1',
+      ptyId: 'pty-1',
       content: 'review this before sending',
       agent: 'claude',
       forcePaste: true
@@ -384,17 +339,19 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
     store.ptyIdsByTabId = { 'setup-tab': ['setup-pty'], 'agent-tab': ['agent-pty'] }
     store.terminalLayoutsByTabId = {
       'agent-tab': {
-        activeLeafId: '22222222-2222-4222-8222-222222222222',
-        ptyIdsByLeafId: { '22222222-2222-4222-8222-222222222222': 'agent-pty' }
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [startupLeafId]: 'agent-pty' }
       }
     }
-    store.agentLaunchConfigByPaneKey = {}
-    seedLaunchRegistry({
-      tabId: 'agent-tab',
-      leafId: '22222222-2222-4222-8222-222222222222',
-      ptyId: 'agent-pty',
-      agentType: 'codex'
-    })
+    store.agentLaunchConfigByPaneKey = {
+      [`agent-tab:${startupLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: { tabId: 'agent-tab', leafId: startupLeafId, launchToken: 'launch-token-1' }
+      }
+    }
 
     await ensureAgentStartupInTerminal({
       worktreeId: 'wt-1',
@@ -404,155 +361,362 @@ describe('ensureAgentStartupInTerminal prompt delivery', () => {
         launchCommand: 'codex',
         expectedProcess: 'codex',
         followupPrompt: null,
-        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        launchConfig: { agentArgs: '', agentEnv: {} },
         draftPrompt: 'Linear context draft'
       }
     })
 
-    expect(mockPasteDraftWhenAgentReady).toHaveBeenCalledWith({
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledWith({
       tabId: 'agent-tab',
+      ptyId: 'agent-pty',
       content: 'Linear context draft',
       agent: 'codex',
       forcePaste: true
     })
   })
 
-  it('delivers a queued draft prompt when a background terminal PTY appears later', async () => {
+  it('pastes a draft after the seeded tab receives a delayed PTY', async () => {
     vi.useFakeTimers()
-    try {
-      store.ptyIdsByTabId = {}
-      store.terminalLayoutsByTabId = {
-        'tab-1': { activeLeafId: '11111111-1111-4111-8111-111111111111', ptyIdsByLeafId: {} }
-      }
-      const delivery = ensureAgentStartupInTerminal({
-        worktreeId: 'wt-1',
-        primaryTabId: 'tab-1',
-        startup: {
-          agent: 'codex',
-          launchCommand: 'codex',
-          expectedProcess: 'codex',
-          followupPrompt: null,
-          launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
-          draftPrompt: 'queued Linear context'
-        }
-      })
+    store.ptyIdsByTabId = {}
+    store.terminalLayoutsByTabId = {}
+    store.agentLaunchConfigByPaneKey = {}
+    store.pendingStartupByTabId = { 'tab-1': { launchToken: 'launch-token-1' } }
 
-      await vi.advanceTimersByTimeAsync(30 * 150)
-      await delivery
-      expect(mockPasteDraftWhenAgentReady).not.toHaveBeenCalled()
-
-      store.ptyIdsByTabId = { 'tab-1': ['pty-late'] }
-      store.terminalLayoutsByTabId = {
-        'tab-1': {
-          activeLeafId: '11111111-1111-4111-8111-111111111111',
-          ptyIdsByLeafId: { '11111111-1111-4111-8111-111111111111': 'pty-late' }
-        }
-      }
-      for (const listener of mockStoreSubscribers) {
-        listener(store)
-      }
-      await Promise.resolve()
-
-      expect(mockPasteDraftWhenAgentReady).toHaveBeenCalledWith({
-        tabId: 'tab-1',
-        content: 'queued Linear context',
+    const delivery = ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup: {
         agent: 'codex',
-        forcePaste: true
-      })
-    } finally {
-      vi.useRealTimers()
+        launchCommand: 'codex',
+        expectedProcess: 'codex',
+        followupPrompt: null,
+        launchConfig: { agentArgs: '', agentEnv: {} },
+        draftPrompt: 'https://github.com/stablyai/orca/pull/2051'
+      }
+    })
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await delivery
+
+    expect(mockPasteDraftToAgentPtyWhenReady).not.toHaveBeenCalled()
+
+    store.ptyIdsByTabId = { 'tab-1': ['pty-delayed'] }
+    store.pendingStartupByTabId = {}
+    store.terminalLayoutsByTabId = {
+      'tab-1': {
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [startupLeafId]: 'pty-delayed' }
+      }
     }
+    store.agentLaunchConfigByPaneKey = {
+      [`tab-1:${startupLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: { tabId: 'tab-1', leafId: startupLeafId, launchToken: 'launch-token-1' }
+      }
+    }
+    for (const listener of storeListeners) {
+      listener(store, store)
+    }
+
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledTimes(1)
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledWith({
+      tabId: 'tab-1',
+      ptyId: 'pty-delayed',
+      content: 'https://github.com/stablyai/orca/pull/2051',
+      agent: 'codex',
+      forcePaste: true
+    })
   })
 
-  it('drops a queued draft prompt when the later pane launch no longer matches', async () => {
+  it('keeps waiting when a non-startup split PTY appears before the startup PTY', async () => {
     vi.useFakeTimers()
-    try {
-      store.ptyIdsByTabId = {}
-      store.terminalLayoutsByTabId = {
-        'tab-1': { activeLeafId: '11111111-1111-4111-8111-111111111111', ptyIdsByLeafId: {} }
-      }
-      const delivery = ensureAgentStartupInTerminal({
-        worktreeId: 'wt-1',
-        primaryTabId: 'tab-1',
-        startup: {
-          agent: 'codex',
-          launchCommand: 'codex',
-          expectedProcess: 'codex',
-          followupPrompt: null,
-          launchConfig: { agentCommand: 'codex', agentArgs: '--old', agentEnv: {} },
-          draftPrompt: 'stale Linear context'
-        }
-      })
+    store.ptyIdsByTabId = {}
+    store.terminalLayoutsByTabId = {}
+    store.agentLaunchConfigByPaneKey = {}
+    store.pendingStartupByTabId = { 'tab-1': { launchToken: 'launch-token-1' } }
 
-      await vi.advanceTimersByTimeAsync(30 * 150)
-      await delivery
+    const delivery = ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup: {
+        agent: 'codex',
+        launchCommand: 'codex',
+        expectedProcess: 'codex',
+        followupPrompt: null,
+        launchConfig: { agentArgs: '', agentEnv: {} },
+        draftPrompt: 'linked draft'
+      }
+    })
 
-      store.ptyIdsByTabId = { 'tab-1': ['pty-new'] }
-      store.terminalLayoutsByTabId = {
-        'tab-1': {
-          activeLeafId: '11111111-1111-4111-8111-111111111111',
-          ptyIdsByLeafId: { '11111111-1111-4111-8111-111111111111': 'pty-new' }
-        }
-      }
-      store.agentLaunchConfigByPaneKey = {
-        'tab-1:11111111-1111-4111-8111-111111111111': {
-          launchConfig: { agentCommand: 'codex', agentArgs: '--new', agentEnv: {} },
-          identity: { agentType: 'codex' }
-        }
-      }
-      for (const listener of mockStoreSubscribers) {
-        listener(store)
-      }
-      await Promise.resolve()
+    await vi.advanceTimersByTimeAsync(5_000)
+    await delivery
 
-      expect(mockPasteDraftWhenAgentReady).not.toHaveBeenCalled()
-      expect(mockStoreSubscribers.size).toBe(0)
-    } finally {
-      vi.useRealTimers()
+    const splitLeafId = '22222222-2222-4222-8222-222222222222'
+    store.ptyIdsByTabId = { 'tab-1': ['split-pty'] }
+    store.terminalLayoutsByTabId = {
+      'tab-1': {
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [splitLeafId]: 'split-pty' }
+      }
     }
+    store.agentLaunchConfigByPaneKey = {
+      [`tab-1:${splitLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: { tabId: 'tab-1', leafId: splitLeafId, launchToken: 'other-token' }
+      }
+    }
+    for (const listener of storeListeners) {
+      listener(store, store)
+    }
+
+    expect(mockPasteDraftToAgentPtyWhenReady).not.toHaveBeenCalled()
+
+    store.ptyIdsByTabId = { 'tab-1': ['split-pty', 'startup-pty'] }
+    store.terminalLayoutsByTabId = {
+      'tab-1': {
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [splitLeafId]: 'split-pty', [startupLeafId]: 'startup-pty' }
+      }
+    }
+    store.agentLaunchConfigByPaneKey = {
+      [`tab-1:${splitLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: { tabId: 'tab-1', leafId: splitLeafId, launchToken: 'other-token' }
+      },
+      [`tab-1:${startupLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 2,
+        identity: { tabId: 'tab-1', leafId: startupLeafId, launchToken: 'launch-token-1' }
+      }
+    }
+    for (const listener of storeListeners) {
+      listener(store, store)
+    }
+
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledTimes(1)
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledWith({
+      tabId: 'tab-1',
+      ptyId: 'startup-pty',
+      content: 'linked draft',
+      agent: 'codex',
+      forcePaste: true
+    })
   })
 
-  it('expires queued draft prompts before a much later matching pane appears', async () => {
+  it('does not duplicate delayed delivery across repeated store updates', async () => {
     vi.useFakeTimers()
-    try {
-      store.ptyIdsByTabId = {}
-      store.terminalLayoutsByTabId = {
-        'tab-1': { activeLeafId: '11111111-1111-4111-8111-111111111111', ptyIdsByLeafId: {} }
-      }
-      const delivery = ensureAgentStartupInTerminal({
-        worktreeId: 'wt-1',
-        primaryTabId: 'tab-1',
-        startup: {
-          agent: 'codex',
-          launchCommand: 'codex',
-          expectedProcess: 'codex',
-          followupPrompt: null,
-          launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
-          draftPrompt: 'expired Linear context'
-        }
-      })
+    store.ptyIdsByTabId = {}
+    store.terminalLayoutsByTabId = {}
+    store.agentLaunchConfigByPaneKey = {}
+    store.pendingStartupByTabId = { 'tab-1': { launchToken: 'launch-token-1' } }
 
-      await vi.advanceTimersByTimeAsync(30 * 150)
-      await delivery
-      await vi.advanceTimersByTimeAsync(60_000)
-
-      store.ptyIdsByTabId = { 'tab-1': ['pty-later'] }
-      store.terminalLayoutsByTabId = {
-        'tab-1': {
-          activeLeafId: '11111111-1111-4111-8111-111111111111',
-          ptyIdsByLeafId: { '11111111-1111-4111-8111-111111111111': 'pty-later' }
-        }
+    const delivery = ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup: {
+        agent: 'codex',
+        launchCommand: 'codex',
+        expectedProcess: 'codex',
+        followupPrompt: null,
+        launchConfig: { agentArgs: '', agentEnv: {} },
+        draftPrompt: 'linked draft'
       }
-      for (const listener of mockStoreSubscribers) {
-        listener(store)
-      }
-      await Promise.resolve()
+    })
 
-      expect(mockPasteDraftWhenAgentReady).not.toHaveBeenCalled()
-      expect(mockStoreSubscribers.size).toBe(0)
-    } finally {
-      vi.useRealTimers()
+    await vi.advanceTimersByTimeAsync(5_000)
+    await delivery
+
+    store.ptyIdsByTabId = { 'tab-1': ['pty-delayed'] }
+    store.pendingStartupByTabId = {}
+    store.terminalLayoutsByTabId = {
+      'tab-1': {
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [startupLeafId]: 'pty-delayed' }
+      }
     }
+    store.agentLaunchConfigByPaneKey = {
+      [`tab-1:${startupLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: { tabId: 'tab-1', leafId: startupLeafId, launchToken: 'launch-token-1' }
+      }
+    }
+    for (const listener of storeListeners) {
+      listener(store, store)
+      listener(store, store)
+    }
+
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not duplicate immediate delivery for the same launch token', async () => {
+    const startup = {
+      agent: 'codex' as const,
+      launchCommand: 'codex',
+      expectedProcess: 'codex',
+      followupPrompt: null,
+      launchConfig: { agentArgs: '', agentEnv: {} },
+      draftPrompt: 'linked draft',
+      launchToken: 'launch-token-1'
+    }
+
+    await ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup
+    })
+    await ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup
+    })
+
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps one delayed subscription and tears it down after delivery drains', async () => {
+    vi.useFakeTimers()
+    store.ptyIdsByTabId = {}
+    store.terminalLayoutsByTabId = {}
+    store.agentLaunchConfigByPaneKey = {}
+    store.pendingStartupByTabId = { 'tab-1': { launchToken: 'launch-token-1' } }
+    const startup = {
+      agent: 'codex' as const,
+      launchCommand: 'codex',
+      expectedProcess: 'codex',
+      followupPrompt: null,
+      launchConfig: { agentArgs: '', agentEnv: {} },
+      draftPrompt: 'linked draft',
+      launchToken: 'launch-token-1'
+    }
+
+    const first = ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup
+    })
+    const second = ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup
+    })
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await Promise.all([first, second])
+
+    expect(storeListeners.size).toBe(1)
+
+    store.ptyIdsByTabId = { 'tab-1': ['pty-delayed'] }
+    store.pendingStartupByTabId = {}
+    store.terminalLayoutsByTabId = {
+      'tab-1': {
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [startupLeafId]: 'pty-delayed' }
+      }
+    }
+    store.agentLaunchConfigByPaneKey = {
+      [`tab-1:${startupLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: { tabId: 'tab-1', leafId: startupLeafId, launchToken: 'launch-token-1' }
+      }
+    }
+    for (const listener of storeListeners) {
+      listener(store, store)
+    }
+
+    expect(mockPasteDraftToAgentPtyWhenReady).toHaveBeenCalledTimes(1)
+    expect(storeListeners.size).toBe(0)
+  })
+
+  it('does not let a newer same-tab launch satisfy an older pending delivery', async () => {
+    vi.useFakeTimers()
+    store.ptyIdsByTabId = {}
+    store.terminalLayoutsByTabId = {}
+    store.agentLaunchConfigByPaneKey = {}
+    store.pendingStartupByTabId = { 'tab-1': { launchToken: 'launch-token-old' } }
+
+    const delivery = ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      primaryTabId: 'tab-1',
+      startup: {
+        agent: 'codex',
+        launchCommand: 'codex',
+        expectedProcess: 'codex',
+        followupPrompt: null,
+        launchConfig: { agentArgs: '', agentEnv: {} },
+        draftPrompt: 'old linked draft',
+        launchToken: 'launch-token-old'
+      }
+    })
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await delivery
+
+    store.pendingStartupByTabId = { 'tab-1': { launchToken: 'launch-token-new' } }
+    for (const listener of storeListeners) {
+      listener(store, store)
+    }
+
+    store.ptyIdsByTabId = { 'tab-1': ['pty-new'] }
+    store.pendingStartupByTabId = {}
+    store.terminalLayoutsByTabId = {
+      'tab-1': {
+        root: null,
+        activeLeafId: null,
+        expandedLeafId: null,
+        ptyIdsByLeafId: { [startupLeafId]: 'pty-new' }
+      }
+    }
+    store.agentLaunchConfigByPaneKey = {
+      [`tab-1:${startupLeafId}`]: {
+        launchConfig: { agentCommand: 'codex', agentArgs: '', agentEnv: {} },
+        registeredAt: 1,
+        identity: { tabId: 'tab-1', leafId: startupLeafId, launchToken: 'launch-token-old' }
+      }
+    }
+    for (const listener of storeListeners) {
+      listener(store, store)
+    }
+
+    expect(mockPasteDraftToAgentPtyWhenReady).not.toHaveBeenCalled()
+  })
+
+  it('does not write a delayed follow-up prompt on readiness timeout', async () => {
+    vi.useFakeTimers()
+    mockInspectRuntimeTerminalProcess.mockResolvedValue({
+      foregroundProcess: 'zsh',
+      hasChildProcesses: false
+    })
+
+    const delivery = ensureAgentStartupInTerminal({
+      worktreeId: 'wt-1',
+      startup: {
+        agent: 'aider',
+        launchCommand: 'aider',
+        expectedProcess: 'aider',
+        followupPrompt: 'fix the spinner',
+        launchConfig: { agentArgs: '', agentEnv: {} }
+      }
+    })
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await delivery
+
+    expect(mockSendRuntimePtyInputVerified).not.toHaveBeenCalled()
   })
 })
 

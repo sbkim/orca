@@ -115,6 +115,7 @@ import type {
   FloatingTerminalCwdRequest,
   GitHubIssueUpdate,
   GitHubPRRefreshCandidate,
+  GitHubPRRefreshEnqueueResult,
   GitHubPRRefreshEvent,
   GitHubPRRefreshReason,
   GetRateLimitResult,
@@ -1159,7 +1160,7 @@ export type PreloadApi = {
       candidate: GitHubPRRefreshCandidate
       reason: GitHubPRRefreshReason
       priority?: number
-    }) => Promise<boolean>
+    }) => Promise<GitHubPRRefreshEnqueueResult | false>
     reportVisiblePRRefreshCandidates: (args: {
       candidates: GitHubPRRefreshCandidate[]
       generation: number
@@ -2110,6 +2111,7 @@ export type PreloadApi = {
       worktreePath: string
       connectionId?: string
       includeIgnored?: boolean
+      bypassEffectiveUpstreamNegativeCache?: boolean
     }) => Promise<GitStatusResult>
     checkIgnored: (args: {
       worktreePath: string
