@@ -51,7 +51,7 @@ import {
 import { getActiveRuntimeTarget } from '@/runtime/runtime-rpc-client'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
-import { useShortcutLabel } from '@/hooks/useShortcutLabel'
+import { useOptionalShortcutLabel, useShortcutLabel } from '@/hooks/useShortcutLabel'
 import {
   type BuiltInWindowsTerminalShell,
   WINDOWS_GIT_BASH_SHELL
@@ -272,6 +272,7 @@ function TabBarInner({
   const newBrowserShortcut = useShortcutLabel('tab.newBrowser')
   const newSimulatorShortcut = useShortcutLabel('tab.newSimulator')
   const newFileShortcut = useShortcutLabel('tab.newMarkdown')
+  const openMarkdownShortcut = useOptionalShortcutLabel('tab.openMarkdown')
   const generatedTabTitlesEnabled = useAppStore((s) => s.settings?.tabAutoGenerateTitle === true)
   const mobileEmulatorEnabled = useAppStore((s) => s.settings?.mobileEmulatorEnabled !== false)
   const persistedUIReady = useAppStore((s) => s.persistedUIReady)
@@ -761,6 +762,9 @@ function TabBarInner({
       >
         <FileText className="size-4 text-muted-foreground" />
         {translate('auto.components.tab.bar.TabBar.4f327c8b3d', 'Open Markdown...')}
+        {openMarkdownShortcut ? (
+          <DropdownMenuShortcut>{openMarkdownShortcut}</DropdownMenuShortcut>
+        ) : null}
       </DropdownMenuItem>
     ) : null
   const mobileEmulatorIntroMenuBlock =
@@ -1045,7 +1049,7 @@ function TabBarInner({
             // a different box than the tab's own `border-t`, producing a
             // heavier-looking L-corner at the leftmost tab when inactive.
             className={[
-              'terminal-tab-strip flex h-full min-w-0 max-w-full flex-1 items-stretch overflow-x-auto overflow-y-hidden border-r border-border',
+              'terminal-tab-strip flex h-full min-w-0 max-w-full flex-1 items-stretch overflow-x-auto overflow-y-hidden border-r border-border/70',
               getTabStripScrollMaskClassName(tabStripOverflowState)
             ]
               .filter(Boolean)

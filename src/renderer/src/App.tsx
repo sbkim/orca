@@ -62,7 +62,10 @@ import { onOnboardingReopened } from './components/onboarding/show-onboarding-ev
 import { shouldShowOnboarding } from './components/onboarding/should-show-onboarding'
 import { MarkdownTemplatePicker } from './components/editor/MarkdownTemplatePicker'
 import { FloatingTerminalToggleButton } from './components/floating-terminal/FloatingTerminalToggleButton'
-import { TOGGLE_FLOATING_TERMINAL_EVENT } from '@/lib/floating-terminal'
+import {
+  TOGGLE_FLOATING_TERMINAL_EVENT,
+  requestFloatingTerminalOpenMaximized
+} from '@/lib/floating-terminal'
 import {
   isFloatingWorkspacePanelFocused,
   isFloatingWorkspacePanelShortcut,
@@ -389,8 +392,11 @@ function App(): React.JSX.Element {
     useShallow((s) => ({
       toggleSidebar: s.toggleSidebar,
       fetchRepos: s.fetchRepos,
+      fetchReposForAllHosts: s.fetchReposForAllHosts,
       fetchProjectGroups: s.fetchProjectGroups,
+      fetchProjectGroupsForAllHosts: s.fetchProjectGroupsForAllHosts,
       fetchFolderWorkspaces: s.fetchFolderWorkspaces,
+      fetchFolderWorkspacesForAllHosts: s.fetchFolderWorkspacesForAllHosts,
       fetchAllWorktrees: s.fetchAllWorktrees,
       fetchWorktreeLineage: s.fetchWorktreeLineage,
       fetchSettings: s.fetchSettings,
@@ -841,9 +847,12 @@ function App(): React.JSX.Element {
         // Load settings first so a persisted remote runtime does not boot against
         // the local filesystem and then hydrate stale local workspace state.
         await actions.fetchSettings()
-        await actions.fetchRepos()
-        await actions.fetchProjectGroups()
-        await actions.fetchFolderWorkspaces()
+        // Why: load local + every configured runtime environment (not just the
+        // active one) so a cold start that restored a remote workspace doesn't
+        // hide local repos. The sidebar "All hosts" scope then shows them all.
+        await actions.fetchReposForAllHosts()
+        await actions.fetchProjectGroupsForAllHosts()
+        await actions.fetchFolderWorkspacesForAllHosts()
         await actions.fetchAllWorktrees()
         await actions.fetchWorktreeLineage()
         const persistedUI = await window.api.ui.get()
@@ -1390,6 +1399,7 @@ function App(): React.JSX.Element {
     activeView,
     activeWorktreeId,
     actions,
+    floatingTerminalEnabled,
     floatingTerminalOpen,
     floatingVisibleTabCount,
     keybindings,
@@ -1404,6 +1414,7 @@ function App(): React.JSX.Element {
     activeView,
     activeWorktreeId,
     actions,
+    floatingTerminalEnabled,
     floatingTerminalOpen,
     floatingVisibleTabCount,
     keybindings,
@@ -1421,6 +1432,7 @@ function App(): React.JSX.Element {
         activeView,
         activeWorktreeId,
         actions,
+        floatingTerminalEnabled,
         floatingTerminalOpen,
         floatingVisibleTabCount,
         keybindings,
@@ -1513,6 +1525,22 @@ function App(): React.JSX.Element {
       ) {
         input.preventDefault()
         setFloatingTerminalOpenWithFocus(false)
+        return
+      }
+
+      // Why: when the floating workspace is closed, its own keydown handler is
+      // unmounted and cannot claim Cmd+Opt+Shift+A. Honor the maximize chord
+      // here by opening the panel with a one-shot intent so it mounts straight
+      // into the maximized state. While the panel is open, this is a no-op: the
+      // panel's handler owns the maximize/restore toggle.
+      if (
+        !floatingTerminalOpen &&
+        matchShortcut('floatingWorkspace.maximize') &&
+        floatingTerminalEnabled
+      ) {
+        input.preventDefault()
+        requestFloatingTerminalOpenMaximized()
+        setFloatingTerminalOpenWithFocus(true)
         return
       }
 
