@@ -86,6 +86,70 @@ describe('filterAiVaultSessions', () => {
     ).toEqual(['claude:old-path'])
   })
 
+  it('includes a path-only Claude session whose file matches the active worktree path', () => {
+    const pathOnlySession: AiVaultSession = {
+      ...baseSession,
+      id: 'claude:path-only',
+      cwd: null,
+      filePath:
+        '/Users/ada/.claude/projects/-Users-ada-orca-workspaces-orca-path-only-session/sess.jsonl'
+    }
+
+    expect(
+      filterAiVaultSessions([pathOnlySession], {
+        query: '',
+        agents: ['claude'],
+        scope: 'workspace',
+        sort: 'updated',
+        activeWorktreePaths: ['/Users/ada/orca/workspaces/orca/path-only-session'],
+        hideEmptySessions: true
+      }).map((session) => session.id)
+    ).toEqual(['claude:path-only'])
+  })
+
+  it('excludes a path-only Claude session for a non-matching worktree path', () => {
+    const pathOnlySession: AiVaultSession = {
+      ...baseSession,
+      id: 'claude:path-only',
+      cwd: null,
+      filePath:
+        '/Users/ada/.claude/projects/-Users-ada-orca-workspaces-orca-path-only-session/sess.jsonl'
+    }
+
+    expect(
+      filterAiVaultSessions([pathOnlySession], {
+        query: '',
+        agents: ['claude'],
+        scope: 'workspace',
+        sort: 'updated',
+        activeWorktreePaths: ['/Users/ada/orca/workspaces/orca/other-session'],
+        hideEmptySessions: true
+      })
+    ).toEqual([])
+  })
+
+  it('does not apply the path-only fallback to non-Claude null-cwd sessions', () => {
+    const codexPathOnly: AiVaultSession = {
+      ...baseSession,
+      id: 'codex:path-only',
+      agent: 'codex',
+      cwd: null,
+      filePath:
+        '/Users/ada/.claude/projects/-Users-ada-orca-workspaces-orca-path-only-session/sess.jsonl'
+    }
+
+    expect(
+      filterAiVaultSessions([codexPathOnly], {
+        query: '',
+        agents: ['codex'],
+        scope: 'workspace',
+        sort: 'updated',
+        activeWorktreePaths: ['/Users/ada/orca/workspaces/orca/path-only-session'],
+        hideEmptySessions: true
+      })
+    ).toEqual([])
+  })
+
   it('returns no workspace matches when active workspace paths are empty', () => {
     expect(
       filterAiVaultSessions([baseSession], {

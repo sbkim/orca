@@ -5,6 +5,7 @@ import {
   normalizeRuntimePathSeparators
 } from '../../../../shared/cross-platform-path'
 import { isClipboardTextByteLengthOverLimit } from '../../../../shared/clipboard-text'
+import { isClaudeSessionFileForWorkspace } from '../../../../shared/claude-project-path'
 import { parseWslUncPath } from '../../../../shared/wsl-paths'
 import type {
   AiVaultAgent,
@@ -71,16 +72,8 @@ export function filterAiVaultSessions(
       if (filters.hideEmptySessions && session.messageCount === 0) {
         return false
       }
-      if (filters.scope === 'workspace') {
-        const cwd = session.cwd
-        if (
-          !cwd ||
-          !filters.activeWorktreePaths.some((pathValue) =>
-            isAiVaultSessionInWorkspacePath(pathValue, cwd)
-          )
-        ) {
-          return false
-        }
+      if (filters.scope === 'workspace' && !isSessionInWorkspaceScope(session, filters)) {
+        return false
       }
       if (filters.scope === 'project') {
         if (!filters.activeProjectKey) {
@@ -276,6 +269,26 @@ function addAiVaultWorkspaceScopePath(paths: string[], pathValue: string): void 
     return
   }
   paths.push(trimmedPath)
+}
+
+function isSessionInWorkspaceScope(
+  session: AiVaultSession,
+  filters: Pick<AiVaultSessionFilterState, 'activeWorktreePaths'>
+): boolean {
+  const cwd = session.cwd
+  if (cwd) {
+    return filters.activeWorktreePaths.some((pathValue) =>
+      isAiVaultSessionInWorkspacePath(pathValue, cwd)
+    )
+  }
+  // Path-only Claude transcripts encode their cwd only in the project folder
+  // name; match the file path against known worktree paths instead.
+  return (
+    session.agent === 'claude' &&
+    filters.activeWorktreePaths.some((pathValue) =>
+      isClaudeSessionFileForWorkspace(session.filePath, pathValue)
+    )
+  )
 }
 
 function isAiVaultSessionInWorkspacePath(workspacePath: string, sessionCwd: string): boolean {

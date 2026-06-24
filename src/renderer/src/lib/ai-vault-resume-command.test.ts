@@ -59,10 +59,77 @@ describe('ai vault resume command runtime', () => {
           agent: 'claude',
           sessionId: 'session one',
           cwd: 'C:\\Users\\alice\\repo',
-          codexHome: null
+          codexHome: null,
+          filePath: 'C:\\Users\\alice\\.claude\\projects\\repo\\s.jsonl'
         }
       })
     ).toBe('cmd /d /s /c "cd /d ""C:\\Users\\alice\\repo"" && claude --resume ""session one"""')
+  })
+
+  it('resumes a path-only Claude session into the matching worktree cwd', () => {
+    const state = makeState({
+      worktreePath: '/Users/ada/orca/workspaces/orca/path-only-session',
+      localWindowsRuntimePreference: { kind: 'wsl', distro: 'Ubuntu' }
+    })
+
+    expect(
+      buildAiVaultResumeCommandForWorktree({
+        state,
+        worktreeId: 'repo-1::worktree-1',
+        session: {
+          agent: 'claude',
+          sessionId: 'session one',
+          cwd: null,
+          codexHome: null,
+          filePath:
+            '/Users/ada/.claude/projects/-Users-ada-orca-workspaces-orca-path-only-session/s.jsonl'
+        }
+      })
+    ).toBe(
+      "cd '/Users/ada/orca/workspaces/orca/path-only-session' && claude --resume 'session one'"
+    )
+  })
+
+  it('keeps a no-cwd command when a path-only Claude session does not match the worktree', () => {
+    const state = makeState({
+      worktreePath: '/Users/ada/orca/workspaces/orca/other-session',
+      localWindowsRuntimePreference: { kind: 'wsl', distro: 'Ubuntu' }
+    })
+
+    expect(
+      buildAiVaultResumeCommandForWorktree({
+        state,
+        worktreeId: 'repo-1::worktree-1',
+        session: {
+          agent: 'claude',
+          sessionId: 'session one',
+          cwd: null,
+          codexHome: null,
+          filePath:
+            '/Users/ada/.claude/projects/-Users-ada-orca-workspaces-orca-path-only-session/s.jsonl'
+        }
+      })
+    ).toBe("claude --resume 'session one'")
+  })
+
+  it('resumes a WSL path-only Claude session into the linux cwd', () => {
+    const state = makeState({
+      worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\ada\\repo'
+    })
+
+    expect(
+      buildAiVaultResumeCommandForWorktree({
+        state,
+        worktreeId: 'repo-1::worktree-1',
+        session: {
+          agent: 'claude',
+          sessionId: 'session one',
+          cwd: null,
+          codexHome: null,
+          filePath: '/Users/ada/.claude/projects/-home-ada-repo/s.jsonl'
+        }
+      })
+    ).toBe("cd '/home/ada/repo' && claude --resume 'session one'")
   })
 
   it('uses POSIX command wrapping for Windows-path projects forced to WSL', () => {
@@ -80,7 +147,8 @@ describe('ai vault resume command runtime', () => {
           agent: 'claude',
           sessionId: 'session one',
           cwd: '/home/alice/repo',
-          codexHome: null
+          codexHome: null,
+          filePath: '/home/alice/.claude/projects/repo/s.jsonl'
         }
       })
     ).toBe("cd '/home/alice/repo' && claude --resume 'session one'")
@@ -107,7 +175,8 @@ describe('ai vault resume command runtime', () => {
           agent: 'codex',
           sessionId: 'session one',
           cwd: '/home/alice/repo',
-          codexHome: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\.codex'
+          codexHome: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\.codex',
+          filePath: '/home/alice/.codex/sessions/s.jsonl'
         }
       })
     ).toBe("cd '/home/alice/repo' && CODEX_HOME='/home/alice/.codex' codex resume 'session one'")
