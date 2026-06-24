@@ -6,6 +6,8 @@ import { getBrowserWebviewMemoryProfile } from '../components/browser-pane/webvi
 
 const RENDERER_MEMORY_SAMPLE_INTERVAL_MS = 60_000
 const BYTES_PER_MEGABYTE = 1024 * 1024
+// Why: recover only after sustained high heap usage, avoiding reloads for small
+// heaps or one-off spikes while still acting before likely renderer loss.
 const CRITICAL_HEAP_USAGE_RATIO = 0.85
 const CRITICAL_HEAP_MIN_MB = 512
 const CRITICAL_HEAP_SAMPLES_BEFORE_RELOAD = 2
