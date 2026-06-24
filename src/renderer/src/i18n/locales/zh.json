@@ -3315,10 +3315,10 @@
           "recheck": "重新检查",
           "dontShowAgain": "不再显示",
           "notNow": "稍后",
-          "linearWorktreeContext": "此 Linear 任务流程需要 Linear 代理技能。Orca 无法自动更新它。",
-          "agentOrchestrationContext": "代理刚刚尝试使用 Orca 编排。Orca 需要编排技能，代理才能可靠地协作。",
-          "agentComputerUseContext": "代理刚刚尝试使用 Computer Use。Orca 需要 Computer Use 技能，代理才能可靠地控制应用。",
-          "agentOrcaCliContext": "代理刚刚尝试在此流程中使用 Orca 的 CLI 技能。Orca 需要 CLI 技能，此流程才能可靠地继续。",
+          "linearWorktreeContext": "A worktree was started from a Linear task. {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.",
+          "agentOrchestrationContext": "Orca Orchestration was used. {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.",
+          "agentComputerUseContext": "Computer Use was used. {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.",
+          "agentOrcaCliContext": "The Orca CLI skill was used. {{actionLabel}} the CLI skill to enable this workflow to continue reliably.",
           "targetRequired": "Orca 无法解析应读取此技能的运行时。",
           "unsupportedSkill": "这不是 Orca 托管的代理技能。",
           "repairRequiredRuntime": "所选运行时需要修复，Orca 才能检查其技能。",
@@ -3339,7 +3339,15 @@
           "backgroundUpdateDisabled": "自动技能更新已关闭，因此此次更新需要手动审核。",
           "cooldown": "Orca 最近已尝试此托管技能检查，正在等待重试。",
           "updateFailed": "托管技能更新命令失败。",
-          "updateTimeout": "托管技能更新命令超时。"
+          "updateTimeout": "托管技能更新命令超时。",
+          "linearWorktreeContextBeforeWorkspace": "A worktree was started from a Linear task in ",
+          "linearWorktreeContextAfterWorkspace": ". {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.",
+          "agentOrchestrationContextBeforeWorkspace": "Orca Orchestration was used in ",
+          "agentOrchestrationContextAfterWorkspace": ". {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.",
+          "agentComputerUseContextBeforeWorkspace": "Computer Use was used in ",
+          "agentComputerUseContextAfterWorkspace": ". {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.",
+          "agentOrcaCliContextBeforeWorkspace": "The Orca CLI skill was used in ",
+          "agentOrcaCliContextAfterWorkspace": ". {{actionLabel}} the CLI skill to enable this workflow to continue reliably."
         }
       },
       "sidebar": {

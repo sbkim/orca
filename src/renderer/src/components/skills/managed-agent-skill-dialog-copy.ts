@@ -4,28 +4,96 @@ import type {
 } from '../../../../shared/skills'
 import { translate } from '@/i18n/i18n'
 
-export function getManagedSkillContextCopy(context: ManagedAgentSkillContext): string {
+export type ManagedSkillContextWorkspaceCopy = {
+  beforeWorkspace: string
+  afterWorkspace: string
+}
+
+export function getManagedSkillContextCopy(
+  context: ManagedAgentSkillContext,
+  actionLabel: string
+): string {
   switch (context) {
     case 'linear-worktree':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.linearWorktreeContext',
-        'This Linear task workflow needs the Linear agent skill. Orca could not update it automatically.'
+        'A worktree was started from a Linear task. {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.',
+        { actionLabel }
       )
     case 'agent-orchestration':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentOrchestrationContext',
-        'An agent just tried to use Orca orchestration. Orca needs the orchestration skill before agents can coordinate reliably.'
+        'Orca Orchestration was used. {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.',
+        { actionLabel }
       )
     case 'agent-computer-use':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentComputerUseContext',
-        'An agent just tried to use Computer Use. Orca needs the Computer Use skill before agents can control apps reliably.'
+        'Computer Use was used. {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.',
+        { actionLabel }
       )
     case 'agent-orca-cli':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentOrcaCliContext',
-        "An agent just tried to use Orca's CLI skill for this workflow. Orca needs the CLI skill before this workflow can continue reliably."
+        'The Orca CLI skill was used. {{actionLabel}} the CLI skill to enable this workflow to continue reliably.',
+        { actionLabel }
       )
+  }
+}
+
+export function getManagedSkillContextWorkspaceCopy(
+  context: ManagedAgentSkillContext,
+  actionLabel: string
+): ManagedSkillContextWorkspaceCopy {
+  switch (context) {
+    case 'linear-worktree':
+      return {
+        beforeWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.linearWorktreeContextBeforeWorkspace',
+          'A worktree was started from a Linear task in '
+        ),
+        afterWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.linearWorktreeContextAfterWorkspace',
+          '. {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.',
+          { actionLabel }
+        )
+      }
+    case 'agent-orchestration':
+      return {
+        beforeWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentOrchestrationContextBeforeWorkspace',
+          'Orca Orchestration was used in '
+        ),
+        afterWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentOrchestrationContextAfterWorkspace',
+          '. {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.',
+          { actionLabel }
+        )
+      }
+    case 'agent-computer-use':
+      return {
+        beforeWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentComputerUseContextBeforeWorkspace',
+          'Computer Use was used in '
+        ),
+        afterWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentComputerUseContextAfterWorkspace',
+          '. {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.',
+          { actionLabel }
+        )
+      }
+    case 'agent-orca-cli':
+      return {
+        beforeWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentOrcaCliContextBeforeWorkspace',
+          'The Orca CLI skill was used in '
+        ),
+        afterWorkspace: translate(
+          'auto.components.skills.ManagedAgentSkillSetupDialogHost.agentOrcaCliContextAfterWorkspace',
+          '. {{actionLabel}} the CLI skill to enable this workflow to continue reliably.',
+          { actionLabel }
+        )
+      }
   }
 }
 
@@ -36,92 +104,92 @@ export function getManagedSkillFallbackDisplayMessage(
     case 'target-required':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.targetRequired',
-        'Orca could not resolve the runtime that should read this skill.'
+        "Orca couldn't tell which runtime should use this skill."
       )
     case 'unsupported-skill':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.unsupportedSkill',
-        'This is not an Orca-managed agent skill.'
+        "This isn't an Orca-managed skill."
       )
     case 'repair-required-runtime':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.repairRequiredRuntime',
-        'The selected runtime needs repair before Orca can inspect its skills.'
+        'This runtime needs repair before Orca can inspect its skills.'
       )
     case 'remote-runtime':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.remoteRuntime',
-        'Remote runtimes are not updated in the background.'
+        'This skill is on a remote runtime, so Orca needs you to update it there.'
       )
     case 'wsl-runtime':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.wslRuntime',
-        'WSL skill updates are manual in this version.'
+        'This skill is in WSL, so Orca needs you to update it there.'
       )
     case 'missing-install':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.missingInstall',
-        'The managed skill is not installed in the selected runtime.'
+        "This skill isn't installed for this runtime yet."
       )
     case 'project-install':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.projectInstall',
-        'Project-scoped skills are not updated in the background.'
+        "This skill is installed in the project, so Orca won't update it automatically."
       )
     case 'ambiguous-install':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.ambiguousInstall',
-        'Orca found both global and project-scoped copies of this skill.'
+        'Orca found more than one copy of this skill and needs you to choose the right one.'
       )
     case 'bundled-or-plugin-install':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.bundledOrPluginInstall',
-        'Bundled and plugin-cache skills are not mutated by Orca.'
+        "This skill comes from Orca or a plugin, so Orca won't modify it here."
       )
     case 'symlinked-global-install':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.symlinkedGlobalInstall',
-        'Symlinked global skills are not safe for background updates yet.'
+        "This global skill is symlinked, so Orca won't change it automatically."
       )
     case 'unsupported-cli-contract':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.unsupportedCliContract',
-        'This build does not include the verified skills CLI update contract.'
+        "This Orca build can't verify skill updates yet."
       )
     case 'expected-hash-missing':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.expectedHashMissing',
-        'This build does not include an expected hash for this managed skill.'
+        "This Orca build can't verify the expected version of this skill."
       )
     case 'lockfile-missing':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.lockfileMissing',
-        'Orca could not find the global skills lockfile.'
+        "Orca couldn't find the global skills lockfile needed to verify this update."
       )
     case 'lockfile-malformed':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.lockfileMalformed',
-        'The global skills lockfile could not be parsed.'
+        "Orca couldn't read the global skills lockfile needed to verify this update."
       )
     case 'lockfile-unsupported-schema':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.lockfileUnsupportedSchema',
-        'The global skills lockfile uses an unsupported schema version.'
+        "The global skills lockfile uses a format Orca doesn't support yet."
       )
     case 'lock-entry-missing':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.lockEntryMissing',
-        'The global skills lockfile does not track this skill.'
+        "The global skills lockfile doesn't track this skill, so Orca can't verify the update."
       )
     case 'lock-entry-unmanaged-source':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.lockEntryUnmanagedSource',
-        'The installed skill is not tracked as Orca-managed source.'
+        "This installed skill isn't tracked as Orca-managed, so Orca won't update it automatically."
       )
     case 'background-update-disabled':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.backgroundUpdateDisabled',
-        'Automatic skill updates are turned off, so this update needs manual review.'
+        'Automatic skill updates are off, so Orca needs you to run this update.'
       )
     case 'cooldown':
       return translate(
@@ -131,12 +199,12 @@ export function getManagedSkillFallbackDisplayMessage(
     case 'update-failed':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.updateFailed',
-        'The managed-skill update command failed.'
+        'Orca tried to update this skill automatically, but the command failed.'
       )
     case 'update-timeout':
       return translate(
         'auto.components.skills.ManagedAgentSkillSetupDialogHost.updateTimeout',
-        'The managed-skill update command timed out.'
+        'Orca tried to update this skill automatically, but the command timed out.'
       )
   }
 }

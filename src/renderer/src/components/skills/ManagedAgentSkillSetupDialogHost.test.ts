@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ManagedAgentSkillFallback } from '../../../../shared/skills'
 import {
   getManagedSkillFallbackDisplayMessage,
-  getManagedSkillContextCopy
+  getManagedSkillContextCopy,
+  getManagedSkillContextWorkspaceCopy
 } from './managed-agent-skill-dialog-copy'
 import {
   advanceManagedAgentSkillFallbackQueue,
@@ -52,21 +53,28 @@ beforeEach(() => {
 })
 
 describe('ManagedAgentSkillSetupDialogHost copy', () => {
-  it('names the agent-triggered orchestration context', () => {
-    expect(getManagedSkillContextCopy('agent-orchestration')).toBe(
-      'An agent just tried to use Orca orchestration. Orca needs the orchestration skill before agents can coordinate reliably.'
+  it('uses neutral orchestration context copy when no workspace is available', () => {
+    expect(getManagedSkillContextCopy('agent-orchestration', 'Update')).toBe(
+      'Orca Orchestration was used. Update the orchestration skill to enable agents to coordinate reliably.'
     )
   })
 
   it('names the Linear worktree context', () => {
-    expect(getManagedSkillContextCopy('linear-worktree')).toBe(
-      'This Linear task workflow needs the Linear agent skill. Orca could not update it automatically.'
+    expect(getManagedSkillContextCopy('linear-worktree', 'Install')).toBe(
+      'A worktree was started from a Linear task. Install the Linear agent skill to enable agents to read and update Linear issues.'
     )
+  })
+
+  it('splits workspace-aware context copy so the workspace can expose its full path', () => {
+    expect(getManagedSkillContextWorkspaceCopy('agent-computer-use', 'Install')).toEqual({
+      beforeWorkspace: 'Computer Use was used in ',
+      afterWorkspace: '. Install the Computer Use skill to enable agents to control apps reliably.'
+    })
   })
 
   it('localizes fallback reason copy in the renderer', () => {
     expect(getManagedSkillFallbackDisplayMessage('remote-runtime')).toBe(
-      'Remote runtimes are not updated in the background.'
+      'This skill is on a remote runtime, so Orca needs you to update it there.'
     )
   })
 })

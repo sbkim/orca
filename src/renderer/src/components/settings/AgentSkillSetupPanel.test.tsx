@@ -218,6 +218,13 @@ describe('AgentSkillSetupPanel', () => {
     expect(buttonMarkupByLabel(html, 'Install')).toContain('disabled=""')
   })
 
+  it('omits description copy when the enclosing surface already provides context', () => {
+    const html = renderPanel({ description: undefined, hideHeader: true })
+
+    expect(html).not.toContain('Enables agents to use Orca workflows.')
+    expect(buttonLabels(html)).toEqual(['Install', 'Re-check'])
+  })
+
   it('opens not-installed setup with the install command for preview, copy, and terminal', async () => {
     await renderInteractivePanel({ installedCommand: UPDATE_COMMAND })
 

@@ -3315,10 +3315,10 @@
           "recheck": "Volver a comprobar",
           "dontShowAgain": "No volver a mostrar",
           "notNow": "Ahora no",
-          "linearWorktreeContext": "Este flujo de tarea de Linear necesita la habilidad de agente de Linear. Orca no pudo actualizarla automáticamente.",
-          "agentOrchestrationContext": "Un agente acaba de intentar usar la orquestación de Orca. Orca necesita la habilidad de orquestación para que los agentes puedan coordinarse de forma fiable.",
-          "agentComputerUseContext": "Un agente acaba de intentar usar Computer Use. Orca necesita la habilidad Computer Use para que los agentes puedan controlar apps de forma fiable.",
-          "agentOrcaCliContext": "Un agente acaba de intentar usar la habilidad de CLI de Orca para este flujo. Orca necesita la habilidad de CLI para que este flujo pueda continuar de forma fiable.",
+          "linearWorktreeContext": "A worktree was started from a Linear task. {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.",
+          "agentOrchestrationContext": "Orca Orchestration was used. {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.",
+          "agentComputerUseContext": "Computer Use was used. {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.",
+          "agentOrcaCliContext": "The Orca CLI skill was used. {{actionLabel}} the CLI skill to enable this workflow to continue reliably.",
           "targetRequired": "Orca no pudo resolver el entorno de ejecución que debe leer esta habilidad.",
           "unsupportedSkill": "Esta no es una habilidad de agente administrada por Orca.",
           "repairRequiredRuntime": "El entorno de ejecución seleccionado necesita reparación antes de que Orca pueda inspeccionar sus habilidades.",
@@ -3339,7 +3339,15 @@
           "backgroundUpdateDisabled": "Las actualizaciones automáticas de habilidades están desactivadas, por lo que esta actualización necesita revisión manual.",
           "cooldown": "Orca intentó recientemente esta comprobación de habilidad administrada y está esperando antes de volver a intentarlo.",
           "updateFailed": "El comando de actualización de la habilidad administrada falló.",
-          "updateTimeout": "El comando de actualización de la habilidad administrada agotó el tiempo de espera."
+          "updateTimeout": "El comando de actualización de la habilidad administrada agotó el tiempo de espera.",
+          "linearWorktreeContextBeforeWorkspace": "A worktree was started from a Linear task in ",
+          "linearWorktreeContextAfterWorkspace": ". {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.",
+          "agentOrchestrationContextBeforeWorkspace": "Orca Orchestration was used in ",
+          "agentOrchestrationContextAfterWorkspace": ". {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.",
+          "agentComputerUseContextBeforeWorkspace": "Computer Use was used in ",
+          "agentComputerUseContextAfterWorkspace": ". {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.",
+          "agentOrcaCliContextBeforeWorkspace": "The Orca CLI skill was used in ",
+          "agentOrcaCliContextAfterWorkspace": ". {{actionLabel}} the CLI skill to enable this workflow to continue reliably."
         }
       },
       "sidebar": {

@@ -3315,10 +3315,10 @@
           "recheck": "再チェック",
           "dontShowAgain": "今後表示しない",
           "notNow": "今はしない",
-          "linearWorktreeContext": "この Linear タスクのワークフローには Linear エージェントスキルが必要です。Orca は自動更新できませんでした。",
-          "agentOrchestrationContext": "エージェントが Orca オーケストレーションを使おうとしました。エージェントが確実に連携するには、Orca にオーケストレーションスキルが必要です。",
-          "agentComputerUseContext": "エージェントが Computer Use を使おうとしました。エージェントがアプリを確実に操作するには、Orca に Computer Use スキルが必要です。",
-          "agentOrcaCliContext": "エージェントがこのワークフローで Orca の CLI スキルを使おうとしました。このワークフローを確実に続行するには、Orca に CLI スキルが必要です。",
+          "linearWorktreeContext": "A worktree was started from a Linear task. {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.",
+          "agentOrchestrationContext": "Orca Orchestration was used. {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.",
+          "agentComputerUseContext": "Computer Use was used. {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.",
+          "agentOrcaCliContext": "The Orca CLI skill was used. {{actionLabel}} the CLI skill to enable this workflow to continue reliably.",
           "targetRequired": "Orca はこのスキルを読み取るランタイムを解決できませんでした。",
           "unsupportedSkill": "これは Orca 管理のエージェントスキルではありません。",
           "repairRequiredRuntime": "Orca がスキルを検査する前に、選択したランタイムの修復が必要です。",
@@ -3339,7 +3339,15 @@
           "backgroundUpdateDisabled": "スキルの自動更新がオフになっているため、この更新には手動確認が必要です。",
           "cooldown": "Orca は最近この管理対象スキルのチェックを試行したため、クールダウン中です。",
           "updateFailed": "管理対象スキルの更新コマンドに失敗しました。",
-          "updateTimeout": "管理対象スキルの更新コマンドがタイムアウトしました。"
+          "updateTimeout": "管理対象スキルの更新コマンドがタイムアウトしました。",
+          "linearWorktreeContextBeforeWorkspace": "A worktree was started from a Linear task in ",
+          "linearWorktreeContextAfterWorkspace": ". {{actionLabel}} the Linear agent skill to enable agents to read and update Linear issues.",
+          "agentOrchestrationContextBeforeWorkspace": "Orca Orchestration was used in ",
+          "agentOrchestrationContextAfterWorkspace": ". {{actionLabel}} the orchestration skill to enable agents to coordinate reliably.",
+          "agentComputerUseContextBeforeWorkspace": "Computer Use was used in ",
+          "agentComputerUseContextAfterWorkspace": ". {{actionLabel}} the Computer Use skill to enable agents to control apps reliably.",
+          "agentOrcaCliContextBeforeWorkspace": "The Orca CLI skill was used in ",
+          "agentOrcaCliContextAfterWorkspace": ". {{actionLabel}} the CLI skill to enable this workflow to continue reliably."
         }
       },
       "sidebar": {

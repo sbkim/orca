@@ -8,6 +8,7 @@ import {
 } from '@/hooks/useInstalledAgentSkills'
 import {
   getManagedSkillContextCopy,
+  getManagedSkillContextWorkspaceCopy,
   getManagedSkillFallbackDisplayMessage
 } from './managed-agent-skill-dialog-copy'
 import {
@@ -32,6 +33,7 @@ import {
   AGENT_SKILL_CLI_PREREQUISITE_NOTICE,
   isOrcaCliAvailableOnPath
 } from '@/lib/agent-skill-cli-prerequisite'
+import { basename } from '@/lib/path'
 import { translate } from '@/i18n/i18n'
 
 const DISMISS_STORAGE_PREFIX = 'orca:managed-agent-skill-setup-dismissed:'
@@ -84,7 +86,11 @@ export function ManagedAgentSkillSetupDialogHost(): React.JSX.Element | null {
     }
   }, [enqueueFallback])
 
-  const contextCopy = active ? getManagedSkillContextCopy(active.context) : ''
+  const contextActionLabel =
+    active?.manualCommand?.kind === 'update'
+      ? translate('auto.components.skills.ManagedAgentSkillSetupDialogHost.update', 'Update')
+      : translate('auto.components.skills.ManagedAgentSkillSetupDialogHost.install', 'Install')
+  const contextCopy = active ? getManagedSkillContextCopy(active.context, contextActionLabel) : ''
   const installedCommand = useMemo(
     () => (active ? buildAgentFeatureSkillUpdateCommand(active.skillName) : ''),
     [active]
@@ -134,6 +140,12 @@ export function ManagedAgentSkillSetupDialogHost(): React.JSX.Element | null {
 
   const command = active.manualCommand?.command
   const loading = installedState.loading || rechecking
+  const workspacePath = active.request.discoveryTarget?.projectRootPath?.trim() || null
+  const workspaceName = workspacePath ? basename(workspacePath) || workspacePath : null
+  const workspaceContextCopy =
+    workspacePath && workspaceName
+      ? getManagedSkillContextWorkspaceCopy(active.context, contextActionLabel)
+      : null
 
   return (
     <Dialog
@@ -154,10 +166,22 @@ export function ManagedAgentSkillSetupDialogHost(): React.JSX.Element | null {
                 'Agent skill setup needed'
               )}
             </DialogTitle>
-            <DialogDescription>{contextCopy}</DialogDescription>
+            <DialogDescription>
+              {workspaceContextCopy && workspacePath && workspaceName ? (
+                <>
+                  {workspaceContextCopy.beforeWorkspace}
+                  <span className="font-medium text-foreground" title={workspacePath}>
+                    {workspaceName}
+                  </span>
+                  {workspaceContextCopy.afterWorkspace}
+                </>
+              ) : (
+                contextCopy
+              )}
+            </DialogDescription>
           </DialogHeader>
           <div className="mt-4 flex items-start gap-2 text-[13px] leading-snug text-muted-foreground">
-            <Info className="mt-0.5 size-4 shrink-0" />
+            <Info className="mt-px size-4 shrink-0" />
             <p>{getManagedSkillFallbackDisplayMessage(active.reason)}</p>
           </div>
         </div>
@@ -170,7 +194,6 @@ export function ManagedAgentSkillSetupDialogHost(): React.JSX.Element | null {
               'auto.components.skills.ManagedAgentSkillSetupDialogHost.panelTitle',
               'Set up managed agent skill'
             )}
-            description={contextCopy}
             command={command}
             installedCommand={installedCommand}
             terminalTitle={translate(
@@ -186,17 +209,7 @@ export function ManagedAgentSkillSetupDialogHost(): React.JSX.Element | null {
             installed={installedState.installed}
             loading={loading}
             error={installedState.error}
-            installLabel={
-              active.manualCommand?.kind === 'update'
-                ? translate(
-                    'auto.components.skills.ManagedAgentSkillSetupDialogHost.update',
-                    'Update'
-                  )
-                : translate(
-                    'auto.components.skills.ManagedAgentSkillSetupDialogHost.install',
-                    'Install'
-                  )
-            }
+            installLabel={contextActionLabel}
             installedInstallLabel={translate(
               'auto.components.skills.ManagedAgentSkillSetupDialogHost.update',
               'Update'

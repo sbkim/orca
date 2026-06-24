@@ -90,7 +90,7 @@ const mockApi = {
       scope: 'missing',
       reason: 'remote-runtime',
       uiKey: 'remote::linear-tickets:linear-worktree',
-      message: 'Remote runtimes are not updated in the background.',
+      message: 'This skill is on a remote runtime, so Orca needs you to update it there.',
       request: {
         skillName: 'linear-tickets',
         context: 'linear-worktree',

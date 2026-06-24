@@ -16,7 +16,7 @@ type SkillPrerequisiteStatus = Awaited<ReturnType<typeof window.api.cli.getInsta
 
 type AgentSkillSetupPanelProps = {
   title: string
-  description: ReactNode
+  description?: ReactNode
   command: string
   installedCommand?: string
   terminalTitle: string
@@ -253,7 +253,9 @@ export function AgentSkillSetupPanel({
           </div>
         )}
         <div className={cn('max-w-none', hideHeader ? null : 'mt-3')}>
-          <p className="text-[13px] leading-snug text-muted-foreground">{description}</p>
+          {description ? (
+            <p className="text-[13px] leading-snug text-muted-foreground">{description}</p>
+          ) : null}
           {actionRow}
           {actionHint ? <div className="mt-2">{actionHint}</div> : null}
           {!installed && preInstallNotice && preInstallNoticeVisible ? (

@@ -3,46 +3,46 @@ import type { ManagedAgentSkillFallbackReason } from '../../shared/skills'
 export function getManagedSkillFallbackMessage(reason: ManagedAgentSkillFallbackReason): string {
   switch (reason) {
     case 'target-required':
-      return 'Orca could not resolve the runtime that should read this skill.'
+      return "Orca couldn't tell which runtime should use this skill."
     case 'unsupported-skill':
-      return 'This is not an Orca-managed agent skill.'
+      return "This isn't an Orca-managed skill."
     case 'repair-required-runtime':
-      return 'The selected runtime needs repair before Orca can inspect its skills.'
+      return 'This runtime needs repair before Orca can inspect its skills.'
     case 'remote-runtime':
-      return 'Remote runtimes are not updated in the background.'
+      return 'This skill is on a remote runtime, so Orca needs you to update it there.'
     case 'wsl-runtime':
-      return 'WSL skill updates are manual in this version.'
+      return 'This skill is in WSL, so Orca needs you to update it there.'
     case 'missing-install':
-      return 'The managed skill is not installed in the selected runtime.'
+      return "This skill isn't installed for this runtime yet."
     case 'project-install':
-      return 'Project-scoped skills are not updated in the background.'
+      return "This skill is installed in the project, so Orca won't update it automatically."
     case 'ambiguous-install':
-      return 'Orca found both global and project-scoped copies of this skill.'
+      return 'Orca found more than one copy of this skill and needs you to choose the right one.'
     case 'bundled-or-plugin-install':
-      return 'Bundled and plugin-cache skills are not mutated by Orca.'
+      return "This skill comes from Orca or a plugin, so Orca won't modify it here."
     case 'symlinked-global-install':
-      return 'Symlinked global skills are not safe for background updates yet.'
+      return "This global skill is symlinked, so Orca won't change it automatically."
     case 'unsupported-cli-contract':
-      return 'This build does not include the verified skills CLI update contract.'
+      return "This Orca build can't verify skill updates yet."
     case 'expected-hash-missing':
-      return 'This build does not include an expected hash for this managed skill.'
+      return "This Orca build can't verify the expected version of this skill."
     case 'lockfile-missing':
-      return 'Orca could not find the global skills lockfile.'
+      return "Orca couldn't find the global skills lockfile needed to verify this update."
     case 'lockfile-malformed':
-      return 'The global skills lockfile could not be parsed.'
+      return "Orca couldn't read the global skills lockfile needed to verify this update."
     case 'lockfile-unsupported-schema':
-      return 'The global skills lockfile uses an unsupported schema version.'
+      return "The global skills lockfile uses a format Orca doesn't support yet."
     case 'lock-entry-missing':
-      return 'The global skills lockfile does not track this skill.'
+      return "The global skills lockfile doesn't track this skill, so Orca can't verify the update."
     case 'lock-entry-unmanaged-source':
-      return 'The installed skill is not tracked as Orca-managed source.'
+      return "This installed skill isn't tracked as Orca-managed, so Orca won't update it automatically."
     case 'background-update-disabled':
-      return 'Automatic skill updates are turned off, so this update needs manual review.'
+      return 'Automatic skill updates are off, so Orca needs you to run this update.'
     case 'cooldown':
       return 'Orca recently tried this managed-skill check and is cooling down.'
     case 'update-failed':
-      return 'The managed-skill update command failed.'
+      return 'Orca tried to update this skill automatically, but the command failed.'
     case 'update-timeout':
-      return 'The managed-skill update command timed out.'
+      return 'Orca tried to update this skill automatically, but the command timed out.'
   }
 }

@@ -2341,7 +2341,7 @@ function createSkillsApi(): NonNullable<Partial<PreloadApi>['skills']> {
         uiKey,
         message: translate(
           'auto.web.web.preload.api.remoteManagedSkillRuntime',
-          'Remote runtimes are not updated in the background.'
+          'This skill is on a remote runtime, so Orca needs you to update it there.'
         ),
         request
       } satisfies ManagedAgentSkillFallback
