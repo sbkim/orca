@@ -3,6 +3,7 @@ import type { IMarker, Terminal } from '@xterm/xterm'
 import {
   captureScrollState,
   getTerminalOutputEpoch,
+  isTerminalScrollRestoreInProgress,
   recordTerminalOutput,
   restoreScrollState,
   restoreScrollStateAfterLayout
@@ -102,6 +103,27 @@ describe('scroll state', () => {
 
     expect(terminal.scrollToLine).toHaveBeenCalledWith(42)
     expect(terminal.buffer.active.viewportY).toBe(42)
+  })
+
+  it('marks imperative restore scrolls through the current task', () => {
+    vi.useFakeTimers()
+    const terminal = createTerminal({ viewportY: 10, baseY: 100 })
+    ;(terminal.scrollToLine as ReturnType<typeof vi.fn>).mockImplementation((line: number) => {
+      expect(isTerminalScrollRestoreInProgress(terminal)).toBe(true)
+      ;(terminal.buffer.active as { viewportY: number }).viewportY = line
+    })
+    const state: ScrollState = {
+      bufferType: 'normal',
+      wasAtBottom: false,
+      viewportY: 42,
+      baseY: 100
+    }
+
+    restoreScrollState(terminal, state)
+
+    expect(isTerminalScrollRestoreInProgress(terminal)).toBe(true)
+    vi.advanceTimersByTime(0)
+    expect(isTerminalScrollRestoreInProgress(terminal)).toBe(false)
   })
 
   it('skips restore when the terminal element is gone (post WebGL teardown)', () => {

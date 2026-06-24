@@ -4,7 +4,8 @@ import { flushTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-sch
 import {
   cancelDeferredScrollRestore,
   captureScrollState,
-  getTerminalOutputEpoch
+  getTerminalOutputEpoch,
+  isTerminalScrollRestoreInProgress
 } from '@/lib/pane-manager/pane-scroll'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { ScrollState } from '@/lib/pane-manager/pane-manager-types'
@@ -190,7 +191,11 @@ export function useTerminalScrollVisibilityMemory({
       disposables.set(
         pane.id,
         onScroll.call(pane.terminal, () => {
-          if (!isVisibleRef.current || suppressScrollTrackingRef.current) {
+          if (
+            !isVisibleRef.current ||
+            suppressScrollTrackingRef.current ||
+            isTerminalScrollRestoreInProgress(pane.terminal)
+          ) {
             return
           }
           rememberVisibleScrollSnapshot(pane.id, pane.terminal)

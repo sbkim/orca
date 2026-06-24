@@ -7,6 +7,7 @@ import {
 } from './terminal-scroll-restore-debug'
 
 const terminalOutputEpochs = new WeakMap<Terminal, number>()
+const terminalScrollRestoreDepths = new WeakMap<Terminal, number>()
 const deferredScrollRestores = new WeakMap<
   Terminal,
   {
@@ -29,6 +30,10 @@ export function recordTerminalOutput(terminal: Terminal): void {
 
 export function getTerminalOutputEpoch(terminal: Terminal): number {
   return terminalOutputEpochs.get(terminal) ?? 0
+}
+
+export function isTerminalScrollRestoreInProgress(terminal: Terminal): boolean {
+  return (terminalScrollRestoreDepths.get(terminal) ?? 0) > 0
 }
 
 export function cancelDeferredScrollRestore(terminal: Terminal): void {
@@ -170,7 +175,7 @@ function restoreScrollStateNow(
   // window quietly — the next visibility flip re-fits and re-restores.
   if (state.wasAtBottom) {
     const before = terminalViewportForDebug(terminal)
-    if (safeScrollCall(() => terminal.scrollToBottom())) {
+    if (safeScrollRestoreCall(terminal, () => terminal.scrollToBottom())) {
       if (options.syncScrollbar) {
         forceViewportScrollbarSync(terminal)
       }
@@ -197,7 +202,7 @@ function restoreScrollStateNow(
   // (restoreScrollState, the timeout in
   // restoreScrollStateAfterLayout, cancelDeferredScrollRestore) own disposal.
   const before = terminalViewportForDebug(terminal)
-  if (safeScrollCall(() => terminal.scrollToLine(targetLine))) {
+  if (safeScrollRestoreCall(terminal, () => terminal.scrollToLine(targetLine))) {
     if (options.syncScrollbar) {
       forceViewportScrollbarSync(terminal)
     }
@@ -229,6 +234,26 @@ function safeScrollCall(fn: () => void): boolean {
   }
 }
 
+function safeScrollRestoreCall(terminal: Terminal, fn: () => void): boolean {
+  const depth = terminalScrollRestoreDepths.get(terminal) ?? 0
+  terminalScrollRestoreDepths.set(terminal, depth + 1)
+  try {
+    return safeScrollCall(fn)
+  } finally {
+    // Why: xterm can notify scroll listeners just after the imperative scroll
+    // returns. Keep the restore marker through the current task so those
+    // notifications do not become remembered user scroll positions.
+    setTimeout(() => {
+      const nextDepth = (terminalScrollRestoreDepths.get(terminal) ?? 1) - 1
+      if (nextDepth > 0) {
+        terminalScrollRestoreDepths.set(terminal, nextDepth)
+      } else {
+        terminalScrollRestoreDepths.delete(terminal)
+      }
+    }, 0)
+  }
+}
+
 export function releaseScrollStateMarker(state: ScrollState): void {
   state.firstVisibleLineMarker?.dispose()
   state.firstVisibleLineMarker = undefined
@@ -244,10 +269,10 @@ function forceViewportScrollbarSync(terminal: Terminal): void {
     return
   }
   if (buf.viewportY > 0) {
-    safeScrollCall(() => terminal.scrollLines(-1))
-    safeScrollCall(() => terminal.scrollLines(1))
+    safeScrollRestoreCall(terminal, () => terminal.scrollLines(-1))
+    safeScrollRestoreCall(terminal, () => terminal.scrollLines(1))
   } else if (buf.viewportY < buf.baseY) {
-    safeScrollCall(() => terminal.scrollLines(1))
-    safeScrollCall(() => terminal.scrollLines(-1))
+    safeScrollRestoreCall(terminal, () => terminal.scrollLines(1))
+    safeScrollRestoreCall(terminal, () => terminal.scrollLines(-1))
   }
 }

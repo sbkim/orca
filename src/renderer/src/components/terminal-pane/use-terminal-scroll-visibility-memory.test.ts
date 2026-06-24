@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => ({
     baseY: 0
   })),
   flushTerminalOutput: vi.fn(),
-  getTerminalOutputEpoch: vi.fn(() => 1)
+  getTerminalOutputEpoch: vi.fn(() => 1),
+  isTerminalScrollRestoreInProgress: vi.fn(() => false)
 }))
 
 const reactRefState = vi.hoisted(() => ({
@@ -65,7 +66,8 @@ vi.mock('@/lib/pane-manager/pane-terminal-output-scheduler', () => ({
 vi.mock('@/lib/pane-manager/pane-scroll', () => ({
   cancelDeferredScrollRestore: mocks.cancelDeferredScrollRestore,
   captureScrollState: mocks.captureScrollState,
-  getTerminalOutputEpoch: mocks.getTerminalOutputEpoch
+  getTerminalOutputEpoch: mocks.getTerminalOutputEpoch,
+  isTerminalScrollRestoreInProgress: mocks.isTerminalScrollRestoreInProgress
 }))
 
 describe('useTerminalScrollVisibilityMemory', () => {
@@ -148,5 +150,52 @@ describe('useTerminalScrollVisibilityMemory', () => {
 
     expect(cancelAnimationFrame).toHaveBeenCalledWith(7)
     expect(mocks.flushTerminalOutput).not.toHaveBeenCalled()
+  })
+
+  it('does not remember scroll events caused by a deferred restore', () => {
+    const onScrollListeners: (() => void)[] = []
+    const terminal = {
+      onScroll: vi.fn((listener: () => void) => {
+        onScrollListeners.push(listener)
+        return { dispose: vi.fn() }
+      })
+    }
+    const manager = {
+      getPanes: vi.fn(() => [{ id: 1, terminal }])
+    }
+    const userScrolledState = {
+      bufferType: 'normal',
+      wasAtBottom: false,
+      viewportY: 42,
+      baseY: 100
+    }
+    const restoreBottomState = {
+      bufferType: 'normal',
+      wasAtBottom: true,
+      viewportY: 100,
+      baseY: 100
+    }
+    mocks.captureScrollState
+      .mockReturnValueOnce(userScrolledState)
+      .mockReturnValueOnce(restoreBottomState)
+
+    beginHookRender()
+    const visibilityMemory = useTerminalScrollVisibilityMemory({
+      managerRef: { current: manager as never },
+      isVisibleRef: { current: true },
+      visibleResumeCompleteRef: { current: true },
+      paneCount: 1
+    })
+
+    const listener = onScrollListeners[0]
+    if (!listener) {
+      throw new Error('expected onScroll listener to be registered')
+    }
+    listener()
+    mocks.isTerminalScrollRestoreInProgress.mockReturnValueOnce(true)
+    listener()
+
+    expect(visibilityMemory.captureViewportPositions(true).get(1)).toBe(userScrolledState)
+    expect(mocks.captureScrollState).toHaveBeenCalledTimes(1)
   })
 })
