@@ -364,6 +364,13 @@
               }
             }
           }
+        },
+        "setup": {
+          "background": {
+            "session": {
+              "setupTitle": "설정"
+            }
+          }
         }
       },
       "local": {

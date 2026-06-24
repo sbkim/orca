@@ -3,6 +3,7 @@
  * completion bookkeeping, and focus restoration. */
 import { useEffect } from 'react'
 import { launchAgentBackgroundSession } from '@/lib/launch-agent-background-session'
+import { launchSetupBackgroundSession } from '@/lib/launch-setup-background-session'
 import { submitPromptToAgentTab } from '@/lib/agent-paste-draft'
 import { findReusableAutomationSession } from '@/lib/automation-session-reuse'
 import { observeExistingAutomationSession } from '@/lib/automation-session-observer'
@@ -174,50 +175,51 @@ export function useAutomationDispatchEvents(): void {
           }
 
           const automationWorkspaceCreateRequestId = createBrowserUuid()
-          const worktree =
+          const createResult =
             automation.workspaceMode === 'new_per_run'
-              ? (
-                  await useAppStore
-                    .getState()
-                    .createWorktree(
-                      runRepoId,
-                      buildAutomationWorkspaceName(run.title, run.scheduledFor),
-                      automation.baseBranch ?? undefined,
-                      'inherit',
-                      undefined,
-                      'unknown',
-                      run.title,
-                      undefined,
-                      undefined,
-                      undefined,
-                      automation.agentId,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      undefined,
-                      {
-                        automationProvenanceRequest: {
-                          automationId: automation.id,
-                          automationRunId: run.id,
-                          dispatchToken,
-                          createRequestId: automationWorkspaceCreateRequestId
-                        }
+              ? await useAppStore
+                  .getState()
+                  .createWorktree(
+                    runRepoId,
+                    buildAutomationWorkspaceName(run.title, run.scheduledFor),
+                    automation.baseBranch ?? undefined,
+                    'inherit',
+                    undefined,
+                    'unknown',
+                    run.title,
+                    undefined,
+                    undefined,
+                    undefined,
+                    automation.agentId,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    undefined,
+                    {
+                      automationProvenanceRequest: {
+                        automationId: automation.id,
+                        automationRunId: run.id,
+                        dispatchToken,
+                        createRequestId: automationWorkspaceCreateRequestId
                       }
-                    )
-                ).worktree
-              : automation.workspaceId
-                ? automationWorktree
-                : null
+                    }
+                  )
+              : null
+          const worktree = createResult
+            ? createResult.worktree
+            : automation.workspaceId
+              ? automationWorktree
+              : null
 
           if (!worktree) {
             await markDispatchResult({
@@ -410,6 +412,10 @@ export function useAutomationDispatchEvents(): void {
               }
             }
           }
+          await launchSetupBackgroundSession({
+            worktreeId: worktree.id,
+            setup: createResult?.setup
+          })
           const result = await launchAgentBackgroundSession({
             agent: automation.agentId,
             worktreeId: worktree.id,

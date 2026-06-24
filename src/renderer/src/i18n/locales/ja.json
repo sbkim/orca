@@ -364,6 +364,13 @@
               }
             }
           }
+        },
+        "setup": {
+          "background": {
+            "session": {
+              "setupTitle": "セットアップ"
+            }
+          }
         }
       },
       "local": {
