@@ -73,6 +73,11 @@ import {
 import { resolvePaneKeyForManager } from '@/lib/pane-manager/pane-key-resolution'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
 import { captureScrollState, restoreScrollStateAfterLayout } from '@/lib/pane-manager/pane-scroll'
+import {
+  logTerminalScrollRestore,
+  terminalScrollStateForDebug,
+  terminalViewportForDebug
+} from '@/lib/pane-manager/terminal-scroll-restore-debug'
 import { captureTerminalShutdownLayout } from './terminal-shutdown-layout-capture'
 import {
   inspectRuntimeTerminalProcess,
@@ -713,6 +718,18 @@ export default function TerminalPane({
       ? Object.fromEntries(
           currentPanes.map((pane) => {
             const { bufferType, wasAtBottom, viewportY, baseY } = captureScrollState(pane.terminal)
+            logTerminalScrollRestore('layout-persist', {
+              baseY,
+              bufferType,
+              isVisible: isVisibleRef.current,
+              leafId: pane.leafId,
+              paneId: pane.id,
+              source: 'persistLayoutSnapshot',
+              tabId,
+              viewportY,
+              wasAtBottom,
+              worktreeId
+            })
             return [pane.leafId, { bufferType, wasAtBottom, viewportY, baseY }]
           })
         )
@@ -725,6 +742,15 @@ export default function TerminalPane({
       layout.scrollStatesByLeafId = scrollStatesByLeafId
       if (isVisibleRef.current) {
         lastVisibleScrollStatesByLeafIdRef.current = scrollStatesByLeafId
+      }
+      if (!isVisibleRef.current) {
+        logTerminalScrollRestore('layout-persist', {
+          isVisible: false,
+          leafIds: Object.keys(scrollStatesByLeafId),
+          source: 'preserve-hidden-prior',
+          tabId,
+          worktreeId
+        })
       }
     }
     // Why: between pane creation and the deferred rAF where PTYs actually
@@ -819,10 +845,21 @@ export default function TerminalPane({
     return Object.fromEntries(
       manager.getPanes().map((pane) => {
         const { bufferType, wasAtBottom, viewportY, baseY } = captureScrollState(pane.terminal)
+        logTerminalScrollRestore('capture-current', {
+          baseY,
+          bufferType,
+          leafId: pane.leafId,
+          paneId: pane.id,
+          source: 'visible-cleanup',
+          tabId,
+          viewportY,
+          wasAtBottom,
+          worktreeId
+        })
         return [pane.leafId, { bufferType, wasAtBottom, viewportY, baseY }]
       })
     )
-  }, [])
+  }, [tabId, worktreeId])
 
   useLayoutEffect(() => {
     if (!isVisible) {
@@ -861,11 +898,20 @@ export default function TerminalPane({
     for (const pane of panes) {
       const scrollState = scrollStatesByLeafId[pane.leafId]
       if (scrollState) {
+        logTerminalScrollRestore('durable-restore', {
+          current: terminalViewportForDebug(pane.terminal),
+          leafId: pane.leafId,
+          paneId: pane.id,
+          saved: terminalScrollStateForDebug(scrollState),
+          source: 'visible-remount-fallback',
+          tabId,
+          worktreeId
+        })
         restoreScrollStateAfterLayout(pane.terminal, scrollState, { syncScrollbar: false })
       }
     }
     hasAppliedDurableScrollRestoreRef.current = true
-  }, [isVisible, paneCount])
+  }, [isVisible, paneCount, tabId, worktreeId])
 
   const clearPaneScrollback = useCallback(
     (pane: ManagedPane): void => {

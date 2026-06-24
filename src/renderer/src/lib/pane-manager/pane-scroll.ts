@@ -1,5 +1,10 @@
 import type { Terminal } from '@xterm/xterm'
 import type { ScrollState } from './pane-manager-types'
+import {
+  logTerminalScrollRestore,
+  terminalScrollStateForDebug,
+  terminalViewportForDebug
+} from './terminal-scroll-restore-debug'
 
 const terminalOutputEpochs = new WeakMap<Terminal, number>()
 const deferredScrollRestores = new WeakMap<
@@ -74,6 +79,11 @@ export function restoreScrollStateAfterLayout(
 ): void {
   cancelDeferredScrollRestore(terminal)
   const syncScrollbar = options.syncScrollbar ?? true
+  logTerminalScrollRestore('restore-scheduled', {
+    saved: terminalScrollStateForDebug(state),
+    syncScrollbar,
+    viewport: terminalViewportForDebug(terminal)
+  })
   restoreScrollStateNow(terminal, state, { syncScrollbar })
   if (typeof requestAnimationFrame !== 'function') {
     releaseScrollStateMarker(state)
@@ -131,10 +141,21 @@ function restoreScrollStateNow(
   options: Required<RestoreScrollStateOptions>
 ): void {
   if (!terminal.element) {
+    logTerminalScrollRestore('restore-attempt', {
+      reason: 'missing-element',
+      saved: terminalScrollStateForDebug(state),
+      syncScrollbar: options.syncScrollbar
+    })
     return
   }
   const buf = terminal.buffer.active
   if (state.bufferType === 'alternate' || buf.type !== state.bufferType) {
+    logTerminalScrollRestore('restore-attempt', {
+      reason: 'buffer-type-mismatch',
+      saved: terminalScrollStateForDebug(state),
+      syncScrollbar: options.syncScrollbar,
+      viewport: terminalViewportForDebug(terminal)
+    })
     return
   }
 
@@ -143,10 +164,18 @@ function restoreScrollStateNow(
   // throw "cannot read dimensions" until the pane re-attaches. Swallow that
   // window quietly — the next visibility flip re-fits and re-restores.
   if (state.wasAtBottom) {
+    const before = terminalViewportForDebug(terminal)
     if (safeScrollCall(() => terminal.scrollToBottom())) {
       if (options.syncScrollbar) {
         forceViewportScrollbarSync(terminal)
       }
+      logTerminalScrollRestore('restore-attempt', {
+        after: terminalViewportForDebug(terminal),
+        before,
+        branch: 'bottom',
+        saved: terminalScrollStateForDebug(state),
+        syncScrollbar: options.syncScrollbar
+      })
     }
     return
   }
@@ -161,10 +190,20 @@ function restoreScrollStateNow(
   // retries can recover after snapshot replay grows the buffer. Callers
   // (restoreScrollState, the timeout in
   // restoreScrollStateAfterLayout, cancelDeferredScrollRestore) own disposal.
+  const before = terminalViewportForDebug(terminal)
   if (safeScrollCall(() => terminal.scrollToLine(targetLine))) {
     if (options.syncScrollbar) {
       forceViewportScrollbarSync(terminal)
     }
+    logTerminalScrollRestore('restore-attempt', {
+      after: terminalViewportForDebug(terminal),
+      before,
+      branch: 'line',
+      markerLine,
+      saved: terminalScrollStateForDebug(state),
+      syncScrollbar: options.syncScrollbar,
+      targetLine
+    })
   }
 }
 

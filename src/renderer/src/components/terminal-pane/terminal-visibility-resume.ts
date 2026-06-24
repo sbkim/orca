@@ -6,6 +6,11 @@ import {
   requestTerminalBacklogRecovery
 } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import { restoreScrollStateAfterLayout } from '@/lib/pane-manager/pane-scroll'
+import {
+  logTerminalScrollRestore,
+  terminalScrollStateForDebug,
+  terminalViewportForDebug
+} from '@/lib/pane-manager/terminal-scroll-restore-debug'
 import { fitAndFocusPanes, fitPanes, focusActivePane } from './pane-helpers'
 
 const VISIBLE_RESUME_FLUSH_CHARS = 256 * 1024
@@ -48,6 +53,12 @@ export function resumeTerminalVisibility({
   // restore path avoids content matching so duplicate agent log lines do
   // not jump to the wrong history entry.
   const viewportPositions = captureViewportPositions(!wasVisible)
+  logTerminalScrollRestore('visibility-resume', {
+    isActive,
+    paneCount: manager.getPanes().length,
+    shouldUseLightTabResume,
+    wasVisible
+  })
   withSuppressedScrollTracking(() => {
     if (shouldUseLightTabResume) {
       // Why: intra-worktree tab switches only toggle the overlay. Keeping
@@ -83,6 +94,13 @@ export function hideTerminalVisibility({
     // Why: hidden DOM/layout churn can mutate xterm's viewport before the
     // pane becomes visible again. Preserve the last visible position.
     captureViewportPositions(false)
+    logTerminalScrollRestore('visibility-hide', {
+      hasCompletedVisibleResume,
+      isWorktreeActive,
+      paneCount: manager.getPanes().length,
+      wasVisible,
+      wasWorktreeActive
+    })
   }
   if (!isWorktreeActive && (wasVisible || surfaceBecameHidden)) {
     // Suspend WebGL when going hidden. xterm.write() continues to land in
@@ -144,6 +162,12 @@ function restoreTerminalViewportPositions(
   for (const pane of manager.getPanes()) {
     const position = viewportPositions.get(pane.id)
     if (position) {
+      logTerminalScrollRestore('visibility-restore', {
+        before: terminalViewportForDebug(pane.terminal),
+        paneId: pane.id,
+        saved: terminalScrollStateForDebug(position),
+        source: 'resumeTerminalVisibility'
+      })
       restoreScrollStateAfterLayout(pane.terminal, position, { syncScrollbar: false })
     }
   }
