@@ -28,6 +28,7 @@ import {
   describeMaxBufferOverflowError,
   isMaxBufferOverflowError
 } from '../git/max-buffer-overflow'
+import { InFlightPromiseDedupe, stableInFlightKey } from '../../shared/in-flight-promise-dedupe'
 
 type NonInteractiveExecQueueEntry = {
   started: boolean
@@ -58,6 +59,8 @@ function filterUntrackedPorcelainStatus(stdout: string | undefined): string | un
 }
 
 export class SshGitProvider implements IGitProvider {
+  private readonly gitDiffReadDedupe = new InFlightPromiseDedupe<GitDiffResult | GitDiffResult[]>()
+
   private connectionId: string
   private mux: SshChannelMultiplexer
   private nonInteractiveExecQueues = new Map<string, NonInteractiveExecQueueEntry[]>()
@@ -84,6 +87,7 @@ export class SshGitProvider implements IGitProvider {
     worktreePath: string,
     options?: GitProviderStatusOptions
   ): Promise<GitStatusResult> {
+    this.gitDiffReadDedupe.clear()
     const includeIgnoredArgs = options?.includeIgnored ? { includeIgnored: true } : {}
     const upstreamCacheBypassArgs = options?.bypassEffectiveUpstreamNegativeCache
       ? { bypassEffectiveUpstreamNegativeCache: true }
@@ -321,36 +325,70 @@ export class SshGitProvider implements IGitProvider {
     staged: boolean,
     compareAgainstHead?: boolean
   ): Promise<GitDiffResult> {
-    return (await this.mux.request('git.diff', {
-      worktreePath,
-      filePath,
-      staged,
-      compareAgainstHead
-    })) as GitDiffResult
+    return this.gitDiffReadDedupe.run(
+      stableInFlightKey(['diff', worktreePath, filePath, staged, compareAgainstHead]),
+      async () =>
+        (await this.mux.request('git.diff', {
+          worktreePath,
+          filePath,
+          staged,
+          compareAgainstHead
+        })) as GitDiffResult
+    ) as Promise<GitDiffResult>
   }
 
   async stageFile(worktreePath: string, filePath: string): Promise<void> {
-    await this.mux.request('git.stage', { worktreePath, filePath })
+    this.gitDiffReadDedupe.clear()
+    try {
+      await this.mux.request('git.stage', { worktreePath, filePath })
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   async unstageFile(worktreePath: string, filePath: string): Promise<void> {
-    await this.mux.request('git.unstage', { worktreePath, filePath })
+    this.gitDiffReadDedupe.clear()
+    try {
+      await this.mux.request('git.unstage', { worktreePath, filePath })
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   async bulkStageFiles(worktreePath: string, filePaths: string[]): Promise<void> {
-    await this.mux.request('git.bulkStage', { worktreePath, filePaths })
+    this.gitDiffReadDedupe.clear()
+    try {
+      await this.mux.request('git.bulkStage', { worktreePath, filePaths })
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   async bulkUnstageFiles(worktreePath: string, filePaths: string[]): Promise<void> {
-    await this.mux.request('git.bulkUnstage', { worktreePath, filePaths })
+    this.gitDiffReadDedupe.clear()
+    try {
+      await this.mux.request('git.bulkUnstage', { worktreePath, filePaths })
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   async discardChanges(worktreePath: string, filePath: string): Promise<void> {
-    await this.mux.request('git.discard', { worktreePath, filePath })
+    this.gitDiffReadDedupe.clear()
+    try {
+      await this.mux.request('git.discard', { worktreePath, filePath })
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   async bulkDiscardChanges(worktreePath: string, filePaths: string[]): Promise<void> {
-    await this.mux.request('git.bulkDiscard', { worktreePath, filePaths })
+    this.gitDiffReadDedupe.clear()
+    try {
+      await this.mux.request('git.bulkDiscard', { worktreePath, filePaths })
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   async detectConflictOperation(worktreePath: string): Promise<GitConflictOperation> {
@@ -478,21 +516,44 @@ export class SshGitProvider implements IGitProvider {
     baseRef: string,
     options?: { includePatch?: boolean; filePath?: string; oldPath?: string }
   ): Promise<GitDiffResult[]> {
-    return (await this.mux.request('git.branchDiff', {
-      worktreePath,
-      baseRef,
-      ...options
-    })) as GitDiffResult[]
+    const keyOptions = options ?? {}
+    return this.gitDiffReadDedupe.run(
+      stableInFlightKey([
+        'branchDiff',
+        worktreePath,
+        baseRef,
+        keyOptions.includePatch ?? null,
+        keyOptions.filePath ?? null,
+        keyOptions.oldPath ?? null
+      ]),
+      async () =>
+        (await this.mux.request('git.branchDiff', {
+          worktreePath,
+          baseRef,
+          ...options
+        })) as GitDiffResult[]
+    ) as Promise<GitDiffResult[]>
   }
 
   async getCommitDiff(
     worktreePath: string,
     args: { commitOid: string; parentOid?: string | null; filePath: string; oldPath?: string }
   ): Promise<GitDiffResult> {
-    return (await this.mux.request('git.commitDiff', {
-      worktreePath,
-      ...args
-    })) as GitDiffResult
+    return this.gitDiffReadDedupe.run(
+      stableInFlightKey([
+        'commitDiff',
+        worktreePath,
+        args.commitOid,
+        args.parentOid ?? null,
+        args.filePath,
+        args.oldPath ?? null
+      ]),
+      async () =>
+        (await this.mux.request('git.commitDiff', {
+          worktreePath,
+          ...args
+        })) as GitDiffResult
+    ) as Promise<GitDiffResult>
   }
 
   async listWorktrees(

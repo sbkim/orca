@@ -70,14 +70,40 @@ import {
   bulkUnstageFiles,
   clearEffectiveUpstreamStatusCacheForTests,
   detectConflictOperation,
+  getBranchDiff,
   discardChanges,
+  getCommitDiff,
   getBranchCompare,
   getCommitCompare,
   getDiff,
   getStagedCommitContext,
   getStatus,
-  isWithinWorktree
+  isWithinWorktree,
+  stageFile
 } from './status'
+
+function deferredBuffer(content: string): {
+  promise: Promise<{ stdout: Buffer }>
+  resolve: () => void
+} {
+  let resolve!: (value: { stdout: Buffer }) => void
+  const promise = new Promise<{ stdout: Buffer }>((innerResolve) => {
+    resolve = innerResolve
+  })
+  return {
+    promise,
+    resolve: () => resolve({ stdout: Buffer.from(content) })
+  }
+}
+
+async function waitForMockCalls(mock: ReturnType<typeof vi.fn>, calls: number): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    if (mock.mock.calls.length >= calls) {
+      return
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  }
+}
 
 describe('discardChanges', () => {
   beforeEach(() => {
@@ -444,6 +470,235 @@ describe('getDiff', () => {
       isImage: true,
       mimeType: 'application/pdf'
     })
+  })
+
+  it('coalesces concurrent identical staged diff reads while in flight', async () => {
+    const leftBlob = deferredBuffer('head-content\n')
+    const rightBlob = deferredBuffer('index-content\n')
+    const pendingBuffers = [leftBlob, rightBlob]
+    gitExecFileAsyncBufferMock.mockImplementation(async () => pendingBuffers.shift()!.promise)
+
+    const reads = Array.from({ length: 8 }, () => getDiff('/repo', 'src/file.ts', true))
+
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 1)
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(1)
+
+    leftBlob.resolve()
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 2)
+    rightBlob.resolve()
+
+    const results = await Promise.all(reads)
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(2)
+    expect(results.every((result) => result.kind === 'text')).toBe(true)
+
+    gitExecFileAsyncBufferMock
+      .mockResolvedValueOnce({ stdout: Buffer.from('fresh-head\n') })
+      .mockResolvedValueOnce({ stdout: Buffer.from('fresh-index\n') })
+
+    await getDiff('/repo', 'src/file.ts', true)
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('clears pending diff reads when a mutation runs', async () => {
+    const firstBlob = deferredBuffer('head-content\n')
+    const secondBlob = deferredBuffer('fresh-head-content\n')
+    const pendingBuffers = [firstBlob, secondBlob]
+    gitExecFileAsyncBufferMock.mockImplementation(async () => pendingBuffers.shift()!.promise)
+    readFileMock.mockResolvedValue(Buffer.from('working-tree\n'))
+    gitExecFileAsyncMock.mockResolvedValue({ stdout: '', stderr: '' })
+
+    const first = getDiff('/repo', 'src/file.ts', false)
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 1)
+
+    await stageFile('/repo', 'src/file.ts')
+
+    const second = getDiff('/repo', 'src/file.ts', false)
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 2)
+
+    firstBlob.resolve()
+    secondBlob.resolve()
+    await Promise.all([first, second])
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(2)
+    expect(gitExecFileAsyncMock).toHaveBeenCalledWith(
+      ['add', '--', ':(literal)src/file.ts'],
+      expect.objectContaining({ cwd: '/repo' })
+    )
+  })
+
+  it('coalesces concurrent identical branch and commit diff reads while in flight', async () => {
+    const branchLeftBlob = deferredBuffer('branch-left\n')
+    const branchRightBlob = deferredBuffer('branch-right\n')
+    const pendingBranchBuffers = [branchLeftBlob, branchRightBlob]
+    gitExecFileAsyncBufferMock.mockImplementation(async () => pendingBranchBuffers.shift()!.promise)
+
+    const branchReads = Array.from({ length: 8 }, () =>
+      getBranchDiff('/repo', {
+        mergeBase: 'b'.repeat(40),
+        headOid: 'c'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-file.ts'
+      })
+    )
+
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 1)
+    branchLeftBlob.resolve()
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 2)
+    branchRightBlob.resolve()
+
+    await Promise.all(branchReads)
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(2)
+
+    gitExecFileAsyncBufferMock.mockReset()
+    const commitLeftBlob = deferredBuffer('commit-left\n')
+    const commitRightBlob = deferredBuffer('commit-right\n')
+    const pendingCommitBuffers = [commitLeftBlob, commitRightBlob]
+    gitExecFileAsyncBufferMock.mockImplementation(async () => pendingCommitBuffers.shift()!.promise)
+
+    const commitReads = Array.from({ length: 8 }, () =>
+      getCommitDiff('/repo', {
+        parentOid: 'd'.repeat(40),
+        commitOid: 'e'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-file.ts'
+      })
+    )
+
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 1)
+    commitLeftBlob.resolve()
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 2)
+    commitRightBlob.resolve()
+
+    await Promise.all(commitReads)
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('coalesces logically identical branch and commit diff args regardless of property order', async () => {
+    gitExecFileAsyncBufferMock.mockResolvedValue({ stdout: Buffer.from('blob\n') })
+
+    await Promise.all([
+      getBranchDiff('/repo', {
+        mergeBase: 'b'.repeat(40),
+        headOid: 'c'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-file.ts'
+      }),
+      getBranchDiff('/repo', {
+        oldPath: 'src/old-file.ts',
+        filePath: 'src/file.ts',
+        headOid: 'c'.repeat(40),
+        mergeBase: 'b'.repeat(40)
+      })
+    ])
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(2)
+
+    gitExecFileAsyncBufferMock.mockClear()
+
+    await Promise.all([
+      getCommitDiff('/repo', {
+        parentOid: 'd'.repeat(40),
+        commitOid: 'e'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-file.ts'
+      }),
+      getCommitDiff('/repo', {
+        oldPath: 'src/old-file.ts',
+        filePath: 'src/file.ts',
+        commitOid: 'e'.repeat(40),
+        parentOid: 'd'.repeat(40)
+      })
+    ])
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps distinct diff inputs on separate in-flight reads', async () => {
+    gitExecFileAsyncBufferMock.mockResolvedValue({ stdout: Buffer.from('blob\n') })
+    readFileMock.mockResolvedValue(Buffer.from('working-tree\n'))
+
+    await Promise.all([
+      getDiff('/repo', 'src/file.ts', false, false),
+      getDiff('/repo', 'src/file.ts', false, true),
+      getDiff('/repo', 'src/file.ts', true, false),
+      getDiff('/repo', 'src/file.ts', true, false, { wslDistro: 'ubuntu' }),
+      getDiff('/repo', 'src/file.ts', true, false, { wslDistro: 'debian' })
+    ])
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(8)
+
+    gitExecFileAsyncBufferMock.mockReset()
+    gitExecFileAsyncBufferMock.mockResolvedValue({ stdout: Buffer.from('blob\n') })
+
+    await Promise.all([
+      getBranchDiff('/repo', {
+        mergeBase: 'b'.repeat(40),
+        headOid: 'c'.repeat(40),
+        filePath: 'src/file.ts'
+      }),
+      getBranchDiff('/repo', {
+        mergeBase: 'b'.repeat(40),
+        headOid: 'd'.repeat(40),
+        filePath: 'src/file.ts'
+      }),
+      getBranchDiff('/repo', {
+        mergeBase: 'b'.repeat(40),
+        headOid: 'c'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-a.ts'
+      }),
+      getBranchDiff('/repo', {
+        mergeBase: 'b'.repeat(40),
+        headOid: 'c'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-b.ts'
+      }),
+      getCommitDiff('/repo', {
+        parentOid: 'e'.repeat(40),
+        commitOid: 'f'.repeat(40),
+        filePath: 'src/file.ts'
+      }),
+      getCommitDiff('/repo', {
+        parentOid: 'a'.repeat(40),
+        commitOid: 'f'.repeat(40),
+        filePath: 'src/file.ts'
+      }),
+      getCommitDiff('/repo', {
+        parentOid: 'e'.repeat(40),
+        commitOid: 'f'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-a.ts'
+      }),
+      getCommitDiff('/repo', {
+        parentOid: 'e'.repeat(40),
+        commitOid: 'f'.repeat(40),
+        filePath: 'src/file.ts',
+        oldPath: 'src/old-b.ts'
+      })
+    ])
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(16)
+  })
+
+  it('coalesces parentless root commit diff reads without reading a left-side blob', async () => {
+    const rightBlob = deferredBuffer('root-content\n')
+    gitExecFileAsyncBufferMock.mockImplementation(async () => rightBlob.promise)
+
+    const reads = Array.from({ length: 8 }, () =>
+      getCommitDiff('/repo', {
+        parentOid: null,
+        commitOid: 'e'.repeat(40),
+        filePath: 'src/file.ts'
+      })
+    )
+
+    await waitForMockCalls(gitExecFileAsyncBufferMock, 1)
+    rightBlob.resolve()
+    await Promise.all(reads)
+
+    expect(gitExecFileAsyncBufferMock).toHaveBeenCalledTimes(1)
   })
 })
 

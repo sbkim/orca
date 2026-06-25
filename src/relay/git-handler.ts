@@ -46,6 +46,7 @@ import {
 } from '../shared/git-discard-path-safety'
 import { getGitCloneFailureMessage } from '../shared/git-clone-failure-message'
 import { syncForkDefaultBranch, validateGitForkSyncExpectedUpstream } from '../shared/git-fork-sync'
+import { InFlightPromiseDedupe, stableInFlightKey } from '../shared/in-flight-promise-dedupe'
 
 const execFileAsync = promisify(execFile)
 const MAX_GIT_BUFFER = 10 * 1024 * 1024
@@ -88,6 +89,7 @@ function execFileWithStdin(
 
 export class GitHandler {
   private dispatcher: RelayDispatcher
+  private readonly gitDiffReadDedupe = new InFlightPromiseDedupe<unknown>()
 
   // Why: RelayContext is accepted for protocol back-compat (see
   // docs/relay-fs-allowlist-removal.md) but no longer consulted on git ops.
@@ -187,6 +189,7 @@ export class GitHandler {
   }
 
   private async getStatus(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     return getStatusOp(this.git.bind(this), params)
   }
 
@@ -212,64 +215,110 @@ export class GitHandler {
     if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
       throw new Error(`Path "${filePath}" resolves outside the worktree`)
     }
-    return computeDiff(
-      this.gitBuffer.bind(this),
-      worktreePath,
-      filePath,
-      params.staged as boolean,
-      params.compareAgainstHead as boolean | undefined
+    return this.gitDiffReadDedupe.run(
+      stableInFlightKey([
+        'diff',
+        worktreePath,
+        filePath,
+        params.staged as boolean,
+        params.compareAgainstHead as boolean | undefined
+      ]),
+      () =>
+        computeDiff(
+          this.gitBuffer.bind(this),
+          worktreePath,
+          filePath,
+          params.staged as boolean,
+          params.compareAgainstHead as boolean | undefined
+        )
     )
   }
 
   private async stage(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const filePath = params.filePath as string
-    await this.git(['add', '--', filePath], worktreePath)
+    try {
+      await this.git(['add', '--', filePath], worktreePath)
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   private async commit(
     params: Record<string, unknown>
   ): Promise<{ success: boolean; error?: string }> {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const message = params.message as string
-    return commitChangesRelay(this.git.bind(this), worktreePath, message)
+    try {
+      return await commitChangesRelay(this.git.bind(this), worktreePath, message)
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   private async unstage(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const filePath = params.filePath as string
-    await this.git(['restore', '--staged', '--', filePath], worktreePath)
+    try {
+      await this.git(['restore', '--staged', '--', filePath], worktreePath)
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   private async bulkStage(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const filePaths = params.filePaths as string[]
-    for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
-      const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-      await this.git(['add', '--', ...chunk], worktreePath)
+    try {
+      for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
+        const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
+        await this.git(['add', '--', ...chunk], worktreePath)
+      }
+    } finally {
+      this.gitDiffReadDedupe.clear()
     }
   }
 
   private async bulkUnstage(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const filePaths = params.filePaths as string[]
-    for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
-      const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-      await this.git(['restore', '--staged', '--', ...chunk], worktreePath)
+    try {
+      for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
+        const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
+        await this.git(['restore', '--staged', '--', ...chunk], worktreePath)
+      }
+    } finally {
+      this.gitDiffReadDedupe.clear()
     }
   }
 
   private async abortMerge(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
-    await this.git(['merge', '--abort'], worktreePath)
+    try {
+      await this.git(['merge', '--abort'], worktreePath)
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   private async abortRebase(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
-    await this.git(['rebase', '--abort'], worktreePath)
+    try {
+      await this.git(['rebase', '--abort'], worktreePath)
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   private async checkout(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const branch = params.branch as string
     // Defense-in-depth: reject option-like branch tokens (the RPC schema also
@@ -279,8 +328,12 @@ export class GitHandler {
     if (typeof branch !== 'string' || branch.length === 0 || branch.startsWith('-')) {
       throw new Error('invalid_branch_name')
     }
-    await this.git(['checkout', branch, '--'], worktreePath)
-    return { ok: true as const, branch }
+    try {
+      await this.git(['checkout', branch, '--'], worktreePath)
+      return { ok: true as const, branch }
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   private async localBranches(params: Record<string, unknown>) {
@@ -338,88 +391,96 @@ export class GitHandler {
   }
 
   private async discard(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const filePath = params.filePath as string
-
-    this.assertInWorktree(worktreePath, filePath)
-
-    let tracked = false
     try {
-      await this.git(
-        ['ls-files', '--error-unmatch', '--', this.literalPathspec(filePath)],
-        worktreePath
-      )
-      tracked = true
-    } catch {
-      // untracked
-    }
+      this.assertInWorktree(worktreePath, filePath)
 
-    if (tracked) {
-      await this.git(
-        ['restore', '--worktree', '--source=HEAD', '--', this.literalPathspec(filePath)],
-        worktreePath
-      )
-      return
-    }
+      let tracked = false
+      try {
+        await this.git(
+          ['ls-files', '--error-unmatch', '--', this.literalPathspec(filePath)],
+          worktreePath
+        )
+        tracked = true
+      } catch {
+        // untracked
+      }
 
-    await removeSafeUntrackedDiscardTarget(worktreePath, filePath, (targetPath) =>
-      this.cleanUntrackedPaths(worktreePath, [targetPath])
-    )
+      if (tracked) {
+        await this.git(
+          ['restore', '--worktree', '--source=HEAD', '--', this.literalPathspec(filePath)],
+          worktreePath
+        )
+        return
+      }
+
+      await removeSafeUntrackedDiscardTarget(worktreePath, filePath, (targetPath) =>
+        this.cleanUntrackedPaths(worktreePath, [targetPath])
+      )
+    } finally {
+      this.gitDiffReadDedupe.clear()
+    }
   }
 
   private async bulkDiscard(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const filePaths = params.filePaths as string[]
     if (filePaths.length === 0) {
       return
     }
+    try {
+      for (const filePath of filePaths) {
+        this.assertInWorktree(worktreePath, filePath)
+      }
 
-    for (const filePath of filePaths) {
-      this.assertInWorktree(worktreePath, filePath)
-    }
+      const trackedPathSpecs: string[] = []
+      for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
+        const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
+        const { stdout } = await this.git(
+          ['ls-files', '-z', '--', ...chunk.map((p) => this.literalPathspec(p))],
+          worktreePath
+        )
+        // Why: selecting a tracked directory can make `ls-files -z` return
+        // enough descendants for push(...split) to exceed the argument limit.
+        for (const trackedPathSpec of stdout.split('\0')) {
+          if (trackedPathSpec) {
+            trackedPathSpecs.push(trackedPathSpec)
+          }
+        }
+      }
 
-    const trackedPathSpecs: string[] = []
-    for (let i = 0; i < filePaths.length; i += BULK_CHUNK_SIZE) {
-      const chunk = filePaths.slice(i, i + BULK_CHUNK_SIZE)
-      const { stdout } = await this.git(
-        ['ls-files', '-z', '--', ...chunk.map((p) => this.literalPathspec(p))],
-        worktreePath
+      const trackedPaths = filePaths.filter((filePath) =>
+        this.isTrackedPathSpec(filePath, trackedPathSpecs)
       )
-      // Why: selecting a tracked directory can make `ls-files -z` return
-      // enough descendants for push(...split) to exceed the argument limit.
-      for (const trackedPathSpec of stdout.split('\0')) {
-        if (trackedPathSpec) {
-          trackedPathSpecs.push(trackedPathSpec)
+      const untrackedPaths = filePaths.filter(
+        (filePath) => !this.isTrackedPathSpec(filePath, trackedPathSpecs)
+      )
+      await removeSafeUntrackedDiscardTargets(
+        worktreePath,
+        untrackedPaths,
+        (targetPaths) => this.cleanUntrackedPaths(worktreePath, targetPaths),
+        async () => {
+          for (let i = 0; i < trackedPaths.length; i += BULK_CHUNK_SIZE) {
+            const chunk = trackedPaths.slice(i, i + BULK_CHUNK_SIZE)
+            await this.git(
+              [
+                'restore',
+                '--worktree',
+                '--source=HEAD',
+                '--',
+                ...chunk.map((p) => this.literalPathspec(p))
+              ],
+              worktreePath
+            )
+          }
         }
-      }
+      )
+    } finally {
+      this.gitDiffReadDedupe.clear()
     }
-
-    const trackedPaths = filePaths.filter((filePath) =>
-      this.isTrackedPathSpec(filePath, trackedPathSpecs)
-    )
-    const untrackedPaths = filePaths.filter(
-      (filePath) => !this.isTrackedPathSpec(filePath, trackedPathSpecs)
-    )
-    await removeSafeUntrackedDiscardTargets(
-      worktreePath,
-      untrackedPaths,
-      (targetPaths) => this.cleanUntrackedPaths(worktreePath, targetPaths),
-      async () => {
-        for (let i = 0; i < trackedPaths.length; i += BULK_CHUNK_SIZE) {
-          const chunk = trackedPaths.slice(i, i + BULK_CHUNK_SIZE)
-          await this.git(
-            [
-              'restore',
-              '--worktree',
-              '--source=HEAD',
-              '--',
-              ...chunk.map((p) => this.literalPathspec(p))
-            ],
-            worktreePath
-          )
-        }
-      }
-    )
   }
 
   private literalPathspec(filePath: string): string {
@@ -524,21 +585,26 @@ export class GitHandler {
   }
 
   private async fetch(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     try {
-      if (params.pushTarget !== undefined) {
-        assertGitPushTargetShape(params.pushTarget)
-        const pushTarget = params.pushTarget as GitPushTarget
-        await this.git(['check-ref-format', '--branch', pushTarget.branchName], worktreePath)
-        await this.git(['fetch', '--prune', pushTarget.remoteName], worktreePath)
-        return
+      try {
+        if (params.pushTarget !== undefined) {
+          assertGitPushTargetShape(params.pushTarget)
+          const pushTarget = params.pushTarget as GitPushTarget
+          await this.git(['check-ref-format', '--branch', pushTarget.branchName], worktreePath)
+          await this.git(['fetch', '--prune', pushTarget.remoteName], worktreePath)
+          return
+        }
+        await this.git(['fetch', '--prune'], worktreePath)
+      } catch (error) {
+        // Why: mirror the local gitFetch normalization so SSH users see the same
+        // actionable messages instead of raw git stderr (which varies across
+        // versions/locales and may embed credentials).
+        throw new Error(normalizeGitErrorMessage(error, 'fetch'))
       }
-      await this.git(['fetch', '--prune'], worktreePath)
-    } catch (error) {
-      // Why: mirror the local gitFetch normalization so SSH users see the same
-      // actionable messages instead of raw git stderr (which varies across
-      // versions/locales and may embed credentials).
-      throw new Error(normalizeGitErrorMessage(error, 'fetch'))
+    } finally {
+      this.gitDiffReadDedupe.clear()
     }
   }
 
@@ -643,58 +709,68 @@ export class GitHandler {
   }
 
   private async push(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     // Why: mirror src/main/git/remote.ts. Push to a configured upstream when
     // present so SSH worktrees with non-origin targets do not get repointed.
     void params.publish
     try {
-      const target = await resolveRelayPushTarget(
-        this.git.bind(this),
-        worktreePath,
-        params.pushTarget
-      )
-      const args = [
-        'push',
-        ...(params.forceWithLease === true ? ['--force-with-lease'] : []),
-        '--set-upstream',
-        ...(target ? [target.remote, target.refspec] : ['origin', 'HEAD'])
-      ]
-      await this.git(args, worktreePath)
-    } catch (error) {
-      // Why: mirror the local gitPush normalization so SSH users see the same
-      // "non-fast-forward / pull first" guidance instead of raw git stderr.
-      throw new Error(normalizeGitErrorMessage(error, 'push'))
+      try {
+        const target = await resolveRelayPushTarget(
+          this.git.bind(this),
+          worktreePath,
+          params.pushTarget
+        )
+        const args = [
+          'push',
+          ...(params.forceWithLease === true ? ['--force-with-lease'] : []),
+          '--set-upstream',
+          ...(target ? [target.remote, target.refspec] : ['origin', 'HEAD'])
+        ]
+        await this.git(args, worktreePath)
+      } catch (error) {
+        // Why: mirror the local gitPush normalization so SSH users see the same
+        // "non-fast-forward / pull first" guidance instead of raw git stderr.
+        throw new Error(normalizeGitErrorMessage(error, 'push'))
+      }
+    } finally {
+      this.gitDiffReadDedupe.clear()
     }
   }
 
   private async pullWithArgs(params: Record<string, unknown>, pullArgs: string[]) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     try {
-      if (params.pushTarget !== undefined) {
-        assertGitPushTargetShape(params.pushTarget)
-        const pushTarget = params.pushTarget as GitPushTarget
-        await this.git(['check-ref-format', '--branch', pushTarget.branchName], worktreePath)
-        await this.git(
-          ['pull', ...pullArgs, pushTarget.remoteName, pushTarget.branchName],
-          worktreePath
-        )
-        return
+      try {
+        if (params.pushTarget !== undefined) {
+          assertGitPushTargetShape(params.pushTarget)
+          const pushTarget = params.pushTarget as GitPushTarget
+          await this.git(['check-ref-format', '--branch', pushTarget.branchName], worktreePath)
+          await this.git(
+            ['pull', ...pullArgs, pushTarget.remoteName, pushTarget.branchName],
+            worktreePath
+          )
+          return
+        }
+        const upstream = await resolveEffectiveGitUpstream((args) => this.git(args, worktreePath))
+        if (upstream && !upstream.isConfiguredUpstream) {
+          // Why: legacy Orca branches may still track origin/main while pushes
+          // target origin/<branch>. Pull the same effective branch the UI reports.
+          await this.git(
+            ['pull', ...pullArgs, upstream.remoteName, upstream.branchName],
+            worktreePath
+          )
+          return
+        }
+        await this.git(['pull', ...pullArgs], worktreePath)
+      } catch (error) {
+        // Why: mirror the local gitPull normalization so SSH users see the same
+        // actionable messages instead of raw git stderr.
+        throw new Error(normalizeGitErrorMessage(error, 'pull'))
       }
-      const upstream = await resolveEffectiveGitUpstream((args) => this.git(args, worktreePath))
-      if (upstream && !upstream.isConfiguredUpstream) {
-        // Why: legacy Orca branches may still track origin/main while pushes
-        // target origin/<branch>. Pull the same effective branch the UI reports.
-        await this.git(
-          ['pull', ...pullArgs, upstream.remoteName, upstream.branchName],
-          worktreePath
-        )
-        return
-      }
-      await this.git(['pull', ...pullArgs], worktreePath)
-    } catch (error) {
-      // Why: mirror the local gitPull normalization so SSH users see the same
-      // actionable messages instead of raw git stderr.
-      throw new Error(normalizeGitErrorMessage(error, 'pull'))
+    } finally {
+      this.gitDiffReadDedupe.clear()
     }
   }
 
@@ -709,16 +785,21 @@ export class GitHandler {
   }
 
   private async rebaseFromBase(params: Record<string, unknown>) {
+    this.gitDiffReadDedupe.clear()
     const worktreePath = params.worktreePath as string
     const baseRef = params.baseRef as string
     try {
-      const source = await resolveGitRemoteRebaseSource(
-        ((args) => this.git(args, worktreePath)) as GitCommandRunner,
-        baseRef
-      )
-      await this.git(['pull', '--rebase', source.remoteName, source.branchName], worktreePath)
-    } catch (error) {
-      throw new Error(normalizeGitErrorMessage(error, 'pull'))
+      try {
+        const source = await resolveGitRemoteRebaseSource(
+          ((args) => this.git(args, worktreePath)) as GitCommandRunner,
+          baseRef
+        )
+        await this.git(['pull', '--rebase', source.remoteName, source.branchName], worktreePath)
+      } catch (error) {
+        throw new Error(normalizeGitErrorMessage(error, 'pull'))
+      }
+    } finally {
+      this.gitDiffReadDedupe.clear()
     }
   }
 
@@ -728,27 +809,50 @@ export class GitHandler {
     if (baseRef.startsWith('-')) {
       throw new Error('Base ref must not start with "-"')
     }
-    return branchDiffEntries(
-      this.git.bind(this),
-      this.gitBuffer.bind(this),
-      worktreePath,
-      baseRef,
-      {
-        includePatch: params.includePatch as boolean | undefined,
-        filePath: params.filePath as string | undefined,
-        oldPath: params.oldPath as string | undefined
-      }
+    const options = {
+      includePatch: params.includePatch as boolean | undefined,
+      filePath: params.filePath as string | undefined,
+      oldPath: params.oldPath as string | undefined
+    }
+    return this.gitDiffReadDedupe.run(
+      stableInFlightKey([
+        'branchDiff',
+        worktreePath,
+        baseRef,
+        options.includePatch ?? null,
+        options.filePath ?? null,
+        options.oldPath ?? null
+      ]),
+      () =>
+        branchDiffEntries(
+          this.git.bind(this),
+          this.gitBuffer.bind(this),
+          worktreePath,
+          baseRef,
+          options
+        )
     )
   }
 
   private async commitDiff(params: Record<string, unknown>) {
     const worktreePath = params.worktreePath as string
-    return commitDiffEntry(this.gitBuffer.bind(this), worktreePath, {
+    const args = {
       commitOid: params.commitOid as string,
       parentOid: params.parentOid as string | null | undefined,
       filePath: params.filePath as string,
       oldPath: params.oldPath as string | undefined
-    })
+    }
+    return this.gitDiffReadDedupe.run(
+      stableInFlightKey([
+        'commitDiff',
+        worktreePath,
+        args.commitOid,
+        args.parentOid ?? null,
+        args.filePath,
+        args.oldPath ?? null
+      ]),
+      () => commitDiffEntry(this.gitBuffer.bind(this), worktreePath, args)
+    )
   }
 
   private async exec(params: Record<string, unknown>, context?: RequestContext) {
