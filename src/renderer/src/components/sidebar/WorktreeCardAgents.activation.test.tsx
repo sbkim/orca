@@ -50,6 +50,10 @@ let mockAgents: DashboardAgentRowData[] = []
 let mockAgentActivityDisplayMode: 'compact' | 'full' | undefined
 let mockTabsByWorktree: Record<string, { id: string }[]> = {}
 let mockAgentStatusByPaneKey: Record<string, { worktreeId?: string }> = {}
+let mockActiveTabId: string | null = null
+const mockSetActiveTab = vi.fn((tabId: string) => {
+  mockActiveTabId = tabId
+})
 let capturedRowActivations: {
   paneKey: string
   onActivate: (tabId: string, paneKey: string) => void
@@ -66,6 +70,8 @@ function buildMockStoreState(): Record<string, unknown> {
     agentSendPopoverTargetMode: null,
     agentStatusByPaneKey: mockAgentStatusByPaneKey,
     agentStatusEpoch: 0,
+    activeTabId: mockActiveTabId,
+    setActiveTab: mockSetActiveTab,
     tabsByWorktree: mockTabsByWorktree,
     terminalLayoutsByTabId: {},
     ptyIdsByTabId: {},
@@ -141,6 +147,7 @@ describe('WorktreeCardAgents activation', () => {
     mockAgentActivityDisplayMode = undefined
     mockTabsByWorktree = {}
     mockAgentStatusByPaneKey = {}
+    mockActiveTabId = null
     capturedRowActivations = []
   })
 
@@ -201,6 +208,114 @@ describe('WorktreeCardAgents activation', () => {
     expect(activationMocks.activateAndRevealWorktree).toHaveBeenCalledWith('wt-1')
     expect(activationMocks.activateTabAndFocusPane).not.toHaveBeenCalled()
     expect(staleAgentRowMocks.dismissStaleAgentRowByKey).not.toHaveBeenCalled()
+  })
+
+  it('does not pane-focus a fallback terminal when the worker tab is still missing after reveal', async () => {
+    mockAgentActivityDisplayMode = 'full'
+    const tabId = 'worker-tab'
+    const fallbackTabId = 'fallback-terminal-tab'
+    const paneKey = makePaneKey(tabId, LEAF_A)
+    mockAgents = [
+      mockAgent({
+        paneKey,
+        tabId,
+        agentType: 'codex',
+        prompt: 'Reveal the real worker',
+        worktreeId: 'wt-1'
+      })
+    ]
+    mockAgentStatusByPaneKey = { [paneKey]: { worktreeId: 'wt-1' } }
+    // Why: activation may create/select a different terminal before the
+    // automation worker hydrates; the row must only pane-focus its exact tab.
+    activationMocks.activateAndRevealWorktree.mockImplementation(() => {
+      mockTabsByWorktree = { 'wt-1': [{ id: fallbackTabId }] }
+      mockSetActiveTab(fallbackTabId)
+    })
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+    expect(capturedRowActivations).toHaveLength(1)
+    capturedRowActivations[0].onActivate(tabId, paneKey)
+
+    expect(activationMocks.activateAndRevealWorktree).toHaveBeenCalledWith('wt-1')
+    expect(mockActiveTabId).toBe(fallbackTabId)
+    expect(activationMocks.activateTabAndFocusPane).not.toHaveBeenCalled()
+    expect(staleAgentRowMocks.dismissStaleAgentRowByKey).not.toHaveBeenCalled()
+  })
+
+  it('dismisses a malformed pane key instead of guessing a terminal pane', async () => {
+    mockAgentActivityDisplayMode = 'full'
+    const paneKey = 'legacy-pane-key'
+    mockAgents = [
+      mockAgent({
+        paneKey,
+        tabId: 'worker-tab',
+        agentType: 'codex',
+        prompt: 'Malformed worker',
+        worktreeId: 'wt-1'
+      })
+    ]
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+    expect(capturedRowActivations).toHaveLength(1)
+    capturedRowActivations[0].onActivate('worker-tab', paneKey)
+
+    expect(activationMocks.activateAndRevealWorktree).not.toHaveBeenCalled()
+    expect(activationMocks.activateTabAndFocusPane).not.toHaveBeenCalled()
+    expect(staleAgentRowMocks.dismissStaleAgentRowByKey).toHaveBeenCalledWith(paneKey)
+    warnSpy.mockRestore()
+  })
+
+  it('dismisses a pane key whose parsed tab does not match the row tab', async () => {
+    mockAgentActivityDisplayMode = 'full'
+    const paneKey = makePaneKey('other-worker-tab', LEAF_B)
+    mockAgents = [
+      mockAgent({
+        paneKey,
+        tabId: 'worker-tab',
+        agentType: 'claude',
+        prompt: 'Mismatched worker',
+        worktreeId: 'wt-1'
+      })
+    ]
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+    expect(capturedRowActivations).toHaveLength(1)
+    capturedRowActivations[0].onActivate('worker-tab', paneKey)
+
+    expect(activationMocks.activateAndRevealWorktree).not.toHaveBeenCalled()
+    expect(activationMocks.activateTabAndFocusPane).not.toHaveBeenCalled()
+    expect(staleAgentRowMocks.dismissStaleAgentRowByKey).toHaveBeenCalledWith(paneKey)
+    warnSpy.mockRestore()
+  })
+
+  it('dismisses a missing tab row that is no longer attributed to this worktree', async () => {
+    mockAgentActivityDisplayMode = 'full'
+    const tabId = 'stale-worker-tab'
+    const paneKey = makePaneKey(tabId, LEAF_A)
+    mockAgents = [
+      mockAgent({
+        paneKey,
+        tabId,
+        agentType: 'gemini',
+        prompt: 'Stale worker',
+        worktreeId: 'wt-1'
+      })
+    ]
+    mockAgentStatusByPaneKey = { [paneKey]: { worktreeId: 'wt-2' } }
+    const { default: WorktreeCardAgents } = await import('./WorktreeCardAgents')
+
+    renderToStaticMarkup(<WorktreeCardAgents worktreeId="wt-1" />)
+    expect(capturedRowActivations).toHaveLength(1)
+    capturedRowActivations[0].onActivate(tabId, paneKey)
+
+    expect(activationMocks.activateAndRevealWorktree).toHaveBeenCalledWith('wt-1')
+    expect(activationMocks.activateTabAndFocusPane).not.toHaveBeenCalled()
+    expect(staleAgentRowMocks.dismissStaleAgentRowByKey).toHaveBeenCalledWith(paneKey)
   })
 
   it('reveals the worktree and focuses a compact automation worker row hydrated during reveal', async () => {
