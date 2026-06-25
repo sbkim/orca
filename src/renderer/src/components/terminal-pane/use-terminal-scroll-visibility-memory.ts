@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef } from 'react'
-import type { IDisposable, Terminal } from '@xterm/xterm'
+import type { Terminal } from '@xterm/xterm'
 import { flushTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 import {
   cancelDeferredScrollRestore,
   captureScrollState,
   getTerminalOutputEpoch
 } from '@/lib/pane-manager/pane-scroll'
+import { markTerminalFollowOutput } from '@/lib/pane-manager/terminal-scroll-intent'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { ScrollState } from '@/lib/pane-manager/pane-manager-types'
 
@@ -37,7 +38,6 @@ export function useTerminalScrollVisibilityMemory({
   paneCount
 }: UseTerminalScrollVisibilityMemoryArgs): TerminalScrollVisibilityMemory {
   const visibleScrollSnapshotsRef = useRef<Map<number, VisibleScrollSnapshot>>(new Map())
-  const scrollDisposablesRef = useRef<Map<number, IDisposable>>(new Map())
   const suppressScrollTrackingRef = useRef(false)
   const pendingFollowOutputPaneIdsRef = useRef<Set<number>>(new Set())
   const followOutputFrameIdsRef = useRef<number[]>([])
@@ -118,6 +118,7 @@ export function useTerminalScrollVisibilityMemory({
       const hasNewOutput = previous ? currentEpoch > previous.outputEpoch : currentEpoch > 0
       if (hasNewOutput) {
         cancelDeferredScrollRestore(pane.terminal)
+        markTerminalFollowOutput(pane.terminal)
         pane.terminal.scrollToBottom()
         rememberVisibleScrollSnapshot(pane.id, pane.terminal)
         didScroll = true
@@ -164,46 +165,15 @@ export function useTerminalScrollVisibilityMemory({
     if (!manager) {
       return
     }
-    const disposables = scrollDisposablesRef.current
     const panes = manager.getPanes()
     const livePaneIds = new Set(panes.map((pane) => pane.id))
-    for (const [paneId, disposable] of disposables) {
+    for (const paneId of visibleScrollSnapshotsRef.current.keys()) {
       if (!livePaneIds.has(paneId)) {
-        disposable.dispose()
-        disposables.delete(paneId)
         visibleScrollSnapshotsRef.current.delete(paneId)
         pendingFollowOutputPaneIdsRef.current.delete(paneId)
       }
     }
-    for (const pane of panes) {
-      if (disposables.has(pane.id)) {
-        continue
-      }
-      const onScroll = (
-        pane.terminal as Terminal & {
-          onScroll?: (listener: (position: number) => void) => IDisposable
-        }
-      ).onScroll
-      if (typeof onScroll !== 'function') {
-        continue
-      }
-      disposables.set(
-        pane.id,
-        onScroll.call(pane.terminal, () => {
-          if (!isVisibleRef.current || suppressScrollTrackingRef.current) {
-            return
-          }
-          rememberVisibleScrollSnapshot(pane.id, pane.terminal)
-        })
-      )
-    }
-    return () => {
-      for (const disposable of disposables.values()) {
-        disposable.dispose()
-      }
-      disposables.clear()
-    }
-  }, [isVisibleRef, managerRef, paneCount, rememberVisibleScrollSnapshot])
+  }, [managerRef, paneCount])
 
   return {
     captureViewportPositions,
