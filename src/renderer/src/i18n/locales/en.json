@@ -6322,7 +6322,7 @@
         },
         "TerminalThemeSections": {
           "import_themes_title": "Import Themes",
-          "import_themes_description": "Imported themes are available in both the dark and light theme pickers.",
+          "import_themes_description": "Imported themes are available in both the dark and light theme targets.",
           "db210115c5": "Light Mode Preview",
           "5e0c24b5c8": "Controls the split divider line between panes in light mode.",
           "ec2e33ad80": "Light Divider Color",
@@ -6330,13 +6330,24 @@
           "8273bc75d7": "Light Theme",
           "74b15574c8": "Configure the optional light-mode terminal appearance.",
           "b584287e84": "When disabled, light mode reuses the dark terminal theme.",
-          "d76f60c9cc": "Use Separate Theme In Light Mode",
+          "d76f60c9cc": "Use separate light theme",
           "bc8e8a251a": "Dark Mode Preview",
           "cbe56a0f79": "Controls the split divider line between panes in dark mode.",
           "b739d2abfe": "Dark Divider Color",
           "7add204bd5": "Choose the terminal theme used in dark mode.",
           "9499ad1dc4": "Dark Theme",
-          "f012172e21": "Choose the theme used for terminal panes in dark mode."
+          "f012172e21": "Choose the theme used for terminal panes in dark mode.",
+          "catalog_title": "Terminal Themes",
+          "catalog_description": "Choose terminal themes and divider colors for dark and light mode.",
+          "target_title": "Theme Target",
+          "target_description": "Choose whether the catalog edits dark or light terminal settings.",
+          "target_label": "Editing Target",
+          "target_aria": "Terminal theme editing target",
+          "target_dark": "Dark",
+          "target_light": "Light",
+          "light_inactive_note": "Light mode is currently reusing the dark theme. Turn on separate light theme to apply this selection.",
+          "light_preview_description": "Shows the effective light terminal appearance.",
+          "dark_preview_description": "Shows the effective dark terminal appearance."
         },
         "TerminalWindowSection": {
           "1705318506": "ANSI magenta color",
@@ -7885,7 +7896,7 @@
             "1d89457764": "Light Theme",
             "da864e6cec": "light mode",
             "f268092ee3": "When disabled, light mode reuses the dark terminal theme.",
-            "232e532169": "Use Separate Theme In Light Mode",
+            "232e532169": "Use separate light theme",
             "f785374072": "dark",
             "9c32726f47": "Controls the split divider line between panes in dark mode.",
             "8987db7ff2": "Dark Divider Color",
@@ -7951,6 +7962,12 @@
             "scrollSpeed": {
               "title": "Scroll Speed",
               "description": "Tune normal terminal scrollback, fast modifier scrolling, and full-screen TUI wheel speed."
+            },
+            "theme_target": {
+              "title": "Theme Target",
+              "description": "Choose whether the terminal theme catalog edits dark or light settings.",
+              "keyword_target": "target",
+              "keyword_editing": "editing"
             }
           },
           "windows": {

@@ -122,10 +122,10 @@ vi.mock('./SettingsFormControls', () => ({
 }))
 
 vi.mock('./TerminalThemeSections', () => ({
-  DarkTerminalThemeSection: function DarkTerminalThemeSection() {
+  TerminalThemeCatalogSection: function TerminalThemeCatalogSection() {
     return null
   },
-  LightTerminalThemeSection: function LightTerminalThemeSection() {
+  TerminalThemeImportSection: function TerminalThemeImportSection() {
     return null
   }
 }))

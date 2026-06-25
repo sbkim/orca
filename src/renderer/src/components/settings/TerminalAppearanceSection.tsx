@@ -1,6 +1,10 @@
 import { useState } from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
-import { matchesSettingsSearch } from './settings-search'
+import {
+  matchesSettingsSearch,
+  scoreSettingsSearch,
+  type SettingsSearchEntry
+} from './settings-search'
 import { useAppStore } from '../../store'
 import {
   getTerminalCursorSearchEntries,
@@ -8,16 +12,13 @@ import {
   getTerminalGhosttyImportSearchEntries,
   getTerminalLightThemeSearchEntries,
   getTerminalPaneAppearanceSearchEntries,
+  getTerminalThemeTargetSearchEntries,
   getTerminalTypographySearchEntries,
   getTerminalWarpImportSearchEntries,
   getTerminalWindowSearchEntries,
   getTerminalYamlImportSearchEntries
 } from './terminal-search'
-import {
-  DarkTerminalThemeSection,
-  LightTerminalThemeSection,
-  TerminalThemeImportSection
-} from './TerminalThemeSections'
+import { TerminalThemeCatalogSection, TerminalThemeImportSection } from './TerminalThemeSections'
 import { TerminalWindowSection } from './TerminalWindowSection'
 import { TerminalTypographyAppearanceSection } from './TerminalTypographyAppearanceSection'
 import { TerminalCursorAppearanceSection } from './TerminalCursorAppearanceSection'
@@ -37,6 +38,25 @@ type TerminalAppearanceSectionProps = {
   warpThemes: UseWarpThemeImportReturn
 }
 
+type TerminalThemeTarget = 'dark' | 'light'
+
+function scoreThemeTargetIntent(searchQuery: string, entries: SettingsSearchEntry[]): number {
+  return scoreSettingsSearch(
+    searchQuery,
+    entries.map(({ title, keywords }) => ({ title, keywords }))
+  )
+}
+
+function getPreferredThemeTarget(
+  darkThemeSearchScore: number,
+  lightThemeSearchScore: number
+): TerminalThemeTarget | undefined {
+  if (darkThemeSearchScore === lightThemeSearchScore) {
+    return undefined
+  }
+  return darkThemeSearchScore > lightThemeSearchScore ? 'dark' : 'light'
+}
+
 export function TerminalAppearanceSection({
   settings,
   updateSettings,
@@ -46,10 +66,23 @@ export function TerminalAppearanceSection({
   warpThemes
 }: TerminalAppearanceSectionProps): React.JSX.Element {
   const searchQuery = useAppStore((state) => state.settingsSearchQuery)
-  const [themeSearchDark, setThemeSearchDark] = useState('')
-  const [themeSearchLight, setThemeSearchLight] = useState('')
+  const [themeSearch, setThemeSearch] = useState('')
   const [previewFontFamily, setPreviewFontFamily] = useState<string | null>(null)
   const showWarpThemeImport = !isWebClientLocation()
+  const darkThemeSearchEntries = getTerminalDarkThemeSearchEntries()
+  const lightThemeSearchEntries = getTerminalLightThemeSearchEntries()
+  const darkThemeSearchScore = scoreSettingsSearch(searchQuery, darkThemeSearchEntries)
+  const lightThemeSearchScore = scoreSettingsSearch(searchQuery, lightThemeSearchEntries)
+  const darkThemeTargetScore = scoreThemeTargetIntent(searchQuery, darkThemeSearchEntries)
+  const lightThemeTargetScore = scoreThemeTargetIntent(searchQuery, lightThemeSearchEntries)
+  const darkThemeMatches = darkThemeSearchScore > 0
+  const lightThemeMatches = lightThemeSearchScore > 0
+  const themeTargetMatches = matchesSettingsSearch(
+    searchQuery,
+    getTerminalThemeTargetSearchEntries()
+  )
+  const showTerminalThemeCatalog = darkThemeMatches || lightThemeMatches || themeTargetMatches
+  const preferredThemeTarget = getPreferredThemeTarget(darkThemeTargetScore, lightThemeTargetScore)
 
   const visibleSections = [
     matchesSettingsSearch(searchQuery, getTerminalGhosttyImportSearchEntries()) ||
@@ -87,26 +120,17 @@ export function TerminalAppearanceSection({
       matchesSettingsSearch(searchQuery, getTerminalYamlImportSearchEntries())) ? (
       <TerminalThemeImportSection key="theme-import" warpThemes={warpThemes} />
     ) : null,
-    matchesSettingsSearch(searchQuery, getTerminalDarkThemeSearchEntries()) ? (
-      <DarkTerminalThemeSection
-        key="dark-theme"
+    showTerminalThemeCatalog ? (
+      <TerminalThemeCatalogSection
+        key={`theme-catalog-${preferredThemeTarget ?? 'manual'}`}
         settings={settings}
         systemPrefersDark={systemPrefersDark}
-        themeSearchDark={themeSearchDark}
-        setThemeSearchDark={setThemeSearchDark}
+        themeSearch={themeSearch}
+        setThemeSearch={setThemeSearch}
         updateSettings={updateSettings}
         previewFontFamily={previewFontFamily}
         importedHighlightSignal={warpThemes.importSignal}
-      />
-    ) : null,
-    matchesSettingsSearch(searchQuery, getTerminalLightThemeSearchEntries()) ? (
-      <LightTerminalThemeSection
-        key="light-theme"
-        settings={settings}
-        themeSearchLight={themeSearchLight}
-        setThemeSearchLight={setThemeSearchLight}
-        updateSettings={updateSettings}
-        previewFontFamily={previewFontFamily}
+        preferredTarget={preferredThemeTarget}
       />
     ) : null
   ].filter(Boolean)

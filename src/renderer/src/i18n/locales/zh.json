@@ -6284,7 +6284,18 @@
           "9499ad1dc4": "黑暗主题",
           "f012172e21": "选择深色模式下用于 terminal 窗格的主题。",
           "import_themes_title": "导入主题",
-          "import_themes_description": "已导入的主题在深色和浅色主题选择器中都可用。"
+          "import_themes_description": "已导入的主题可用于深色和浅色主题目标。",
+          "catalog_title": "终端主题",
+          "catalog_description": "为深色和浅色模式选择终端主题和分隔线颜色。",
+          "target_title": "主题目标",
+          "target_description": "选择目录要编辑深色还是浅色终端设置。",
+          "target_label": "编辑目标",
+          "target_aria": "终端主题编辑目标",
+          "target_dark": "深色",
+          "target_light": "浅色",
+          "light_inactive_note": "浅色模式当前正在重用深色主题。开启单独的浅色主题以应用此选择。",
+          "light_preview_description": "显示实际生效的浅色终端外观。",
+          "dark_preview_description": "显示实际生效的深色终端外观。"
         },
         "TerminalWindowSection": {
           "1705318506": "ANSI 洋红色",
@@ -7899,6 +7910,12 @@
             "scrollSpeed": {
               "title": "滚动速度",
               "description": "调整普通终端回滚、修饰键快速滚动以及全屏 TUI 滚轮速度。"
+            },
+            "theme_target": {
+              "title": "主题目标",
+              "description": "选择终端主题目录要编辑深色还是浅色设置。",
+              "keyword_target": "目标",
+              "keyword_editing": "编辑"
             }
           },
           "windows": {

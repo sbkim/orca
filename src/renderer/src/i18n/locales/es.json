@@ -6298,8 +6298,19 @@
           "7add204bd5": "Elija el tema del terminal utilizado en modo oscuro.",
           "9499ad1dc4": "Tema oscuro",
           "f012172e21": "Elija el tema utilizado para los paneles de terminal en modo oscuro.",
-          "import_themes_title": "Import Themes",
-          "import_themes_description": "Imported themes are available in both the dark and light theme pickers."
+          "import_themes_title": "Importar temas",
+          "import_themes_description": "Los temas importados están disponibles para los destinos de tema oscuro y claro.",
+          "catalog_title": "Temas de terminal",
+          "catalog_description": "Elige temas de terminal y colores de divisor para los modos oscuro y claro.",
+          "target_title": "Destino del tema",
+          "target_description": "Elige si el catálogo edita la configuración de terminal oscura o clara.",
+          "target_label": "Destino de edición",
+          "target_aria": "Destino de edición del tema de terminal",
+          "target_dark": "Oscuro",
+          "target_light": "Claro",
+          "light_inactive_note": "El modo claro está reutilizando el tema oscuro. Activa el tema claro separado para aplicar esta selección.",
+          "light_preview_description": "Muestra la apariencia efectiva del terminal claro.",
+          "dark_preview_description": "Muestra la apariencia efectiva del terminal oscuro."
         },
         "TerminalWindowSection": {
           "1705318506": "color magenta ANSI",
@@ -7914,6 +7925,12 @@
             "scrollSpeed": {
               "title": "Velocidad de desplazamiento",
               "description": "Ajusta el desplazamiento normal del terminal, el desplazamiento rápido con modificador y la velocidad de rueda en TUI de pantalla completa."
+            },
+            "theme_target": {
+              "title": "Destino del tema",
+              "description": "Elige si el catálogo de temas del terminal edita la configuración oscura o clara.",
+              "keyword_target": "destino",
+              "keyword_editing": "edición"
             }
           },
           "windows": {

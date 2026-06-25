@@ -122,6 +122,23 @@ describe('getTerminalPaneSearchEntries', () => {
     )
   })
 
+  it.each([
+    'dark',
+    'light',
+    'divider',
+    'preview',
+    'theme',
+    'dark terminal theme',
+    'target',
+    'editing',
+    'Use Separate Theme In Light Mode',
+    'import',
+    'Warp',
+    'YAML'
+  ])('matches terminal appearance search for %s', (query) => {
+    expect(matchesSettingsSearch(query, getAppearancePaneSearchEntries())).toBe(true)
+  })
+
   it('omits the Warp import appearance entry when desktop-only controls are hidden', () => {
     const desktopEntries = getAppearancePaneSearchEntries({ showWarpImport: true })
     const webEntries = getAppearancePaneSearchEntries({ showWarpImport: false })
