@@ -1294,6 +1294,15 @@ export function connectPanePty(
   })
 
   const onExit = (ptyId: string): void => {
+    const currentPaneTransport = deps.paneTransportsRef.current.get(pane.id)
+    if (currentPaneTransport && currentPaneTransport !== transport) {
+      // Why: an old transport can deliver a late exit after this pane has
+      // rebound to a replacement PTY; only clear ownership for the exited id.
+      deps.clearTabPtyId(deps.tabId, ptyId)
+      deps.consumeSuppressedPtyExit(ptyId)
+      scheduleRuntimeGraphSync()
+      return
+    }
     agentCompletionCoordinator.dispose()
     clearPanePtyFitBinding()
     const isSuppressedExit = deps.consumeSuppressedPtyExit(ptyId)

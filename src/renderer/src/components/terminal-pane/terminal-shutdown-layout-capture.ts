@@ -132,6 +132,8 @@ export function captureTerminalShutdownLayout({
     currentLeafIds
   })
   const ptyIdsByLeafId = { ...preservedPtyIdsByLeafId, ...livePtyIdsByLeafId }
+  // Why: shutdown snapshots can otherwise persist focus on a mounted pane whose
+  // transport was already cleared during PTY exit/reconnect cleanup.
   layout.activeLeafId = resolveTerminalLayoutActiveLeafId({
     root: layout.root,
     activeLeafId: layout.activeLeafId,
