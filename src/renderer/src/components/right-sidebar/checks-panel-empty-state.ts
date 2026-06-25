@@ -11,6 +11,7 @@ type ChecksPanelEmptyStateInput = {
   hasCurrentBranch?: boolean
   reviewLabel?: 'pull request' | 'merge request'
   reviewShortLabel?: 'PR' | 'MR'
+  hasAmbiguousGitHubHostedReview?: boolean
 }
 
 type ChecksPanelEmptyStateCopy = {
@@ -39,6 +40,24 @@ export function getChecksPanelEmptyStateCopy(
   }
 
   const blockedReason = input.hostedReviewBlockedReason
+  if (
+    input.hasAmbiguousGitHubHostedReview === true &&
+    (input.prRefreshStatus === 'paused' ||
+      input.prRefreshStatus === 'skipped' ||
+      input.prRefreshStatus === undefined)
+  ) {
+    return {
+      title: translate(
+        'auto.components.right.sidebar.checks.panel.empty.state.3322603418',
+        'Pull request status unavailable'
+      ),
+      description: translate(
+        'auto.components.right.sidebar.checks.panel.empty.state.b597440265',
+        'Refresh GitHub status for this branch to load checks and review.'
+      )
+    }
+  }
+
   if (
     shouldShowChecksPanelPublishBranchAction({
       hostedReviewBlockedReason: blockedReason,
