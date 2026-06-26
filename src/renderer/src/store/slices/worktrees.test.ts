@@ -683,6 +683,110 @@ describe('fetchWorktrees', () => {
     expect(mockApi.worktrees.listDetected).toHaveBeenCalledTimes(2)
   })
 
+  it('preserves SSH host identity when detected and visible refreshes overlap', async () => {
+    const store = createTestStore()
+    const sshWorktree = makeWorktree({
+      id: 'repo-ssh::/home/orca/wt1',
+      repoId: 'repo-ssh',
+      path: '/home/orca/wt1'
+    })
+    let releaseScan!: () => void
+    const scanStarted = new Promise<void>((resolve) => {
+      mockApi.worktrees.listDetected.mockImplementationOnce(
+        async ({ repoId }: { repoId: string }) => {
+          resolve()
+          await new Promise<void>((release) => {
+            releaseScan = release
+          })
+          return makeDetectedResult(repoId, [sshWorktree])
+        }
+      )
+    })
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      repos: [
+        {
+          id: 'repo-ssh',
+          path: '/home/orca/repo',
+          displayName: 'SSH Repo',
+          badgeColor: '#000',
+          addedAt: 0,
+          connectionId: 'ssh-1'
+        }
+      ]
+    } as Partial<AppState>)
+
+    const detectedRequest = store.getState().fetchDetectedWorktrees('repo-ssh')
+    const visibleRequest = store.getState().fetchWorktrees('repo-ssh')
+    await scanStarted
+
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledTimes(1)
+
+    releaseScan()
+    const [, visibleResult] = await Promise.all([detectedRequest, visibleRequest])
+
+    expect(visibleResult).toBe(true)
+    expect(store.getState().worktreesByRepo['repo-ssh']).toEqual([
+      { ...sshWorktree, hostId: 'ssh:ssh-1' }
+    ])
+    expect(store.getState().detectedWorktreesByRepo['repo-ssh']?.worktrees).toEqual([
+      expect.objectContaining({ id: sshWorktree.id, hostId: 'ssh:ssh-1' })
+    ])
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledTimes(1)
+  })
+
+  it('preserves SSH host identity when visible refresh starts before detected refresh', async () => {
+    const store = createTestStore()
+    const sshWorktree = makeWorktree({
+      id: 'repo-ssh::/home/orca/wt1',
+      repoId: 'repo-ssh',
+      path: '/home/orca/wt1'
+    })
+    let releaseScan!: () => void
+    const scanStarted = new Promise<void>((resolve) => {
+      mockApi.worktrees.listDetected.mockImplementationOnce(
+        async ({ repoId }: { repoId: string }) => {
+          resolve()
+          await new Promise<void>((release) => {
+            releaseScan = release
+          })
+          return makeDetectedResult(repoId, [sshWorktree])
+        }
+      )
+    })
+    store.setState({
+      settings: { activeRuntimeEnvironmentId: 'env-1' } as never,
+      repos: [
+        {
+          id: 'repo-ssh',
+          path: '/home/orca/repo',
+          displayName: 'SSH Repo',
+          badgeColor: '#000',
+          addedAt: 0,
+          connectionId: 'ssh-1'
+        }
+      ]
+    } as Partial<AppState>)
+
+    const visibleRequest = store.getState().fetchWorktrees('repo-ssh')
+    const detectedRequest = store.getState().fetchDetectedWorktrees('repo-ssh')
+    await scanStarted
+
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledTimes(1)
+
+    releaseScan()
+    const [visibleResult] = await Promise.all([visibleRequest, detectedRequest])
+
+    expect(visibleResult).toBe(true)
+    expect(store.getState().worktreesByRepo['repo-ssh']).toEqual([
+      { ...sshWorktree, hostId: 'ssh:ssh-1' }
+    ])
+    expect(store.getState().detectedWorktreesByRepo['repo-ssh']?.worktrees).toEqual([
+      expect.objectContaining({ id: sshWorktree.id, hostId: 'ssh:ssh-1' })
+    ])
+    expect(mockApi.worktrees.listDetected).toHaveBeenCalledTimes(1)
+  })
+
   it('purges remembered right sidebar tabs for worktrees removed by a committed refresh', async () => {
     const store = createTestStore()
     const removed = makeWorktree({

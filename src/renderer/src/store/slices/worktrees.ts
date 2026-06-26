@@ -1737,11 +1737,19 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         repoId,
         { executionHostId: hostId }
       )
-      set((s) =>
-        areDetectedWorktreeResultsEqual(s.detectedWorktreesByRepo[repoId], result)
+      set((s) => {
+        // Why: detected-only refreshes can overlap host-scoped visible refreshes;
+        // keep detected state stamped/merged so SSH/runtime rows are not clobbered.
+        const mergedDetected = mergeDetectedWorktreesForHost(
+          s.detectedWorktreesByRepo[repoId],
+          result,
+          hostId,
+          worktreeHostMatchOptions(s, repoId, hostId)
+        )
+        return areDetectedWorktreeResultsEqual(s.detectedWorktreesByRepo[repoId], mergedDetected)
           ? s
-          : { detectedWorktreesByRepo: { ...s.detectedWorktreesByRepo, [repoId]: result } }
-      )
+          : { detectedWorktreesByRepo: { ...s.detectedWorktreesByRepo, [repoId]: mergedDetected } }
+      })
       return result
     } catch (err) {
       console.error(`Failed to fetch detected worktrees for repo ${repoId}:`, err)
