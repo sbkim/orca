@@ -9,6 +9,7 @@ const AUTOMATIC_PUSH_TARGET_UPSTREAM_REFRESH_TTL_MS = 60_000
 const MAX_AUTOMATIC_PUSH_TARGET_UPSTREAM_CACHE_ENTRIES = 1024
 
 type PushTargetUpstreamRefreshCacheEntry = {
+  scopeKey: string
   status: GitUpstreamStatus
   refreshedAt: number
 }
@@ -37,6 +38,28 @@ function getStatusIdentityKey(status: GitStatusResult): readonly unknown[] {
   return [status.head ?? null, status.branch ?? null]
 }
 
+function getCacheScopeKey({
+  settings,
+  worktreeId,
+  worktreePath,
+  connectionId,
+  pushTarget
+}: {
+  settings?: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null
+  worktreeId: string
+  worktreePath: string
+  connectionId?: string
+  pushTarget: GitPushTarget
+}): string {
+  return JSON.stringify([
+    worktreeId,
+    worktreePath,
+    connectionId ?? null,
+    getRuntimeEnvironmentKey(settings),
+    getPushTargetKey(pushTarget)
+  ])
+}
+
 function getCacheKey({
   settings,
   worktreeId,
@@ -53,11 +76,7 @@ function getCacheKey({
   status: GitStatusResult
 }): string {
   return JSON.stringify([
-    worktreeId,
-    worktreePath,
-    connectionId ?? null,
-    getRuntimeEnvironmentKey(settings),
-    getPushTargetKey(pushTarget),
+    getCacheScopeKey({ settings, worktreeId, worktreePath, connectionId, pushTarget }),
     getStatusIdentityKey(status)
   ])
 }
@@ -106,10 +125,26 @@ export function storeCachedAutomaticPushTargetUpstreamStatus(
   upstreamStatus: GitUpstreamStatus
 ): void {
   automaticPushTargetUpstreamRefreshCache.set(getCacheKey(input), {
+    scopeKey: getCacheScopeKey(input),
     status: upstreamStatus,
     refreshedAt: Date.now()
   })
   trimAutomaticPushTargetUpstreamRefreshCache()
+}
+
+export function invalidateAutomaticPushTargetUpstreamStatusCache(input: {
+  settings?: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null
+  worktreeId: string
+  worktreePath: string
+  connectionId?: string
+  pushTarget: GitPushTarget
+}): void {
+  const scopeKey = getCacheScopeKey(input)
+  for (const [key, entry] of automaticPushTargetUpstreamRefreshCache) {
+    if (entry.scopeKey === scopeKey) {
+      automaticPushTargetUpstreamRefreshCache.delete(key)
+    }
+  }
 }
 
 export function clearAutomaticPushTargetUpstreamStatusCache(): void {

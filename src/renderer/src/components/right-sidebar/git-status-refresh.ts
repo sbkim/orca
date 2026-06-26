@@ -2,6 +2,7 @@ import { getRuntimeGitStatus, getRuntimeGitUpstreamStatus } from '@/runtime/runt
 import {
   clearAutomaticPushTargetUpstreamStatusCache,
   getCachedAutomaticPushTargetUpstreamStatus,
+  invalidateAutomaticPushTargetUpstreamStatusCache,
   storeCachedAutomaticPushTargetUpstreamStatus
 } from './push-target-upstream-refresh-cache'
 import type {
@@ -95,7 +96,21 @@ async function fetchAndApplyAutomaticUpstreamStatus({
       applyUpstreamStatus: false
     }
   )
-  if (!upstreamStatus || !shouldApplyAutomaticUpstreamRefresh(worktreeId, startGeneration)) {
+  if (!upstreamStatus) {
+    if (pushTarget) {
+      // Why: failed publish-target refreshes must not let an older automatic
+      // cache entry suppress the next recovery poll for the same target.
+      invalidateAutomaticPushTargetUpstreamStatusCache({
+        settings,
+        worktreeId,
+        worktreePath,
+        connectionId,
+        pushTarget
+      })
+    }
+    return null
+  }
+  if (!shouldApplyAutomaticUpstreamRefresh(worktreeId, startGeneration)) {
     return null
   }
   deps.setUpstreamStatus(worktreeId, upstreamStatus)

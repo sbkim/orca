@@ -7,6 +7,7 @@ import {
 } from './git-status-refresh'
 import {
   getCachedAutomaticPushTargetUpstreamStatus,
+  invalidateAutomaticPushTargetUpstreamStatusCache,
   storeCachedAutomaticPushTargetUpstreamStatus
 } from './push-target-upstream-refresh-cache'
 import type { GitPushTarget, GitStatusResult, GitUpstreamStatus } from '../../../../shared/types'
@@ -103,6 +104,42 @@ describe('push-target upstream refresh cache', () => {
       hasUpstream: true,
       upstreamName: 'fork/feature/pr-head',
       ahead: 1,
+      behind: 0
+    })
+  })
+
+  it('retries after a failed push-target refresh invalidates an unchanged automatic poll cache hit', async () => {
+    stubGitStatus([unchangedStatus])
+    const deps = makeDeps()
+    vi.mocked(deps.fetchUpstreamStatus)
+      .mockResolvedValueOnce({
+        hasUpstream: true,
+        upstreamName: 'fork/feature/pr-head',
+        ahead: 1,
+        behind: 0
+      })
+      .mockResolvedValueOnce({
+        hasUpstream: true,
+        upstreamName: 'fork/feature/pr-head',
+        ahead: 0,
+        behind: 0
+      })
+
+    await refreshAutomatically({ deps })
+    invalidateAutomaticPushTargetUpstreamStatusCache({
+      settings: { activeRuntimeEnvironmentId: null },
+      worktreeId: 'wt-1',
+      worktreePath: '/repo',
+      pushTarget
+    })
+    await refreshAutomatically({ deps })
+    await refreshAutomatically({ deps })
+
+    expect(deps.fetchUpstreamStatus).toHaveBeenCalledTimes(2)
+    expect(deps.setUpstreamStatus).toHaveBeenLastCalledWith('wt-1', {
+      hasUpstream: true,
+      upstreamName: 'fork/feature/pr-head',
+      ahead: 0,
       behind: 0
     })
   })
