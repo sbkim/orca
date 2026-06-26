@@ -4590,6 +4590,8 @@ export class OrcaRuntimeService {
     this.fileCommands.watchFileExplorer.bind(this.fileCommands)
   readFileExplorerPreview: RuntimeFileCommands['readFileExplorerPreview'] =
     this.fileCommands.readFileExplorerPreview.bind(this.fileCommands)
+  readFileExplorerChunk: RuntimeFileCommands['readFileExplorerChunk'] =
+    this.fileCommands.readFileExplorerChunk.bind(this.fileCommands)
   writeFileExplorerFile: RuntimeFileCommands['writeFileExplorerFile'] =
     this.fileCommands.writeFileExplorerFile.bind(this.fileCommands)
   writeFileExplorerFileBase64: RuntimeFileCommands['writeFileExplorerFileBase64'] =

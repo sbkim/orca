@@ -33,6 +33,7 @@ import {
 import type {
   RuntimeFileListResult,
   RuntimeFileOpenResult,
+  RuntimeFileReadChunkResult,
   RuntimeFilePreviewResult,
   RuntimeFileReadResult,
   RuntimeTerminalPathResolution
@@ -467,6 +468,48 @@ export class RuntimeFileCommands {
       return { content: '', isBinary: true }
     }
     return { content: buffer.toString('utf-8'), isBinary: false }
+  }
+
+  async readFileExplorerChunk(
+    worktreeSelector: string,
+    relativePath: string,
+    offset: number,
+    length: number
+  ): Promise<RuntimeFileReadChunkResult> {
+    const target = await this.resolveFileExplorerPath(worktreeSelector, relativePath)
+    const provider = target.connectionId ? getSshFilesystemProvider(target.connectionId) : null
+    if (target.connectionId) {
+      if (!provider) {
+        throw new Error(SSH_FILESYSTEM_PROVIDER_UNAVAILABLE_MESSAGE)
+      }
+      const result = await provider.readFile(target.path)
+      const content = Buffer.from(result.content, result.isBinary ? 'base64' : 'utf8')
+      const chunk = content.subarray(offset, offset + length)
+      return {
+        contentBase64: chunk.toString('base64'),
+        bytesRead: chunk.byteLength,
+        eof: offset + chunk.byteLength >= content.byteLength
+      }
+    }
+
+    const filePath = await resolveAuthorizedPath(target.path, this.host.requireStore())
+    const fileStats = await stat(filePath)
+    if (fileStats.isDirectory()) {
+      throw new Error('Cannot download a directory')
+    }
+    const handle = await open(filePath, 'r')
+    try {
+      const buffer = Buffer.alloc(Math.min(length, Math.max(0, fileStats.size - offset)))
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, offset)
+      const chunk = buffer.subarray(0, bytesRead)
+      return {
+        contentBase64: chunk.toString('base64'),
+        bytesRead,
+        eof: offset + bytesRead >= fileStats.size
+      }
+    } finally {
+      await handle.close()
+    }
   }
 
   async writeFileExplorerFile(
