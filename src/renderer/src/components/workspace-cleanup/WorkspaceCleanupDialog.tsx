@@ -12,6 +12,7 @@ import {
   Minus,
   RefreshCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X
 } from 'lucide-react'
@@ -27,6 +28,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import RepoMultiCombobox from '@/components/ui/repo-multi-combobox'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -86,7 +88,7 @@ const DEFAULT_FILTERS: WorkspaceCleanupFilters = {
   context: 'all'
 }
 
-const FILTER_SELECT_CLASSNAME = 'h-8 w-[118px] bg-background px-2 text-xs'
+const FILTER_SELECT_CLASSNAME = 'h-8 w-full bg-background px-2 text-xs'
 
 const EMPTY_REVIEW_INFO: WorkspaceCleanupReviewInfo = {
   hasReview: false,
@@ -983,10 +985,22 @@ function WorkspaceCleanupFilterToolbar({
   ): void => {
     onFiltersChange({ ...filters, [key]: value })
   }
+  const hasHiddenControls = hasActiveWorkspaceCleanupPanelControls(filters, sortKey, sortDirection)
+  const resetPanelControls = (): void => {
+    onFiltersChange({
+      ...filters,
+      time: 'all',
+      review: 'all',
+      git: 'all',
+      context: 'all'
+    })
+    onSortKeyChange('activity')
+    onSortDirectionChange('asc')
+  }
 
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-border bg-muted/15 px-3 py-2">
-      <div className="relative min-w-[180px] flex-1">
+    <div className="flex items-center gap-2 border-b border-border bg-muted/15 px-3 py-2">
+      <div className="relative min-w-0 flex-1">
         <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           value={filters.query}
@@ -995,83 +1009,149 @@ function WorkspaceCleanupFilterToolbar({
           className="h-8 pl-8 text-xs"
         />
       </div>
-      <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-        Filter
-      </span>
-      <FilterSelect<WorkspaceCleanupTimeFilter>
-        value={filters.time}
-        options={[
-          ['all', 'Any age'],
-          ['30d', '30d+'],
-          ['90d', '90d+'],
-          ['archived', 'Archived']
-        ]}
-        onChange={(value) => updateFilter('time', value)}
-      />
-      <FilterSelect<WorkspaceCleanupReviewFilter>
-        value={filters.review}
-        options={[
-          ['all', 'Any review'],
-          ['no-review', 'No PR/MR'],
-          ['has-review', 'Has PR/MR'],
-          ['open-review', 'Open'],
-          ['closed-review', 'Closed']
-        ]}
-        onChange={(value) => updateFilter('review', value)}
-      />
-      <FilterSelect<WorkspaceCleanupGitFilter>
-        value={filters.git}
-        options={[
-          ['all', 'Any git'],
-          ['clean', 'Clean'],
-          ['dirty', 'Dirty'],
-          ['unpushed', 'Unpushed'],
-          ['unknown', 'Unknown']
-        ]}
-        onChange={(value) => updateFilter('git', value)}
-      />
-      <FilterSelect<WorkspaceCleanupContextFilter>
-        value={filters.context}
-        options={[
-          ['all', 'Any context'],
-          ['has-context', 'Has context'],
-          ['no-context', 'No context']
-        ]}
-        onChange={(value) => updateFilter('context', value)}
-      />
-      <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-        Sort
-      </span>
-      <FilterSelect<WorkspaceCleanupSortKey>
-        value={sortKey}
-        options={[
-          ['activity', 'Activity'],
-          ['name', 'Name'],
-          ['repo', 'Repo'],
-          ['review', 'Review'],
-          ['git', 'Git']
-        ]}
-        onChange={onSortKeyChange}
-      />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="outline"
-            size="icon-sm"
-            aria-label={sortDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
-            onClick={() => onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')}
-          >
-            {sortDirection === 'asc' ? (
-              <ArrowUp className="size-3.5" />
-            ) : (
-              <ArrowDown className="size-3.5" />
+      <Popover>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                type="button"
+                aria-label={translate(
+                  'auto.components.workspace.cleanup.WorkspaceCleanupDialog.efb3843e75',
+                  'Filter and sort workspaces'
+                )}
+                className="relative shrink-0"
+              >
+                <SlidersHorizontal className="size-3.5" />
+                {hasHiddenControls ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-primary"
+                  />
+                ) : null}
+              </Button>
+            </PopoverTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="top" sideOffset={4}>
+            {translate(
+              'auto.components.workspace.cleanup.WorkspaceCleanupDialog.efb3843e75',
+              'Filter and sort workspaces'
             )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="top" sideOffset={4}>
-          {sortDirection === 'asc' ? 'Ascending' : 'Descending'}
-        </TooltipContent>
-      </Tooltip>
+          </TooltipContent>
+        </Tooltip>
+        <PopoverContent align="end" sideOffset={6} className="w-[320px] p-3">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+                {translate(
+                  'auto.components.workspace.cleanup.WorkspaceCleanupDialog.93b7381d50',
+                  'Filters'
+                )}
+              </div>
+              {hasHiddenControls ? (
+                <Button
+                  variant="link"
+                  size="xs"
+                  className="h-auto px-0 text-xs"
+                  onClick={resetPanelControls}
+                >
+                  {translate(
+                    'auto.components.workspace.cleanup.WorkspaceCleanupDialog.e94b1f8bb4',
+                    'Clear filters'
+                  )}
+                </Button>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <FilterSelect<WorkspaceCleanupTimeFilter>
+                value={filters.time}
+                options={[
+                  ['all', 'Any age'],
+                  ['30d', '30d+'],
+                  ['90d', '90d+'],
+                  ['archived', 'Archived']
+                ]}
+                onChange={(value) => updateFilter('time', value)}
+              />
+              <FilterSelect<WorkspaceCleanupReviewFilter>
+                value={filters.review}
+                options={[
+                  ['all', 'Any review'],
+                  ['no-review', 'No PR/MR'],
+                  ['has-review', 'Has PR/MR'],
+                  ['open-review', 'Open'],
+                  ['closed-review', 'Closed']
+                ]}
+                onChange={(value) => updateFilter('review', value)}
+              />
+              <FilterSelect<WorkspaceCleanupGitFilter>
+                value={filters.git}
+                options={[
+                  ['all', 'Any git'],
+                  ['clean', 'Clean'],
+                  ['dirty', 'Dirty'],
+                  ['unpushed', 'Unpushed'],
+                  ['unknown', 'Unknown']
+                ]}
+                onChange={(value) => updateFilter('git', value)}
+              />
+              <FilterSelect<WorkspaceCleanupContextFilter>
+                value={filters.context}
+                options={[
+                  ['all', 'Any context'],
+                  ['has-context', 'Has context'],
+                  ['no-context', 'No context']
+                ]}
+                onChange={(value) => updateFilter('context', value)}
+              />
+            </div>
+            <div className="h-px bg-border" />
+            <div className="space-y-2">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+                {translate(
+                  'auto.components.workspace.cleanup.WorkspaceCleanupDialog.a615e24679',
+                  'Sort'
+                )}
+              </div>
+              <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
+                <FilterSelect<WorkspaceCleanupSortKey>
+                  value={sortKey}
+                  options={[
+                    ['activity', 'Activity'],
+                    ['name', 'Name'],
+                    ['repo', 'Repo'],
+                    ['review', 'Review'],
+                    ['git', 'Git']
+                  ]}
+                  onChange={onSortKeyChange}
+                />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="outline"
+                      size="icon-sm"
+                      aria-label={sortDirection === 'asc' ? 'Sort ascending' : 'Sort descending'}
+                      onClick={() =>
+                        onSortDirectionChange(sortDirection === 'asc' ? 'desc' : 'asc')
+                      }
+                    >
+                      {sortDirection === 'asc' ? (
+                        <ArrowUp className="size-3.5" />
+                      ) : (
+                        <ArrowDown className="size-3.5" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top" sideOffset={4}>
+                    {sortDirection === 'asc' ? 'Ascending' : 'Descending'}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
     </div>
   )
 }
@@ -1663,6 +1743,21 @@ function hasActiveWorkspaceCleanupFilters(filters: WorkspaceCleanupFilters): boo
     filters.review !== 'all' ||
     filters.git !== 'all' ||
     filters.context !== 'all'
+  )
+}
+
+function hasActiveWorkspaceCleanupPanelControls(
+  filters: WorkspaceCleanupFilters,
+  sortKey: WorkspaceCleanupSortKey,
+  sortDirection: WorkspaceCleanupSortDirection
+): boolean {
+  return (
+    filters.time !== 'all' ||
+    filters.review !== 'all' ||
+    filters.git !== 'all' ||
+    filters.context !== 'all' ||
+    sortKey !== 'activity' ||
+    sortDirection !== 'asc'
   )
 }
 
