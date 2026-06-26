@@ -1,4 +1,9 @@
 import { getRuntimeGitStatus, getRuntimeGitUpstreamStatus } from '@/runtime/runtime-git-client'
+import {
+  clearAutomaticPushTargetUpstreamStatusCache,
+  getCachedAutomaticPushTargetUpstreamStatus,
+  storeCachedAutomaticPushTargetUpstreamStatus
+} from './push-target-upstream-refresh-cache'
 import type {
   GitPushTarget,
   GitStatusResult,
@@ -79,7 +84,7 @@ async function fetchAndApplyAutomaticUpstreamStatus({
   pushTarget?: GitPushTarget
   deps: GitStatusRefreshDeps
   startGeneration: number
-}): Promise<void> {
+}): Promise<GitUpstreamStatus | null> {
   const upstreamStatus = await deps.fetchUpstreamStatus(
     worktreeId,
     worktreePath,
@@ -90,9 +95,11 @@ async function fetchAndApplyAutomaticUpstreamStatus({
       applyUpstreamStatus: false
     }
   )
-  if (upstreamStatus && shouldApplyAutomaticUpstreamRefresh(worktreeId, startGeneration)) {
-    deps.setUpstreamStatus(worktreeId, upstreamStatus)
+  if (!upstreamStatus || !shouldApplyAutomaticUpstreamRefresh(worktreeId, startGeneration)) {
+    return null
   }
+  deps.setUpstreamStatus(worktreeId, upstreamStatus)
+  return upstreamStatus
 }
 
 function beginStrictUpstreamRefresh(worktreeId: string): void {
@@ -106,6 +113,7 @@ function beginStrictUpstreamRefresh(worktreeId: string): void {
 export function clearGitStatusRefreshOrderingForTests(): void {
   strictUpstreamRefreshGenerationByWorktree.clear()
   automaticUpstreamRefreshInFlightByWorktree.clear()
+  clearAutomaticPushTargetUpstreamStatusCache()
 }
 
 export async function refreshGitStatusForWorktree({
@@ -149,7 +157,20 @@ export async function refreshGitStatusForWorktree({
       // Why: porcelain status reports Git's configured upstream. Source Control
       // actions for PR-created worktrees must instead reconcile with Orca's
       // explicit publish target.
-      await fetchAndApplyAutomaticUpstreamStatus({
+      const cachedUpstreamStatus = getCachedAutomaticPushTargetUpstreamStatus({
+        settings,
+        worktreeId,
+        worktreePath,
+        connectionId,
+        pushTarget,
+        status
+      })
+      if (cachedUpstreamStatus) {
+        // Why: post-push/fetch actions may have already written fresher
+        // upstream status; a poll cache hit should only skip subprocess churn.
+        return
+      }
+      const upstreamStatus = await fetchAndApplyAutomaticUpstreamStatus({
         settings,
         worktreeId,
         worktreePath,
@@ -158,6 +179,14 @@ export async function refreshGitStatusForWorktree({
         deps,
         startGeneration: upstreamStartGeneration
       })
+      if (upstreamStatus) {
+        // Why: explicit publish-target comparison can spawn several git
+        // subprocesses; unchanged automatic polls should reuse it briefly.
+        storeCachedAutomaticPushTargetUpstreamStatus(
+          { settings, worktreeId, worktreePath, connectionId, pushTarget, status },
+          upstreamStatus
+        )
+      }
       return
     }
     if (status.upstreamStatus) {
@@ -214,6 +243,7 @@ export async function refreshGitStatusForWorktreeStrict({
   }
 }): Promise<{ status: GitStatusResult; upstreamStatus: GitUpstreamStatus }> {
   beginStrictUpstreamRefresh(worktreeId)
+  clearAutomaticPushTargetUpstreamStatusCache()
   const status = (await getRuntimeGitStatus(
     {
       settings,
