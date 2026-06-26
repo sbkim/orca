@@ -83,7 +83,11 @@ import type { RepoMethod } from '../../shared/telemetry-events'
 import { detectRepoIconAndUpstream } from '../repo-icon-autodetect'
 import { enrichMissingRepoGitRemoteIdentities } from '../repo-git-remote-identity-enrichment'
 import { getProjectHostSetupForRepo } from '../../shared/project-host-setup-projection'
-import { normalizeExecutionHostId, parseExecutionHostId } from '../../shared/execution-host'
+import {
+  getRepoExecutionHostId,
+  normalizeExecutionHostId,
+  parseExecutionHostId
+} from '../../shared/execution-host'
 import { joinRemotePath } from '../ssh/ssh-remote-platform'
 import {
   assertFolderWorkspacePathUsable,
@@ -2325,8 +2329,8 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
 
   ipcMain.handle(
     'repos:getBaseRefDefault',
-    async (_event, args: { repoId: string }): Promise<BaseRefDefaultResult> => {
-      const repo = store.getRepo(args.repoId)
+    async (_event, args: BaseRefRepoLookupArgs): Promise<BaseRefDefaultResult> => {
+      const repo = resolveBaseRefRepo(store, args)
       if (!repo || isFolderRepo(repo)) {
         // Why: folder-mode repos have no git state to resolve a base ref from.
         // Return null + 0 so the renderer can decline to use a fabricated default
@@ -2417,9 +2421,9 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
 
 async function searchBaseRefDetailsForRepo(
   store: Store,
-  args: { repoId: string; query: string; limit?: number }
+  args: BaseRefSearchArgs
 ): Promise<BaseRefSearchResult[]> {
-  const repo = store.getRepo(args.repoId)
+  const repo = resolveBaseRefRepo(store, args)
   if (!repo || isFolderRepo(repo)) {
     return []
   }
@@ -2494,6 +2498,36 @@ async function searchBaseRefDetailsForRepo(
     }
   }
   return searchBaseRefDetails(repo.path, args.query, limit)
+}
+
+type BaseRefRepoLookupArgs = {
+  repoId: string
+  repoPath?: string
+  executionHostId?: string | null
+}
+
+type BaseRefSearchArgs = BaseRefRepoLookupArgs & {
+  query: string
+  limit?: number
+}
+
+function resolveBaseRefRepo(store: Store, args: BaseRefRepoLookupArgs): Repo | undefined {
+  const repoPath = args.repoPath?.trim()
+  const executionHostId = args.executionHostId?.trim()
+  if (!repoPath && !executionHostId) {
+    return store.getRepo(args.repoId)
+  }
+  // Why: folder-workspace Source Control can render duplicate repo ids across
+  // hosts, sometimes with identical checkout paths. Match every supplied
+  // discriminator so local/SSH IPC base-ref lookups stay on the embedded child.
+  return store
+    .getRepos()
+    .find(
+      (repo) =>
+        repo.id === args.repoId &&
+        (!repoPath || repo.path === repoPath) &&
+        (!executionHostId || getRepoExecutionHostId(repo) === executionHostId)
+    )
 }
 
 function notifyReposChanged(mainWindow: BrowserWindow): void {
