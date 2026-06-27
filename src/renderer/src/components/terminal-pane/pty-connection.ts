@@ -1299,14 +1299,17 @@ export function connectPanePty(
   // Why: the transport's own exit handler (pty-transport.ts) normally makes
   // onExit run-at-most-once by clearing connected/ptyId + unregistering BEFORE
   // calling it. reconcileIfSessionDead drives onExit directly (bypassing that),
-  // so this binding-local one-shot guards the body so reconcile and any racing
-  // real/synthetic pty:exit for the same id close the pane exactly once.
-  let onExitHasRun = false
+  // so this guards the body so reconcile and any racing real/synthetic pty:exit
+  // for the same id close the pane exactly once. Scoped to the exiting ptyId
+  // (not a bare boolean): an intentional suppressed restart keeps the pane
+  // mounted and rebinds to a NEW ptyId, and that replacement's later real exit
+  // must still run — a one-shot boolean would strand the pane on rebind.
+  let handledExitPtyId: string | null = null
   const onExit = (ptyId: string): void => {
-    if (onExitHasRun) {
+    if (handledExitPtyId === ptyId) {
       return
     }
-    onExitHasRun = true
+    handledExitPtyId = ptyId
     agentCompletionCoordinator.dispose()
     clearPanePtyFitBinding()
     const isSuppressedExit = deps.consumeSuppressedPtyExit(ptyId)
@@ -4157,14 +4160,17 @@ export function connectPanePty(
   // teardown a real onExit runs. Re-validate identity at apply time so a
   // reattach racing the listSessions snapshot is never clobbered, and respect
   // the remote/SSH guards. Suppression semantics come for free via onExit
-  // (which consults consumeSuppressedPtyExit) plus the one-shot guard above.
+  // (which consults consumeSuppressedPtyExit) plus the per-ptyId guard above.
   const reconcileIfSessionDead = (liveSessionIds: Set<string>): void => {
-    if (disposed || onExitHasRun) {
+    if (disposed) {
       return
     }
     const currentPtyId = transport.getPtyId()
     if (
       !currentPtyId ||
+      // Why: the current ptyId's exit was already handled — onExit guards this
+      // too, but skipping here avoids a redundant shouldReconcile evaluation.
+      handledExitPtyId === currentPtyId ||
       !shouldReconcileDeadSession({
         ptyId: currentPtyId,
         connectionId: transport.getConnectionId?.(),
@@ -4197,13 +4203,15 @@ export function connectPanePty(
   // pass alone. It REDUCES but cannot eliminate the first-keystroke drop (that
   // byte is already gone daemon-side).
   const recheckLivenessAfterInput = (): void => {
-    if (disposed || onExitHasRun || livenessRecheckFiredSinceResume) {
+    if (disposed || livenessRecheckFiredSinceResume) {
       return
     }
     const currentPtyId = transport.getPtyId()
     const currentConnectionId = transport.getConnectionId?.()
     if (
       !currentPtyId ||
+      // Why: this ptyId's exit was already handled — nothing left to reconcile.
+      handledExitPtyId === currentPtyId ||
       // Why: `remote:` web-runtime liveness is owned by the host snapshot, not
       // listSessions; skip here so a remote pane's keystrokes never put a local
       // daemon round-trip on the typing hot path (reconcile would no-op anyway).

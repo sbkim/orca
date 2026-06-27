@@ -9603,6 +9603,52 @@ describe('connectPanePty', () => {
       expect(deps.onPtyExitRef.current).not.toHaveBeenCalled()
     })
 
+    it('still closes the replacement PTY after a suppressed restart rebinds the pane', async () => {
+      // Why (regression): the exit guard is scoped to the exiting ptyId, not a
+      // bare one-shot boolean. An intentional suppressed restart keeps the pane
+      // mounted and rebinds to a NEW ptyId; that replacement's later real exit
+      // must still tear the pane down. A boolean guard would strand it.
+      const { connectPanePty } = await import('./pty-connection')
+      const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+      const transport = createMockTransport('pty-pane-2')
+      transport.connect.mockImplementation(
+        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+          capturedDataCallback.current = callbacks.onData ?? null
+          return 'pty-pane-2'
+        }
+      )
+      transportFactoryQueue.push(transport)
+      const manager = createManager(2)
+      // First exit is suppressed (intentional restart); later exits are real.
+      const consumeSuppressedPtyExit = vi
+        .fn<(ptyId: string) => boolean>()
+        .mockImplementationOnce(() => true)
+        .mockImplementation(() => false)
+      const deps = createDeps({
+        restoredLeafId: LEAF_2,
+        consumeSuppressedPtyExit,
+        paneTransportsRef: { current: new Map([[1, createMockTransport('pty-pane-1')]]) }
+      })
+
+      connectPanePty(createPane(2) as never, manager as never, deps as never)
+      capturedDataCallback.current?.('shell prompt')
+      const onPtyExit = createdTransportOptions[0]?.onPtyExit as
+        | ((ptyId: string) => void)
+        | undefined
+
+      // Suppressed exit of the original PTY: pane stays mounted.
+      onPtyExit?.('pty-pane-2')
+      expect(manager.closePane).not.toHaveBeenCalled()
+
+      // The restart rebinds the pane to a new live PTY; its later real exit
+      // must NOT be ignored by a stale guard.
+      transport.getPtyId.mockReturnValue('pty-pane-2-restarted')
+      onPtyExit?.('pty-pane-2-restarted')
+
+      expect(manager.closePane).toHaveBeenCalledTimes(1)
+      expect(manager.closePane).toHaveBeenCalledWith(2)
+    })
+
     it('does not act on a stale id after a reattach changed the bound id', async () => {
       const { connectPanePty } = await import('./pty-connection')
       const transport = createMockTransport('pty-pane-2')
