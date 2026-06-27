@@ -148,6 +148,25 @@ describe('Codex auto-approval status suppression', () => {
     ).toBe(false)
   })
 
+  it('fails open when launch token is missing from a token-registered launch', () => {
+    registerCodexLaunchConfig({
+      agentArgs: YOLO_TUI_AGENT_ARGS.codex ?? '',
+      launchToken,
+      providerSession
+    })
+
+    expect(
+      shouldSuppressCodexAutoApprovalStatus(
+        { state: 'waiting', prompt: 'manual prompt', agentType: 'codex' },
+        {
+          paneKey,
+          tabId: 'tab-1',
+          providerSession
+        }
+      )
+    ).toBe(false)
+  })
+
   it('matches provider session attribution when launch token is absent', () => {
     registerCodexLaunchConfig({
       agentArgs: YOLO_TUI_AGENT_ARGS.codex ?? '',

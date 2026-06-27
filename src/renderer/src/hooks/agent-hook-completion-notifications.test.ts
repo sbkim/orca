@@ -29,6 +29,7 @@ type MockStoreState = {
     string,
     {
       launchConfig: { agentArgs: string; agentEnv: Record<string, string> }
+      launchToken?: string
     }
   >
   agentStatusByPaneKey: Record<
@@ -74,12 +75,17 @@ function hookStatus(state: ParsedAgentStatusPayload['state']): ParsedAgentStatus
   }
 }
 
-function seedCodexPaneLaunchConfig(paneKey: string, agentArgs: string): void {
+function seedCodexPaneLaunchConfig(
+  paneKey: string,
+  agentArgs: string,
+  launchToken = 'launch-token-1'
+): void {
   mockStoreState.agentLaunchConfigByPaneKey[paneKey] = {
     launchConfig: {
       agentArgs,
       agentEnv: {}
-    }
+    },
+    launchToken
   }
   mockStoreState.agentStatusByPaneKey[paneKey] = {
     state: 'working',
@@ -120,7 +126,9 @@ describe('agent hook completion notifications', () => {
       getAgentLaunchConfigForStatusEntry: (entry) =>
         mockStoreState.agentLaunchConfigByPaneKey[entry.paneKey]?.launchConfig,
       getAgentLaunchConfigForStatusMetadata: (metadata) =>
-        metadata.launchToken
+        metadata.launchToken &&
+        metadata.launchToken ===
+          mockStoreState.agentLaunchConfigByPaneKey[metadata.paneKey]?.launchToken
           ? mockStoreState.agentLaunchConfigByPaneKey[metadata.paneKey]?.launchConfig
           : undefined
     }

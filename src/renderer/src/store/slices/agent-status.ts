@@ -656,21 +656,14 @@ function registryEntryMatchesStatus(args: {
   }
   if (
     identity.launchToken !== undefined &&
-    args.launchToken !== undefined &&
-    identity.launchToken !== args.launchToken
+    (args.launchToken === undefined || identity.launchToken !== args.launchToken)
   ) {
-    // Why: an explicit mismatched launch token is stale launch proof even if a
+    // Why: missing or mismatched launch tokens are stale launch proof even if a
     // provider session id was reused by a later manual/mixed Codex run.
     return false
   }
   if (identity.providerSession !== undefined) {
     return providerSessionsEqual(identity.providerSession, args.providerSession)
-  }
-  if (
-    identity.launchToken !== undefined &&
-    (args.launchToken === undefined || identity.launchToken !== args.launchToken)
-  ) {
-    return false
   }
   if (identity.launchToken !== undefined) {
     return true
