@@ -52,6 +52,7 @@ export function MobileSourceControlContent({ state, hostId, worktreeId, name }: 
     runGitAction
   } = state
   const ioBusy = busyAction !== null || openingPath !== null || openingBranchPath !== null
+  const shouldShowGenerateButton = stagedCount > 0 || generatingMessage
 
   return (
     <>
@@ -227,30 +228,32 @@ export function MobileSourceControlContent({ state, hostId, worktreeId, name }: 
               onSubmitEditing={primaryAction.onPress}
             />
           )}
-          <Pressable
-            style={({ pressed }) => [
-              styles.generateButton,
-              (stagedCount === 0 || busyAction !== null) && styles.commitButtonDisabled,
-              pressed && styles.commitButtonPressed
-            ]}
-            // Why: stay tappable while generating so the press can cancel
-            // (disabling it here made the cancel branch below unreachable).
-            disabled={stagedCount === 0 || busyAction !== null}
-            onPress={() =>
-              generatingMessage ? cancelGenerateCommitMessage() : void generateCommitMessage()
-            }
-            accessibilityLabel={
-              generatingMessage
-                ? 'Cancel commit message generation'
-                : 'Generate commit message with AI'
-            }
-          >
-            {generatingMessage ? (
-              <ActivityIndicator size="small" color={colors.textSecondary} />
-            ) : (
-              <Sparkles size={16} color={colors.textSecondary} strokeWidth={2.1} />
-            )}
-          </Pressable>
+          {shouldShowGenerateButton ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.generateButton,
+                busyAction !== null && styles.commitButtonDisabled,
+                pressed && styles.commitButtonPressed
+              ]}
+              // Why: commit-message AI belongs to the commit path; hiding it
+              // during Stage All keeps the quick action visually unambiguous.
+              disabled={busyAction !== null}
+              onPress={() =>
+                generatingMessage ? cancelGenerateCommitMessage() : void generateCommitMessage()
+              }
+              accessibilityLabel={
+                generatingMessage
+                  ? 'Cancel commit message generation'
+                  : 'Generate commit message with AI'
+              }
+            >
+              {generatingMessage ? (
+                <ActivityIndicator size="small" color={colors.textSecondary} />
+              ) : (
+                <Sparkles size={16} color={colors.textSecondary} strokeWidth={2.1} />
+              )}
+            </Pressable>
+          ) : null}
           <Pressable
             style={({ pressed }) => [
               styles.commitButton,
