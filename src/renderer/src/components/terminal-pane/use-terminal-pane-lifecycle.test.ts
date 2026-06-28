@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  applyTerminalScrollbackRowsToMountedPanes,
   clearQueuedInitialCwdAfterFirstPane,
   mapRestoredPaneTitlesByPaneId,
   resolvePaneLinkCwd,
   resolvePaneSeedCwd,
   resolveQueuedInitialCwd,
+  scheduleVisibilityReconcilePass,
   shouldDetachPaneTransportOnUnmount,
   splitPaneWithOneShotStartup,
   suppressIntentionalPaneCloseExit
@@ -80,6 +82,36 @@ describe('splitPaneWithOneShotStartup', () => {
 
     expect(splitPane).toHaveBeenCalledTimes(1)
     expect(deps.startup).toBeNull()
+  })
+})
+
+describe('applyTerminalScrollbackRowsToMountedPanes', () => {
+  it('updates mounted pane xterm scrollback options only when needed', () => {
+    const firstOptions = { scrollback: 1_000 }
+    const secondOptions = { scrollback: 5_000 }
+    const firstTerminal = { options: firstOptions }
+    let secondWrites = 0
+    const secondTerminal = {
+      options: {
+        get scrollback() {
+          return secondOptions.scrollback
+        },
+        set scrollback(value: number | undefined) {
+          secondWrites += 1
+          secondOptions.scrollback = value ?? 0
+        }
+      }
+    }
+    const manager = {
+      getPanes: vi.fn(() => [{ terminal: firstTerminal }, { terminal: secondTerminal }])
+    }
+
+    applyTerminalScrollbackRowsToMountedPanes(manager, 5_000)
+
+    expect(firstTerminal.options.scrollback).toBe(5_000)
+    expect(secondOptions.scrollback).toBe(5_000)
+    expect(secondWrites).toBe(0)
+    expect(manager.getPanes).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -254,5 +286,42 @@ describe('suppressIntentionalPaneCloseExit', () => {
 
     expect(suppressIntentionalPaneCloseExit(transport, suppressPtyExit)).toBeNull()
     expect(suppressPtyExit).not.toHaveBeenCalled()
+  })
+})
+
+describe('scheduleVisibilityReconcilePass', () => {
+  it('schedules a reconcile pass over the bindings when becoming visible', async () => {
+    const reconcileIfSessionDead = vi.fn()
+    const listSessions = vi
+      .fn<() => Promise<{ id: string; cwd: string; title: string }[]>>()
+      .mockResolvedValue([{ id: 'live-1', cwd: '/a', title: 'a' }])
+
+    const scheduled = scheduleVisibilityReconcilePass({
+      isVisible: true,
+      bindings: [{ reconcileIfSessionDead }],
+      listSessions
+    })
+
+    expect(scheduled).toBe(true)
+    // Fire-and-forget: let the async listSessions resolve before asserting.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(listSessions).toHaveBeenCalledTimes(1)
+    expect(reconcileIfSessionDead).toHaveBeenCalledWith(new Set(['live-1']))
+  })
+
+  it('self-gates: does not schedule when hiding (isVisible false)', () => {
+    const listSessions = vi
+      .fn<() => Promise<{ id: string; cwd: string; title: string }[]>>()
+      .mockResolvedValue([])
+
+    const scheduled = scheduleVisibilityReconcilePass({
+      isVisible: false,
+      bindings: [{ reconcileIfSessionDead: vi.fn() }],
+      listSessions
+    })
+
+    expect(scheduled).toBe(false)
+    expect(listSessions).not.toHaveBeenCalled()
   })
 })

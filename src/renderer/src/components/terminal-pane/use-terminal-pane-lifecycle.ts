@@ -9,6 +9,7 @@ import {
   normalizeTerminalScrollSensitivity,
   resolveTerminalCursorInactiveStyle
 } from '@/lib/pane-manager/pane-terminal-options'
+import { normalizeDesktopTerminalScrollbackRows } from '../../../../shared/terminal-scrollback-policy'
 import { normalizeTerminalTuiMouseWheelMultiplier } from '@/lib/pane-manager/pane-terminal-mouse-wheel'
 import { buildWindowsPtyCompatibilityOptions } from '@/lib/pane-manager/windows-pty-compatibility'
 import { useAppStore } from '@/store'
@@ -55,7 +56,6 @@ import { showOsc52ClipboardBlockedToast } from './osc52-clipboard-blocked-toast'
 import { parseOsc7 } from './parse-osc7'
 import { resolveTerminalJisYenInput } from './terminal-jis-yen-input'
 import { installTerminalImeCompositionTracker } from './terminal-ime-composition-tracker'
-import { getMacCjkInputSourceTracker } from './terminal-ime-input-source'
 import { installTerminalImePunctuationForwarder } from './terminal-ime-punctuation-forwarder'
 import {
   shouldBypassXtermKeyboardEvent,
@@ -70,6 +70,7 @@ import { installMouseHideWhileTyping } from './mouse-hide-while-typing'
 import type { EffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/detect-option-as-alt'
 import { resolveEffectiveTerminalAppearance } from '@/lib/terminal-theme'
 import { connectPanePty } from './pty-connection'
+import { reconcileDeadSessions, type ReconcilableBinding } from './terminal-dead-session-reconcile'
 import type { PtyTransport } from './pty-transport'
 import { getRemoteRuntimePtyEnvironmentId } from '@/runtime/runtime-terminal-stream'
 import { getConnectionId } from '@/lib/connection-context'
@@ -107,6 +108,21 @@ export function recordRuntimeCreatedTerminalPaneSplit(
   }
 ): boolean {
   return recordCreatedTerminalPaneSplit(createdPane, args)
+}
+
+type TerminalScrollbackPaneManager = {
+  getPanes(): { terminal: Pick<Terminal, 'options'> }[]
+}
+
+export function applyTerminalScrollbackRowsToMountedPanes(
+  manager: TerminalScrollbackPaneManager,
+  rows: number
+): void {
+  for (const pane of manager.getPanes()) {
+    if (pane.terminal.options.scrollback !== rows) {
+      pane.terminal.options.scrollback = rows
+    }
+  }
 }
 
 function extractUncHost(value: string | undefined): string | null {
@@ -397,6 +413,26 @@ export function shouldDetachPaneTransportOnUnmount(args: {
   )
 }
 
+/**
+ * Self-gating dead-session reconcile pass scheduled from the isVisible effect.
+ * Why self-gate: the effect fires on BOTH isVisible true and false, but we only
+ * reconcile on resume (becoming visible), never on hide. Returns true when the
+ * pass was scheduled so the resume-unit test can assert the gate.
+ */
+export function scheduleVisibilityReconcilePass(args: {
+  isVisible: boolean
+  bindings: Iterable<ReconcilableBinding>
+  listSessions: () => Promise<{ id: string; cwd: string; title: string }[]>
+}): boolean {
+  if (!args.isVisible) {
+    return false
+  }
+  // Why: fire-and-forget so the async listSessions IPC never blocks the
+  // synchronous WebGL/fit resume work the user sees first.
+  void reconcileDeadSessions({ bindings: args.bindings, listSessions: args.listSessions })
+  return true
+}
+
 export function useTerminalPaneLifecycle({
   tabId,
   worktreeId,
@@ -455,6 +491,9 @@ export function useTerminalPaneLifecycle({
   setPaneCount,
   setPaneLayoutRevision
 }: UseTerminalPaneLifecycleDeps): void {
+  const terminalScrollbackRows = normalizeDesktopTerminalScrollbackRows(
+    settings?.terminalScrollbackRows
+  )
   const systemPrefersDarkRef = useRef(systemPrefersDark)
   systemPrefersDarkRef.current = systemPrefersDark
   const linkProviderDisposablesRef = useRef(new Map<number, IDisposable>())
@@ -746,19 +785,22 @@ export function useTerminalPaneLifecycle({
         // See xterm-bypass-policy.ts for the rule derivation.
         let pendingTerminalInterruptKeyup = false
         const isMac = navigator.userAgent.includes('Mac')
-        const macCjkInputSourceTracker = isMac ? getMacCjkInputSourceTracker() : null
         const imeCompositionTracker = installTerminalImeCompositionTracker(pane.terminal.element)
         imeCompositionDisposablesRef.current.set(pane.id, imeCompositionTracker)
-        // Why: this workaround is for macOS IMEs; elsewhere it can bypass
-        // xterm's kitty CSI-u encoding for ordinary punctuation. Gate it to CJK
-        // input sources so direct Japanese/Chinese punctuation works without
-        // changing plain US/European terminal key handling.
+        // Why: macOS-only. With xterm's kitty CSI-u encoding active, the
+        // keydown preventDefault cancels Chromium's native insertText, dropping
+        // any synthesized printable text — CJK IME punctuation commits AND
+        // OS-level injection (dictation, text expanders, accessibility). The
+        // forwarder recovers that text from the helper-textarea input event.
+        // Not gated to CJK input sources: the drop affects every locale (see
+        // #6513). Safe for ordinary typing because claimKeyEvent only bypasses
+        // unmodified ASCII punctuation keydowns, and the injected-text path
+        // skips the immediate insertText already attributable to keyboard text.
         const imePunctuationForwarder = isMac
           ? installTerminalImePunctuationForwarder({
               terminalElement: pane.terminal.element,
               isComposing: () => imeCompositionTracker.isActive(),
-              sendInput: (data) => pane.terminal.input(data),
-              isEnabled: () => macCjkInputSourceTracker?.isActive() === true
+              sendInput: (data) => pane.terminal.input(data)
             })
           : {
               claimKeyEvent: () => false,
@@ -1154,6 +1196,9 @@ export function useTerminalPaneLifecycle({
           }
         }
         scheduleRuntimeGraphSync()
+        // Why: active pane lives in PaneManager; React consumers such as the
+        // header chat toggle need a render tick when focus moves between splits.
+        syncPaneLayoutRevision()
         if (shouldPersistLayout) {
           persistLayoutSnapshot()
         }
@@ -1211,12 +1256,8 @@ export function useTerminalPaneLifecycle({
           fontFamily: buildFontFamily(currentSettings?.terminalFontFamily ?? ''),
           fontWeight: terminalFontWeights.fontWeight,
           fontWeightBold: terminalFontWeights.fontWeightBold,
-          scrollback: Math.min(
-            50_000,
-            Math.max(
-              1000,
-              Math.round((currentSettings?.terminalScrollbackBytes ?? 10_000_000) / 200)
-            )
+          scrollback: normalizeDesktopTerminalScrollbackRows(
+            currentSettings?.terminalScrollbackRows
           ),
           cursorStyle,
           cursorInactiveStyle: resolveTerminalCursorInactiveStyle(cursorStyle),
@@ -1566,9 +1607,25 @@ export function useTerminalPaneLifecycle({
     for (const panePtyBinding of panePtyBindingsRef.current.values()) {
       const bindingWithVisibility = panePtyBinding as IDisposable & {
         syncProcessTracking?: () => void
+        noteVisibilityResume?: () => void
       }
       bindingWithVisibility.syncProcessTracking?.()
+      // Why: re-arm the once-per-resume input liveness re-check so the typing
+      // hot path stays off the listSessions IPC between resumes (the re-check
+      // is only useful right after a hidden→visible flip).
+      if (isVisible) {
+        bindingWithVisibility.noteVisibilityResume?.()
+      }
     }
+    // Why: the reconcile pass self-gates on becoming visible (resume) — the
+    // effect also fires on hide — and runs fire-and-forget alongside
+    // syncProcessTracking. reconcileDeadSessions re-validates identity at apply
+    // time so a racing reattach is not clobbered.
+    scheduleVisibilityReconcilePass({
+      isVisible,
+      bindings: panePtyBindingsRef.current.values() as Iterable<ReconcilableBinding>,
+      listSessions: () => window.api.pty.listSessions()
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Why: visibility flips must refresh existing PTY process tracking even though the ref object identity is stable.
   }, [isVisible, isVisibleRef, panePtyBindingsRef])
 
@@ -1589,6 +1646,16 @@ export function useTerminalPaneLifecycle({
   useEffect(() => {
     managerRef.current?.setTerminalGpuAcceleration(settings?.terminalGpuAcceleration ?? 'auto')
   }, [settings?.terminalGpuAcceleration, managerRef])
+
+  useEffect(() => {
+    const manager = managerRef.current
+    if (!manager) {
+      return
+    }
+    // Why: live row retention changes are xterm option updates only; they must
+    // not recreate panes, replay snapshots, refit, resize, or signal the PTY.
+    applyTerminalScrollbackRowsToMountedPanes(manager, terminalScrollbackRows)
+  }, [managerRef, terminalScrollbackRows])
 
   useEffect(() => {
     const manager = managerRef.current

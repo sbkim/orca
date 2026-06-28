@@ -850,11 +850,7 @@ describe('keybindings', () => {
 
     // Ctrl+Shift+C on the same layout (terminal copy) must match too.
     expect(
-      keybindingMatchesAction(
-        'terminal.copySelection',
-        { ...cyrillicCtrlC, shift: true },
-        'win32'
-      )
+      keybindingMatchesAction('terminal.copySelection', { ...cyrillicCtrlC, shift: true }, 'win32')
     ).toBe(true)
 
     // Greek layout: physical P produces 'π' (U+03C0); Ctrl+P must still match.
