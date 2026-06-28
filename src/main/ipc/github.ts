@@ -93,6 +93,8 @@ import type {
   ClearProjectItemFieldArgs,
   DeleteIssueCommentBySlugArgs,
   GetProjectViewTableArgs,
+  GitHubRepoTarget,
+  ListAccessibleProjectsArgs,
   ListAssignableUsersBySlugArgs,
   ListIssueTypesBySlugArgs,
   ListLabelsBySlugArgs,
@@ -1122,7 +1124,7 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
     getRateLimit(args?.force ? { force: true } : undefined)
   )
 
-  ipcMain.handle('gh:diagnoseAuth', () => diagnoseGhAuth())
+  ipcMain.handle('gh:diagnoseAuth', (_event, args?: GitHubRepoTarget) => diagnoseGhAuth(args))
 
   // ── GitHub ProjectV2 view handlers ─────────────────────────────────
   // Why: registered unconditionally so enabling the experimental flag at
@@ -1130,7 +1132,9 @@ export function registerGitHubHandlers(store: Store, stats: StatsCollector): voi
   // Handlers never throw across IPC — every failure mode resolves through the
   // GitHubProjectViewError envelope.
 
-  ipcMain.handle('gh:listAccessibleProjects', () => listAccessibleProjects())
+  ipcMain.handle('gh:listAccessibleProjects', (_event, args?: ListAccessibleProjectsArgs) =>
+    listAccessibleProjects(args)
+  )
 
   ipcMain.handle('gh:resolveProjectRef', (_event, args: ResolveProjectRefArgs) =>
     resolveProjectRef(args)
