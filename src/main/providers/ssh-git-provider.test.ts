@@ -382,7 +382,8 @@ describe('SshGitProvider', () => {
       cwd: '/home/user/repo',
       stdin: null,
       timeoutMs: 60_000,
-      operation: 'commit-message'
+      operation: 'commit-message',
+      shell: true
     })
     expect(result).toEqual(execResult)
   })
@@ -426,7 +427,8 @@ describe('SshGitProvider', () => {
       cwd: '/home/user/repo',
       stdin: null,
       timeoutMs: 60_000,
-      operation: 'commit-message'
+      operation: 'commit-message',
+      shell: true
     })
     expect(mux.request).toHaveBeenNthCalledWith(2, 'agent.execNonInteractive', {
       binary: 'codex',
@@ -434,7 +436,8 @@ describe('SshGitProvider', () => {
       cwd: '/home/user/repo',
       stdin: null,
       timeoutMs: 60_000,
-      operation: 'pull-request-fields'
+      operation: 'pull-request-fields',
+      shell: true
     })
 
     await provider.cancelGenerateCommitMessage('/home/user/repo')
