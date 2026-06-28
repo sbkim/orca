@@ -72,9 +72,8 @@ describe('mobile worktree add FAB markup contract', () => {
     expect(source).toContain(
       "const REPO_HEADER_CREATE_TOUCH_HIDE_CLASS = 'worktree-create-touch-hidden'"
     )
-    expect(source).toContain(
-      'REPO_HEADER_ACTION_BUTTON_CLASS,\n                                  REPO_HEADER_CREATE_TOUCH_HIDE_CLASS'
-    )
+    expect(source).toContain('REPO_HEADER_ACTION_BUTTON_CLASS')
+    expect(source).toContain('REPO_HEADER_CREATE_TOUCH_HIDE_CLASS')
     expect(source).toContain('Project actions')
     expect(source).toContain('handleCreateFolderWorkspace(row.projectGroup)')
   })

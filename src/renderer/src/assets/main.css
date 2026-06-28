@@ -37,6 +37,12 @@
   display: block;
 }
 
+.worktree-mobile-create-button {
+  /* Why: floating action buttons escape the row surface, so they use the
+     documented floating elevation instead of a component-local shadow. */
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.18);
+}
+
 @media (hover: hover) {
   .worktree-mobile-create-fab {
     display: none;

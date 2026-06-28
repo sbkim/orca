@@ -617,7 +617,7 @@ function MobileWorktreeCreateFab({ onCreate }: MobileWorktreeCreateFabProps): Re
             type="button"
             variant="default"
             size="icon-lg"
-            className="pointer-events-auto size-11 rounded-full border border-worktree-sidebar-border bg-sidebar-primary text-sidebar-primary-foreground shadow-[0_10px_24px_rgba(0,0,0,0.18)] hover:bg-sidebar-primary/90 focus-visible:ring-worktree-sidebar-ring"
+            className="worktree-mobile-create-button pointer-events-auto size-11 rounded-full border border-worktree-sidebar-border bg-sidebar-primary text-sidebar-primary-foreground hover:bg-sidebar-primary/90 focus-visible:ring-worktree-sidebar-ring"
             aria-label={translate(
               'auto.components.sidebar.WorktreeList.mobileCreateWorkspace',
               'Create workspace'
@@ -3885,7 +3885,10 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
         onWheel={markDirectScrollInput}
         onDragOver={handleWorktreeDragOver}
         onDrop={handleWorktreeDrop}
-        className="worktree-mobile-create-scroll-padding worktree-sidebar-scrollbar h-full overflow-y-scroll overflow-x-hidden pl-1 scrollbar-sleek outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset pt-px"
+        className={cn(
+          showMobileCreateFab && 'worktree-mobile-create-scroll-padding',
+          'worktree-sidebar-scrollbar h-full overflow-y-scroll overflow-x-hidden pl-1 scrollbar-sleek outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset pt-px'
+        )}
         style={WORKTREE_SIDEBAR_SCROLL_STYLE}
       >
         <div

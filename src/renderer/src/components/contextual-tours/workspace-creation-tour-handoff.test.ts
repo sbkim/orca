@@ -39,7 +39,7 @@ describe('openWorkspaceCreationComposerWithTourHandoff', () => {
     expect(requestContextualTourWhenReady).not.toHaveBeenCalled()
   })
 
-  it('preserves an initial repo when opening through the handoff path', () => {
+  it('preserves an initial repo when opening outside the tour handoff path', () => {
     const openModal = vi.fn()
     vi.spyOn(useAppStore, 'getState').mockImplementation(
       () =>
@@ -59,6 +59,34 @@ describe('openWorkspaceCreationComposerWithTourHandoff', () => {
     expect(openModal).toHaveBeenCalledWith('new-workspace-composer', {
       telemetrySource: 'sidebar',
       initialRepoId: 'repo-1'
+    })
+  })
+
+  it('preserves an initial repo when opening through the handoff path', () => {
+    const openModal = vi.fn()
+    const detachContextualTourSource = vi.fn()
+    const completeContextualTour = vi.fn()
+    vi.spyOn(useAppStore, 'getState').mockImplementation(
+      () =>
+        ({
+          activeContextualTourId: 'workspace-agent-sessions',
+          activeContextualTourStepIndex: 1,
+          activeContextualTourSource: 'setup_guide_parallel_work',
+          activeModal: 'none',
+          contextualToursSeenIds: [],
+          repos: [{ id: 'repo-1' }],
+          detachContextualTourSource,
+          completeContextualTour,
+          openModal
+        }) as unknown as ReturnType<typeof useAppStore.getState>
+    )
+
+    openWorkspaceCreationComposerWithTourHandoff({ initialRepoId: 'repo-1' })
+
+    expect(openModal).toHaveBeenCalledWith('new-workspace-composer', {
+      telemetrySource: 'sidebar',
+      initialRepoId: 'repo-1',
+      contextualTourSource: 'workspace_creation_modal'
     })
   })
 
