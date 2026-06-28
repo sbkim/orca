@@ -19,6 +19,19 @@ function StepOutcomeIcon({ outcome }: { outcome: StepOutcome }): React.JSX.Eleme
   }
 }
 
+function JobOutcomeIcon({ outcome }: { outcome: StepOutcome }): React.JSX.Element {
+  switch (outcome) {
+    case 'success':
+      return <CheckCircle2 className="size-4 shrink-0 text-status-success" />
+    case 'failure':
+      return <XCircle className="size-4 shrink-0 text-destructive" />
+    case 'skipped':
+      return <MinusCircle className="size-4 shrink-0 text-muted-foreground/60" />
+    case 'pending':
+      return <CircleDashed className="size-4 shrink-0 text-muted-foreground" />
+  }
+}
+
 function StepRow({ step }: { step: PRCheckStep }): React.JSX.Element {
   const outcome = resolveStepOutcome(step)
   return (
@@ -39,12 +52,7 @@ function StepRow({ step }: { step: PRCheckStep }): React.JSX.Element {
 
 function JobCard({ job, index }: { job: PRCheckJob; index: number }): React.JSX.Element {
   const breakdown = summarizeJobSteps(job)
-  const jobState = job.conclusion ?? job.status
-  const jobFailed =
-    jobState === 'failure' ||
-    jobState === 'failed' ||
-    jobState === 'cancelled' ||
-    jobState === 'timed_out'
+  const jobOutcome = resolveStepOutcome(job)
   // Failures matter most, so surface them and collapse the passing/skipped noise
   // behind a one-line summary. With no failures there is nothing to prioritize,
   // so expand by default rather than hiding the job's only content.
@@ -80,14 +88,15 @@ function JobCard({ job, index }: { job: PRCheckJob; index: number }): React.JSX.
   return (
     <div key={`${job.name}-${index}`} className="px-3 py-3">
       <div className="flex min-w-0 items-center gap-2">
-        {jobFailed ? (
-          <XCircle className="size-4 shrink-0 text-destructive" />
-        ) : (
-          <CheckCircle2 className="size-4 shrink-0 text-status-success" />
-        )}
+        <JobOutcomeIcon outcome={jobOutcome} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
           {job.name}
         </span>
+        {jobOutcome !== 'success' && jobOutcome !== 'failure' && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {job.conclusion ?? job.status}
+          </span>
+        )}
         {breakdown.failed.length > 0 && (
           <span className="shrink-0 rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive">
             {breakdown.failed.length}
