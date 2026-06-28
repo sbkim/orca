@@ -4675,6 +4675,7 @@ export class OrcaRuntimeService {
     getRuntimeId: () => this.runtimeId,
     requireStore: () => this.requireStore(),
     resolveWorktreeSelector: (selector) => this.resolveWorktreeSelector(selector),
+    resolveRuntimeFileTarget: (selector) => this.resolveRuntimeFileTarget(selector),
     resolveRuntimeGitTarget: (selector) => this.resolveRuntimeGitTarget(selector),
     openFile: (worktreeId, filePath, relativePath, runtimeEnvironmentId) => {
       if (!this.notifier?.openFile) {
@@ -4834,6 +4835,24 @@ export class OrcaRuntimeService {
     const localGitOptions =
       repo && !connectionId ? getLocalProjectWorktreeGitOptions(store, repo) : {}
     return { worktree, repo, connectionId, localGitOptions }
+  }
+
+  private async resolveRuntimeFileTarget(worktreeSelector: string): Promise<{
+    worktree: ResolvedWorktree
+    connectionId?: string
+  }> {
+    const folderScope = await this.resolveFolderWorkspaceLaunchScope(worktreeSelector)
+    if (folderScope?.folderWorkspace) {
+      return {
+        worktree: this.folderWorkspaceToResolvedWorktree(folderScope.folderWorkspace),
+        connectionId: folderScope.connectionId ?? undefined
+      }
+    }
+
+    const store = this.requireStore()
+    const worktree = await this.resolveWorktreeSelector(worktreeSelector)
+    const repo = store.getRepo(worktree.repoId)
+    return { worktree, connectionId: repo?.connectionId ?? undefined }
   }
 
   onMobileSessionTabsChanged(
@@ -16021,6 +16040,23 @@ export class OrcaRuntimeService {
       connectionId: this.resolveFolderWorkspaceConnectionId(workspace),
       repo: null,
       folderWorkspace: workspace
+    }
+  }
+
+  private folderWorkspaceToResolvedWorktree(folderWorkspace: FolderWorkspace): ResolvedWorktree {
+    const worktree = folderWorkspaceToWorktree(folderWorkspace)
+    return {
+      ...worktree,
+      parentWorktreeId: null,
+      childWorktreeIds: [],
+      lineage: null,
+      git: {
+        path: worktree.path,
+        head: worktree.head,
+        branch: worktree.branch,
+        isBare: worktree.isBare,
+        isMainWorktree: worktree.isMainWorktree
+      }
     }
   }
 
