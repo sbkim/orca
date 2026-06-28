@@ -2407,6 +2407,12 @@
                   "7cf51f74fd": "Enable TUI clipboard writes in Terminal settings to copy from SSH, tmux, Neovim, or fzf.",
                   "89eaa3e80b": "Terminal clipboard write blocked"
                 }
+              },
+              "failed": {
+                "toast": {
+                  "62a0af2cb4": "Terminal clipboard write failed",
+                  "fdd3e7e977": "The terminal app requested a copy, but the system clipboard did not update."
+                }
               }
             }
           },

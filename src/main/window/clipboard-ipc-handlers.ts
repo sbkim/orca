@@ -71,6 +71,28 @@ function runCommand(command: string, args: string[], stdin?: string): Promise<vo
   })
 }
 
+// Why: Electron's clipboard.writeText returns without throwing even when the OS
+// clipboard keeps its previous contents (observed on Windows with Copilot
+// terminal copies), so a renderer "Copied" success state can be a lie. Read the
+// value back so a successful write actually means pasteable content.
+function writeClipboardTextAndVerify(text: string, clipboardType?: 'selection'): void {
+  if (clipboardType) {
+    clipboard.writeText(text, clipboardType)
+  } else {
+    clipboard.writeText(text)
+  }
+  // Why: only verify the standard clipboard. The X11 PRIMARY "selection"
+  // clipboard hands ownership to whoever last selected text, so a read-back can
+  // legitimately differ from what we just wrote — verifying it would surface
+  // false failures on Linux primary-selection copies.
+  if (clipboardType === 'selection') {
+    return
+  }
+  if (clipboard.readText() !== text) {
+    throw new Error('Clipboard write verification failed')
+  }
+}
+
 export function registerClipboardHandlers(store: Store): void {
   ipcMain.removeHandler('clipboard:readText')
   ipcMain.removeHandler('clipboard:readSelectionText')
@@ -142,11 +164,11 @@ export function registerClipboardHandlers(store: Store): void {
   )
   ipcMain.handle('clipboard:writeText', async (event, text: string) => {
     assertTrustedClipboardSender(event)
-    return clipboard.writeText(await assertClipboardTextWriteWithinLimitWithYield(text))
+    return writeClipboardTextAndVerify(await assertClipboardTextWriteWithinLimitWithYield(text))
   })
   ipcMain.handle('clipboard:writeSelectionText', async (event, text: string) => {
     assertTrustedClipboardSender(event)
-    return clipboard.writeText(
+    return writeClipboardTextAndVerify(
       await assertClipboardTextWriteWithinLimitWithYield(text),
       'selection'
     )
