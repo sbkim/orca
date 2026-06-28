@@ -337,14 +337,18 @@ export default function WorkspaceCleanupDialog(): React.JSX.Element {
   }, [candidates, effectiveRepoSelection, eligibleRepoIds.length])
 
   useEffect(() => {
-    if (!scan || selectedDefaultsScanAtRef.current === scan.scannedAt) {
+    // Why: a progressive scan publishes an empty candidate snapshot first (at
+    // the final scannedAt), then accumulates rows. Seeding on that empty snapshot
+    // would lock the per-scan guard and never pre-check the suggested rows. Wait
+    // for the scan to finish so defaults are computed from the populated list.
+    if (!scan || loading || selectedDefaultsScanAtRef.current === scan.scannedAt) {
       return
     }
     selectedDefaultsScanAtRef.current = scan.scannedAt
     setSelectedIds(getDefaultSelectedWorkspaceCleanupIds(scan.candidates))
     setConfirming(false)
     setRowFailures({})
-  }, [scan])
+  }, [scan, loading])
 
   const visibleCandidates = useMemo(() => {
     const rows = filteredCandidates.filter((candidate) => !candidate.blockers.includes('dismissed'))

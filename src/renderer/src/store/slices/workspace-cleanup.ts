@@ -337,37 +337,45 @@ async function applyWorkspaceCleanupProgress(
   ) => void
 ): Promise<void> {
   const state = getState()
-  const previousCandidates =
-    progress.candidateMode === 'append' &&
-    state.workspaceCleanupProgress?.scanId === progress.scanId
-      ? state.workspaceCleanupProgress.candidates
-      : []
   const enrichedProgressCandidates = await enrichWorkspaceCleanupCandidatesForScan(
     progress.candidates,
     state,
     scanToken
   )
-  const candidates =
-    progress.candidateMode === 'append'
-      ? appendWorkspaceCleanupProgressCandidates(previousCandidates, enrichedProgressCandidates)
-      : enrichedProgressCandidates
   if (scanToken !== latestWorkspaceCleanupScanToken) {
     return
   }
   setState((state) => {
-    if (
-      state.workspaceCleanupProgress?.scanId === progress.scanId &&
-      state.workspaceCleanupProgress.scannedWorktreeCount > progress.scannedWorktreeCount
-    ) {
-      return {}
-    }
+    const sameScan = state.workspaceCleanupProgress?.scanId === progress.scanId
+    // Why: enrichment above awaits async IPC, so a concurrent progress event can
+    // mutate state between this function's entry and here. Compute the append
+    // merge from the *current* candidates inside the updater rather than a
+    // pre-await snapshot, so overlapping events never drop earlier-appended rows.
+    const previousCandidates =
+      progress.candidateMode === 'append' && sameScan
+        ? state.workspaceCleanupProgress!.candidates
+        : []
+    const candidates =
+      progress.candidateMode === 'append'
+        ? appendWorkspaceCleanupProgressCandidates(previousCandidates, enrichedProgressCandidates)
+        : enrichedProgressCandidates
+    // Why: progress events can arrive out of order when one candidate's
+    // enrichment (e.g. PTY liveness IPC) settles after a later event's. Still
+    // merge this event's candidates so its row is never dropped, but keep the
+    // highest scanned/total counters so the displayed progress never regresses.
+    const keepPriorProgress =
+      sameScan &&
+      state.workspaceCleanupProgress!.scannedWorktreeCount > progress.scannedWorktreeCount
+    const nextProgress = keepPriorProgress
+      ? { ...state.workspaceCleanupProgress!, candidates }
+      : { ...progress, candidates }
     return {
       workspaceCleanupScan: {
         scannedAt: progress.scannedAt,
         candidates,
-        errors: progress.errors
+        errors: keepPriorProgress ? state.workspaceCleanupProgress!.errors : progress.errors
       },
-      workspaceCleanupProgress: { ...progress, candidates }
+      workspaceCleanupProgress: nextProgress
     }
   })
 }
