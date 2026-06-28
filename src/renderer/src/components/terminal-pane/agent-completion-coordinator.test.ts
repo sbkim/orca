@@ -1054,7 +1054,7 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).toHaveBeenCalledTimes(1)
   })
 
-  it('would spam Cursor notifications if shell hooks still mapped to waiting', () => {
+  it('does not dispatch completion when waiting states arrive mid-turn', () => {
     const dispatchCompletion = vi.fn()
     const coordinator = createAgentCompletionCoordinator({
       paneKey: 'tab-1:leaf-1',
@@ -1090,7 +1090,64 @@ describe('agent completion coordinator', () => {
       toolInput: 'git status'
     })
 
-    expect(dispatchCompletion).toHaveBeenCalledTimes(2)
+    expect(dispatchCompletion).toHaveBeenCalledTimes(0)
+  })
+
+  it('does not dispatch completion when blocked state arrives mid-turn', () => {
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    const turn = {
+      prompt: 'fix the bug',
+      agentType: 'copilot' as const
+    }
+
+    coordinator.observeHookStatus({ state: 'working', ...turn })
+    coordinator.observeHookStatus({
+      state: 'blocked',
+      ...turn,
+      toolName: 'Shell',
+      toolInput: 'npm install'
+    })
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(0)
+  })
+
+  it('cancels a pending done timer when a waiting state arrives before the quiet window', () => {
+    const dispatchCompletion = vi.fn()
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(),
+      dispatchCompletion,
+      isLive: () => true
+    })
+
+    const turn = {
+      prompt: 'fix the bug',
+      agentType: 'cursor' as const
+    }
+
+    coordinator.observeHookStatus({ state: 'working', ...turn })
+    coordinator.observeHookStatus({ state: 'done', ...turn, lastAssistantMessage: 'Done.' })
+    // waiting arrives before the 1.5s quiet window expires; must cancel the timer
+    coordinator.observeHookStatus({
+      state: 'waiting',
+      ...turn,
+      toolName: 'Shell',
+      toolInput: 'pnpm test'
+    })
+    vi.advanceTimersByTime(HOOK_DONE_QUIET_MS)
+
+    expect(dispatchCompletion).toHaveBeenCalledTimes(0)
   })
 
   it('keeps a generic title completion pending long enough for the first remote inspection', async () => {

@@ -43,7 +43,13 @@ const COMPLETION_REPLAY_GUARD_MS = 1_000
 const HOOK_DONE_QUIET_MS = 1_500
 
 function isCompletionHookState(state: ParsedAgentStatusPayload['state']): boolean {
-  return state === 'done' || state === 'waiting' || state === 'blocked'
+  return state === 'done'
+}
+
+function isAttentionHookState(state: ParsedAgentStatusPayload['state']): boolean {
+  // 'waiting' = PermissionRequest; 'blocked' = Copilot elicitation dialog.
+  // Agent is alive but paused; not a completion signal.
+  return state === 'waiting' || state === 'blocked'
 }
 
 export function createAgentCompletionCoordinator(
@@ -622,10 +628,11 @@ export function createAgentCompletionCoordinator(
       dropPendingTitle()
       return
     }
+    if (isAttentionHookState(payload.state)) {
+      clearPendingHookDone()
+      return
+    }
     if (isCompletionHookState(payload.state)) {
-      if (payload.state !== 'done') {
-        clearPendingHookDone()
-      }
       if (isRecognizedAgentType(payload.agentType)) {
         establishAgentEvidence()
       }
