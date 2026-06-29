@@ -15,6 +15,8 @@ import {
   shouldIncludeQuickOpenPath
 } from '../../shared/quick-open-filter'
 import { listFilesWithGit } from './filesystem-list-files-git-fallback'
+import { isQuickOpenReaddirBudgetError } from '../../shared/quick-open-readdir-walk'
+import { buildInstallRgMessage } from '../../relay/fs-handler-install-rg'
 
 export async function listQuickOpenFiles(
   rootPath: string,
@@ -40,7 +42,18 @@ export async function listQuickOpenFiles(
   // can run.
   const rgAvailable = await checkRgAvailable(authorizedRootPath, localGitOptions.wslDistro)
   if (!rgAvailable) {
-    return listFilesWithGit(authorizedRootPath, excludePathPrefixes, localGitOptions)
+    // Why: a git monorepo parent fills nested-repo subtrees via the readdir
+    // walk, which can exhaust the same cap/deadline. Translate only those
+    // budget errors into install-rg guidance; genuine git failures keep
+    // their own messages. Mirrors the relay path (fs-handler.ts).
+    try {
+      return await listFilesWithGit(authorizedRootPath, excludePathPrefixes, localGitOptions)
+    } catch (err) {
+      if (isQuickOpenReaddirBudgetError(err)) {
+        throw new Error(await buildInstallRgMessage(err))
+      }
+      throw err
+    }
   }
 
   const files = new Set<string>()
