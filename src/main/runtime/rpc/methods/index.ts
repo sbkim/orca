@@ -33,6 +33,7 @@ import { SKILL_METHODS } from './skills'
 import { CLIPBOARD_METHODS } from './clipboard'
 import { HOST_CAPABILITY_METHODS } from './host-capabilities'
 import { EMULATOR_METHODS } from './emulator'
+import { AI_VAULT_METHODS } from './ai-vault'
 
 // Why: a flat manifest keeps registration order explicit and provides one
 // grep-point for "what methods does the RPC server expose?" — useful when
@@ -71,5 +72,6 @@ export const ALL_RPC_METHODS: readonly RpcAnyMethod[] = [
   ...HOST_CAPABILITY_METHODS,
   ...CLIENT_EVENT_METHODS,
   ...CLIENT_UI_METHODS,
-  ...EMULATOR_METHODS
+  ...EMULATOR_METHODS,
+  ...AI_VAULT_METHODS
 ]

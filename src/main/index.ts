@@ -1447,7 +1447,12 @@ app.whenReady().then(async () => {
     },
     // Why: hook-reported agent status is the same source the desktop sidebar
     // reads. worktree.ps pulls it at query time so mobile shows the same agents.
-    getAgentStatusSnapshot: () => agentHookServer.getStatusSnapshot()
+    getAgentStatusSnapshot: () => agentHookServer.getStatusSnapshot(),
+    // Why: source codex-home here (runs in BOTH window and serve modes) so the
+    // aiVault.listSessions RPC includes managed-Codex sessions on remote/SSH
+    // hosts; the window-only registerCoreHandlers path never runs under serve.
+    getAdditionalAiVaultCodexHomePaths: () =>
+      codexRuntimeHome ? [codexRuntimeHome.getHostRuntimeHomePath()] : []
   })
   runtime = runtimeService
   automations = new AutomationService(store, {

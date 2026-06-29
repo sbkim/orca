@@ -217,6 +217,11 @@ import {
   RUNTIME_PROTOCOL_VERSION,
   type RuntimeCapability
 } from '../../shared/protocol-version'
+import {
+  configureAiVaultSessionSources,
+  listAiVaultSessions
+} from '../ai-vault/cached-session-list'
+import type { AiVaultListArgs, AiVaultListResult } from '../../shared/ai-vault-types'
 import type {
   WorkspacePortKillRequest,
   WorkspacePortKillResult,
@@ -2122,6 +2127,11 @@ export class OrcaRuntimeService {
       // terminal output. worktree.ps reads this at query time so mobile shows the
       // same inline agent rows the desktop sidebar does — same source, 1:1.
       getAgentStatusSnapshot?: () => AgentStatusIpcPayload[]
+      // Why: codex-home paths for the Agent Session History scan must be sourced
+      // here, not via the window-only registerCoreHandlers path — that path never
+      // runs under `orca serve`, so remote/SSH hosts would silently drop
+      // managed-Codex sessions. The runtime ctor runs in BOTH window and serve.
+      getAdditionalAiVaultCodexHomePaths?: () => readonly string[]
     }
   ) {
     this.store = store
@@ -2130,6 +2140,14 @@ export class OrcaRuntimeService {
       this.agentDetector = new AgentDetector(stats)
     }
     this.getAgentStatusSnapshotFn = deps?.getAgentStatusSnapshot ?? null
+    // Why: configure the shared AiVault scan cache from a serve-mode-reachable
+    // seam so the aiVault.listSessions RPC includes managed-Codex + WSL sessions
+    // even on headless `orca serve` hosts where registerCoreHandlers never runs.
+    if (deps?.getAdditionalAiVaultCodexHomePaths) {
+      configureAiVaultSessionSources({
+        getAdditionalCodexHomePaths: deps.getAdditionalAiVaultCodexHomePaths
+      })
+    }
     // Why: the daemon adapter is installed via `setLocalPtyProvider()` during
     // attachMainWindowServices, AFTER this service is constructed. Capturing
     // `getLocalPtyProvider()` at construction time would freeze a reference to
@@ -2514,6 +2532,13 @@ export class OrcaRuntimeService {
       protocolVersion: RUNTIME_PROTOCOL_VERSION,
       minCompatibleMobileVersion: MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION
     }
+  }
+
+  // Why: scans the transcript-owning host's disk (correct by construction over
+  // RPC — a remote/SSH host scans its own disk). Delegates to the one shared
+  // cache so the desktop panel and the mobile screen never double-scan.
+  listAiVaultSessions(args?: AiVaultListArgs): Promise<AiVaultListResult> {
+    return listAiVaultSessions(args)
   }
 
   setPtyController(controller: RuntimePtyController | null): void {
