@@ -3073,6 +3073,7 @@ export type TaskResumeState = {
   }
   jiraPreset?: 'assigned' | 'reported' | 'all' | 'done'
   jiraQuery?: string
+  jiraStatuses?: string[]
 }
 
 export type RightSidebarTab =
