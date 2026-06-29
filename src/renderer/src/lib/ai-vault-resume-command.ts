@@ -18,6 +18,7 @@ import { CLIENT_PLATFORM } from '@/lib/new-workspace'
 import { buildAgentResumeStartupPlan } from '@/lib/tui-agent-startup'
 import { getExecutionHostIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { parseExecutionHostId } from '../../../shared/execution-host'
+import { parseWorkspaceKey } from '../../../shared/workspace-scope'
 
 type AiVaultResumeCommandSession = Pick<AiVaultSession, 'agent' | 'sessionId' | 'cwd' | 'codexHome'>
 
@@ -148,10 +149,29 @@ export function getAiVaultResumePlatform(
     return 'linux'
   }
 
-  const worktree = targetWorktreeId
-    ? Object.values(state.worktreesByRepo ?? {})
-        .flat()
-        .find((candidate) => candidate.id === targetWorktreeId)
-    : null
-  return worktree?.path && parseWslUncPath(worktree.path) ? 'linux' : CLIENT_PLATFORM
+  const workspacePath = getAiVaultResumeWorkspacePath(state, targetWorktreeId)
+  return workspacePath && parseWslUncPath(workspacePath) ? 'linux' : CLIENT_PLATFORM
+}
+
+function getAiVaultResumeWorkspacePath(
+  state: Pick<AppState, 'folderWorkspaces' | 'worktreesByRepo'>,
+  worktreeId: string | null | undefined
+): string | null {
+  if (!worktreeId) {
+    return null
+  }
+  const workspaceScope = parseWorkspaceKey(worktreeId)
+  if (workspaceScope?.type === 'folder') {
+    return (
+      state.folderWorkspaces.find((workspace) => workspace.id === workspaceScope.folderWorkspaceId)
+        ?.folderPath ?? null
+    )
+  }
+  const targetWorktreeId =
+    workspaceScope?.type === 'worktree' ? workspaceScope.worktreeId : worktreeId
+  return (
+    Object.values(state.worktreesByRepo ?? {})
+      .flat()
+      .find((candidate) => candidate.id === targetWorktreeId)?.path ?? null
+  )
 }

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { toast } from 'sonner'
 import { useAppStore } from '@/store'
 import {
   useActiveRepo,
   useActiveWorktree,
+  useActiveWorktreeId,
   useAllWorktrees,
   useProjectHostSetupProjection,
   useRepos
@@ -41,11 +43,20 @@ import { AiVaultSessionVirtualList } from './AiVaultSessionVirtualList'
 import { useAiVaultSessionRefresh } from './ai-vault-session-refresh'
 
 export default function AiVaultPanel(): React.JSX.Element {
+  const activeWorktreeId = useActiveWorktreeId()
   const activeWorktree = useActiveWorktree()
   const activeRepo = useActiveRepo()
   const repos = useRepos()
   const allWorktrees = useAllWorktrees()
   const projectHostSetupProjection = useProjectHostSetupProjection()
+  const resumeTargetState = useAppStore(
+    useShallow((state) => ({
+      folderWorkspaces: state.folderWorkspaces,
+      projectGroups: state.projectGroups,
+      repos: state.repos,
+      worktreesByRepo: state.worktreesByRepo
+    }))
+  )
   const settings = useAppStore((s) => s.settings)
   const agentCmdOverrides = settings?.agentCmdOverrides
   const { getOriginalPaneTarget, jumpToOriginalPane, jumpToWorktree } =
@@ -60,9 +71,11 @@ export default function AiVaultPanel(): React.JSX.Element {
   const userChangedScopeRef = useRef(false)
   const preferredScopeRef = useRef<AiVaultScope>(DEFAULT_AI_VAULT_SCOPE)
 
-  const isRuntimeWorktree = useAppStore(
-    (state) =>
-      getAiVaultResumeWorkspaceTargetStatus(state, activeWorktree?.id ?? null) === 'runtime'
+  const isRuntimeWorktree = useMemo(
+    () =>
+      getAiVaultResumeWorkspaceTargetStatus(resumeTargetState, activeWorktreeId ?? null) ===
+      'runtime',
+    [activeWorktreeId, resumeTargetState]
   )
   const activeWorktreePath = activeWorktree?.path ?? null
   // Why: AI Vault ownership is cwd-based, so we must consider live worktrees across all repos.
@@ -109,12 +122,12 @@ export default function AiVaultPanel(): React.JSX.Element {
   const sessionWorktreeById = useAiVaultSessionWorktreeMap({
     sessions,
     worktrees: allWorktrees,
-    activeWorktreeId: activeWorktree?.id ?? null
+    activeWorktreeId: activeWorktreeId ?? activeWorktree?.id ?? null
   })
   const { buildResumeStartup, copyResumeCommand, handleResume } = useAiVaultSessionLaunchActions({
     activeWorktree: activeWorktree ?? null,
-    allWorktrees,
-    repos,
+    activeWorktreeId: activeWorktreeId ?? activeWorktree?.id ?? null,
+    targetState: resumeTargetState,
     agentCmdOverrides
   })
   const hasAllAgentsSelected = agents.length === AI_VAULT_AGENTS.length
@@ -198,22 +211,38 @@ export default function AiVaultPanel(): React.JSX.Element {
     (session: AiVaultSession) =>
       resolveAiVaultSessionResumeState({
         worktreeInfo: sessionWorktreeById.get(session.id) ?? null,
-        activeWorktreeId: activeWorktree?.id ?? null,
+        activeWorktreeId: activeWorktreeId ?? activeWorktree?.id ?? null,
         worktrees: allWorktrees,
-        repos
+        repos,
+        targetState: resumeTargetState
       }),
-    [activeWorktree?.id, allWorktrees, repos, sessionWorktreeById]
+    [
+      activeWorktree?.id,
+      activeWorktreeId,
+      allWorktrees,
+      repos,
+      resumeTargetState,
+      sessionWorktreeById
+    ]
   )
 
   const getSessionResumeActions = useCallback(
     (session: AiVaultSession) =>
       resolveAiVaultSessionResumeActions({
         worktreeInfo: sessionWorktreeById.get(session.id) ?? null,
-        activeWorktreeId: activeWorktree?.id ?? null,
+        activeWorktreeId: activeWorktreeId ?? activeWorktree?.id ?? null,
         worktrees: allWorktrees,
-        repos
+        repos,
+        targetState: resumeTargetState
       }),
-    [activeWorktree?.id, allWorktrees, repos, sessionWorktreeById]
+    [
+      activeWorktree?.id,
+      activeWorktreeId,
+      allWorktrees,
+      repos,
+      resumeTargetState,
+      sessionWorktreeById
+    ]
   )
 
   const setAgentEnabled = useCallback((agent: AiVaultAgent, enabled: boolean) => {

@@ -152,6 +152,63 @@ describe('ai vault resume command runtime', () => {
     ).toBe("cd '/home/alice/repo' && claude '--resume' 'session one'")
   })
 
+  it('uses POSIX command wrapping for folder workspaces with their own SSH target', () => {
+    const state = makeState({ worktreePath: 'C:\\Users\\alice\\repo' })
+    state.activeWorktreeId = 'folder:folder-1'
+    state.folderWorkspaces = [
+      {
+        id: 'folder-1',
+        projectGroupId: 'group-1',
+        name: 'Platform',
+        folderPath: '/home/alice/platform',
+        connectionId: 'folder-ssh'
+      }
+    ] as never
+    state.projectGroups = [{ id: 'group-1', connectionId: null, executionHostId: null }] as never
+
+    expect(getAiVaultResumePlatform(state, 'folder:folder-1')).toBe('linux')
+    expect(
+      buildAiVaultResumeCommandForWorktree({
+        state,
+        worktreeId: 'folder:folder-1',
+        session: {
+          agent: 'claude',
+          sessionId: 'session one',
+          cwd: '/home/alice/platform',
+          codexHome: null
+        }
+      })
+    ).toBe("cd '/home/alice/platform' && claude '--resume' 'session one'")
+  })
+
+  it('uses POSIX command wrapping for WSL UNC folder workspaces on Windows clients', () => {
+    const state = makeState({ worktreePath: 'C:\\Users\\alice\\repo' })
+    state.activeWorktreeId = 'folder:folder-1'
+    state.folderWorkspaces = [
+      {
+        id: 'folder-1',
+        projectGroupId: 'group-1',
+        name: 'Platform',
+        folderPath: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\platform'
+      }
+    ] as never
+    state.projectGroups = [{ id: 'group-1', connectionId: null, executionHostId: 'local' }] as never
+
+    expect(getAiVaultResumePlatform(state, 'folder:folder-1')).toBe('linux')
+    expect(
+      buildAiVaultResumeCommandForWorktree({
+        state,
+        worktreeId: 'folder:folder-1',
+        session: {
+          agent: 'claude',
+          sessionId: 'session one',
+          cwd: '/home/alice/platform',
+          codexHome: null
+        }
+      })
+    ).toBe("cd '/home/alice/platform' && claude '--resume' 'session one'")
+  })
+
   it('keeps WSL UNC worktrees on POSIX command wrapping without an explicit override', () => {
     const state = makeState({
       worktreePath: '\\\\wsl.localhost\\Ubuntu\\home\\alice\\repo'
