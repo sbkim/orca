@@ -3,6 +3,8 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   canResolveFolderSmartGitHubSubmit,
+  getInitialAutoManagedWorkspaceName,
+  isExplicitWorkspaceNameInput,
   resolveInitialWorkspaceRunSeed
 } from './useComposerState'
 
@@ -17,6 +19,47 @@ function sourceBetween(source: string, startPattern: string, endPattern: string)
 }
 
 describe('useComposerState host-context boundaries', () => {
+  it('treats typed workspace names as user-authored, not auto-managed', () => {
+    expect(isExplicitWorkspaceNameInput({ name: 'keep-my-name', lastAutoName: '' })).toBe(true)
+    expect(
+      isExplicitWorkspaceNameInput({
+        name: 'keep-my-name',
+        lastAutoName: 'keep-my-name'
+      })
+    ).toBe(false)
+    expect(isExplicitWorkspaceNameInput({ name: '#1234', lastAutoName: '' })).toBe(false)
+    expect(
+      isExplicitWorkspaceNameInput({
+        name: 'https://github.com/stablyai/orca/pull/1234',
+        lastAutoName: ''
+      })
+    ).toBe(false)
+  })
+
+  it('does not auto-own arbitrary prefilled names', () => {
+    expect(
+      getInitialAutoManagedWorkspaceName({
+        initialName: 'keep-my-name',
+        initialLinkedWorkItem: null
+      })
+    ).toBe('')
+  })
+
+  it('auto-owns linked-item generated prefilled names', () => {
+    expect(
+      getInitialAutoManagedWorkspaceName({
+        initialName: 'fix-workspace-name',
+        initialLinkedWorkItem: {
+          type: 'issue',
+          provider: 'github',
+          number: 1234,
+          title: 'Fix workspace name',
+          url: 'https://github.com/stablyai/orca/issues/1234'
+        }
+      })
+    ).toBe('fix-workspace-name')
+  })
+
   it('resolves GitHub PR bases against the selected run repo, not the source item repo', () => {
     const section = sourceBetween(
       HOOK_SOURCE,
