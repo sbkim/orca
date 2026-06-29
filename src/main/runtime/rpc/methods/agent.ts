@@ -4,8 +4,9 @@ import { OptionalString, requiredString } from '../schemas'
 
 const AgentLabelSet = z.object({
   terminal: requiredString('Missing terminal handle'),
-  // Why: label may be an empty string (treated as a clear by the runtime
-  // setter); any non-string shape other than absent is rejected.
+  // Why: OptionalString coerces non-string or empty-string inputs to undefined
+  // (a no-op, never an error), which the handler then treats as a clear via
+  // `params.label ?? null`. A real label is a non-empty string.
   label: OptionalString
 })
 

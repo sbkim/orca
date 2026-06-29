@@ -15173,7 +15173,8 @@ export class OrcaRuntimeService {
     const normalized = this.setCustomAgentLabelFn(paneKey, label)
     // Why: when attached, push to the live store so the sidebar reflects the
     // label immediately (mirrors renameTerminal's notifier path); headless runs
-    // skip the notifier and rely on the persisted snapshot.
+    // have no notifier — subsequent worktree.ps reads pull the label directly
+    // from the hook server's map via getCustomAgentLabelFn.
     this.notifier?.setAgentLabel?.(paneKey, normalized)
     return { terminalHandle: handle, paneKey, label: normalized }
   }
