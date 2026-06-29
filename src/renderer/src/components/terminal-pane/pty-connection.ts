@@ -522,7 +522,7 @@ let inactiveForegroundImmediateBudgetWindowStart = 0
 type PanePtyBinding = IDisposable & {
   syncProcessTracking: () => void
   noteVisibilityResume: () => void
-  reconcileIfSessionDead: (liveSessionIds: Set<string>) => void
+  reconcileIfSessionDead: (liveSessionIds: Set<string>, snapshotRequestedAt?: number) => void
 }
 
 function isAgentTaskCompleteNotificationEnabled(): boolean {
@@ -1308,11 +1308,15 @@ export function connectPanePty(
     pane.container.dataset.ptyId = ptyId
   }
   let activePanePtyBinding: string | null = null
+  // Why: bind time so reconcile can ignore a listSessions snapshot requested
+  // before this PTY bound (newborn race). Null disables the guard (fail-safe).
+  let activePanePtyBindingBoundAt: number | null = null
   const clearPanePtyFitBinding = (): void => {
     // Why: fit bindings live in a module-level map, so pane teardown must
     // clear them explicitly instead of relying on DOM removal.
     bindPanePtyId(pane.id, null, deps.tabId)
     activePanePtyBinding = null
+    activePanePtyBindingBoundAt = null
     delete pane.container.dataset.ptyId
   }
 
@@ -1601,6 +1605,9 @@ export function connectPanePty(
   ): void => {
     setPanePtyFitBinding(ptyId)
     activePanePtyBinding = ptyId
+    // Why: record bind time on the spawn/attach chokepoint so the reconcile
+    // guard knows this binding is newer than any pre-bind snapshot.
+    activePanePtyBindingBoundAt = performance.now()
     deps.syncPanePtyLayoutBinding(pane.id, ptyId)
     const tabPtyIds = useAppStore.getState().ptyIdsByTabId?.[deps.tabId] ?? []
     if (options.updateTabPtyId !== 'if-missing' || !tabPtyIds.includes(ptyId)) {
@@ -4537,7 +4544,10 @@ export function connectPanePty(
   // reattach racing the listSessions snapshot is never clobbered, and respect
   // the remote/SSH guards. Suppression semantics come for free via onExit
   // (which consults consumeSuppressedPtyExit) plus the per-ptyId guard above.
-  const reconcileIfSessionDead = (liveSessionIds: Set<string>): void => {
+  const reconcileIfSessionDead = (
+    liveSessionIds: Set<string>,
+    snapshotRequestedAt?: number
+  ): void => {
     if (disposed) {
       return
     }
@@ -4550,7 +4560,9 @@ export function connectPanePty(
       !shouldReconcileDeadSession({
         ptyId: currentPtyId,
         connectionId: transport.getConnectionId?.(),
-        liveSessionIds
+        liveSessionIds,
+        ptyBoundAt: activePanePtyBindingBoundAt,
+        snapshotRequestedAt
       })
     ) {
       return
@@ -4592,10 +4604,13 @@ export function connectPanePty(
     ) {
       return
     }
+    // Why: capture request time before the round-trip so a pane that bound after
+    // this request is not torn down by its (pre-bind) stale snapshot.
+    const requestedAt = performance.now()
     void window.api.pty
       .listSessions()
       .then((sessions) => {
-        reconcileIfSessionDead(new Set(sessions.map((session) => session.id)))
+        reconcileIfSessionDead(new Set(sessions.map((session) => session.id)), requestedAt)
       })
       // Why: a rejected listing is "unknown" — never close a pane on it.
       .catch(() => {})

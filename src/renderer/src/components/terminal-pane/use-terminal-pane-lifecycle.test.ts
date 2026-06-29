@@ -343,7 +343,7 @@ describe('scheduleVisibilityReconcilePass', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(listSessions).toHaveBeenCalledTimes(1)
-    expect(reconcileIfSessionDead).toHaveBeenCalledWith(new Set(['live-1']))
+    expect(reconcileIfSessionDead).toHaveBeenCalledWith(new Set(['live-1']), expect.any(Number))
   })
 
   it('does not schedule on an initially visible mount', () => {
