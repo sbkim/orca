@@ -9,8 +9,12 @@
  * keeping it in one place stops them from drifting (issue #5270).
  */
 
-export const CLAUDE_IDLE = '✳' // ✳ (eight-spoked asterisk — Claude Code idle prefix)
+/** Claude Code's idle title prefix: ✳ (eight-spoked asterisk). */
+export const CLAUDE_IDLE = '✳'
 
+/** True when `title` begins with a Claude Code status prefix (✳ idle, ". "
+ *  working, "* " idle), which identifies the session as Claude regardless of
+ *  what the trailing task text mentions. */
 export function hasClaudeStatusPrefix(title: string): boolean {
   // Why: Claude Code's own title-prefix identity signals (✳ idle, ". " working,
   // "* " idle) must win over agent-name tokens that only appear in task text.
