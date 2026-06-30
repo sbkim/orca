@@ -35,11 +35,6 @@ export function getPaneOwnedActiveHelperTextarea(
   return activeElement
 }
 
-function getPaneHelperTextarea(container: HTMLElement): HTMLElement | null {
-  const helper = container.querySelector('.xterm-helper-textarea')
-  return helper instanceof HTMLElement ? helper : null
-}
-
 function isDocumentBodyOrNull(activeElement: Element | null, ownerDocument: Document): boolean {
   return activeElement === null || activeElement === ownerDocument.body
 }
@@ -68,13 +63,17 @@ export function releaseTerminalFocusForWindowBlur(args: {
   container: HTMLElement
   activeElement: Element | null
   syncFocused: TerminalInputFocusSync
-}): boolean {
-  if (!getPaneOwnedActiveHelperTextarea(args.container, args.activeElement)) {
-    return false
+}): HTMLElement | null {
+  // Why: return the exact helper that owned focus so window-focus reclaim can
+  // refocus *that* split, not whichever helper happens to be first in the DOM
+  // (a single TerminalPane hosts every split as siblings under one container).
+  const releasedHelper = getPaneOwnedActiveHelperTextarea(args.container, args.activeElement)
+  if (!releasedHelper) {
+    return null
   }
 
   args.syncFocused(false)
-  return true
+  return releasedHelper
 }
 
 export function resyncTerminalFocusForWindowFocus(args: {
@@ -82,11 +81,11 @@ export function resyncTerminalFocusForWindowFocus(args: {
   activeElement: Element | null
   syncFocused: TerminalInputFocusSync
   /**
-   * Set when this pane cleared the shortcut mirror on window blur while the
-   * helper was still (or had been) the typing surface — allows reclaim after
-   * Chromium moves focus to body/null on app reactivation.
+   * The exact helper textarea this pane released on window blur. When focus
+   * settled on body/null during app reactivation, reclaim *this* split's
+   * helper rather than whichever helper is first in the DOM.
    */
-  releasedMirrorOnWindowBlur?: boolean
+  releasedHelper?: HTMLElement | null
   /** Override the macOS check (tests). Defaults to the navigator user agent. */
   isMac?: boolean
   /** Override the refocus scheduler (tests). Defaults to requestAnimationFrame. */
@@ -98,14 +97,14 @@ export function resyncTerminalFocusForWindowFocus(args: {
 
   if (!helper) {
     const ownerDocument = args.container.ownerDocument
+    const releasedHelper = args.releasedHelper
     if (
-      args.releasedMirrorOnWindowBlur &&
+      releasedHelper &&
+      releasedHelper.isConnected &&
+      args.container.contains(releasedHelper) &&
       isDocumentBodyOrNull(args.activeElement, ownerDocument)
     ) {
-      helper = getPaneHelperTextarea(args.container)
-      if (!helper) {
-        return false
-      }
+      helper = releasedHelper
       needsProgrammaticFocus = true
     } else {
       return false
@@ -114,8 +113,23 @@ export function resyncTerminalFocusForWindowFocus(args: {
 
   args.syncFocused(true)
 
+  const reclaimedHelper = helper
+  const isMac = args.isMac ?? isMacUserAgent()
+
+  // Why: defer the reclaim refocus to the next frame and only take focus if
+  // nothing newer grabbed it — so a click into the sidebar/dialog/rename input
+  // during reactivation isn't yanked back into the terminal. Applies on every
+  // platform (the reporter's bug is Linux); macOS additionally needs the blur
+  // first to rebuild a stale NSTextInputContext (see below).
   if (needsProgrammaticFocus) {
-    helper.focus()
+    const schedule = args.scheduleRefocus ?? scheduleNextFrame
+    schedule(() => {
+      const active = reclaimedHelper.ownerDocument.activeElement
+      if (active === reclaimedHelper || isDocumentBodyOrNull(active, reclaimedHelper.ownerDocument)) {
+        reclaimedHelper.focus()
+      }
+    })
+    return true
   }
 
   // Why: on macOS, reactivating the app leaves Chromium's NSTextInputContext
@@ -123,16 +137,15 @@ export function resyncTerminalFocusForWindowFocus(args: {
   // with no way to switch back to CJK (electron#32307/#34952). Forcing a
   // blur → next-frame refocus rebuilds the input context so the IME works again.
   // Other platforms don't hit this and shouldn't pay the flicker cost.
-  const isMac = args.isMac ?? isMacUserAgent()
   if (isMac) {
-    helper.blur()
+    reclaimedHelper.blur()
     const schedule = args.scheduleRefocus ?? scheduleNextFrame
     schedule(() => {
       // Why: only reclaim focus if nothing else grabbed it during the frame, so
       // a click into another field mid-reactivation isn't yanked back.
-      const active = helper.ownerDocument.activeElement
-      if (active === helper || active === helper.ownerDocument.body || active === null) {
-        helper.focus()
+      const active = reclaimedHelper.ownerDocument.activeElement
+      if (active === reclaimedHelper || isDocumentBodyOrNull(active, reclaimedHelper.ownerDocument)) {
+        reclaimedHelper.focus()
       }
     })
   }

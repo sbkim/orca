@@ -1715,11 +1715,11 @@ export default function TerminalPane({
       return
     }
     let ownsRegularTerminalFocus = false
-    let releasedMirrorOnWindowBlur = false
+    let releasedHelperOnWindowBlur: HTMLElement | null = null
     const syncFocused = (focused: boolean): void => {
       ownsRegularTerminalFocus = focused
       if (focused) {
-        releasedMirrorOnWindowBlur = false
+        releasedHelperOnWindowBlur = null
       }
       setRegularTerminalInputFocusAttribute(focused)
       window.api.ui.setTerminalInputFocused?.(focused)
@@ -1749,7 +1749,7 @@ export default function TerminalPane({
     const onWindowBlur = (): void => {
       // Why: webview/browser handoff leaves the helper textarea as DOM focus,
       // so clear only the main-process mirror and let guest focus proceed.
-      releasedMirrorOnWindowBlur = releaseTerminalFocusForWindowBlur({
+      releasedHelperOnWindowBlur = releaseTerminalFocusForWindowBlur({
         container,
         activeElement: document.activeElement,
         syncFocused
@@ -1763,10 +1763,10 @@ export default function TerminalPane({
           container,
           activeElement: document.activeElement,
           syncFocused,
-          releasedMirrorOnWindowBlur
+          releasedHelper: releasedHelperOnWindowBlur
         })
       ) {
-        releasedMirrorOnWindowBlur = false
+        releasedHelperOnWindowBlur = null
       }
     }
 
