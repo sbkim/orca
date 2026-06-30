@@ -831,16 +831,16 @@ export class CliInstaller {
       return
     }
     const current = await this.userPathReader()
-    const nextEntries = splitPathEntries('win32', current).filter(
-      (entry) => !samePathEntry('win32', entry, pathDirectory)
-    )
+    const entries = splitPathEntries('win32', current)
+    const nextEntries = entries.filter((entry) => !samePathEntry('win32', entry, pathDirectory))
+    if (nextEntries.length === entries.length) {
+      return
+    }
     await this.writeWindowsUserPathEntry(nextEntries.join(';'), pathDirectory, 'remove')
   }
 
-  // Why: the raw `Command failed: powershell ...` rejection is dumped verbatim
-  // into the renderer toast (CliSection), so translate a denied user-PATH write
-  // into an actionable message naming the exact folder to add manually. The
-  // original error stays chained on `cause` so logs keep the diagnostic detail.
+  // Why: raw PowerShell errors reach the UI, so translate denied PATH writes
+  // while preserving the original diagnostic as the error cause.
   private async writeWindowsUserPathEntry(
     value: string,
     pathDirectory: string,
@@ -1064,11 +1064,8 @@ function isMissingError(error: unknown): boolean {
   )
 }
 
-// Why: Windows refuses user-environment writes (Group Policy / restricted HKCU
-// ACL / EDR-managed env) with a localized message that can arrive as mojibake,
-// so detection keys off the Latin PowerShell error envelope tokens
-// (FullyQualifiedErrorId, MethodInvocationException) that stay readable
-// regardless of the OS display language, plus stable English ACL substrings.
+// Why: localized permission errors retain these .NET/ACL markers even when
+// their human-readable PowerShell text is mojibake.
 function isWindowsUserPathPermissionError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false
@@ -1080,7 +1077,7 @@ function isWindowsUserPathPermissionError(error: unknown): boolean {
   const haystack = `${error.message}\n${stderr}`
   return (
     haystack.includes('UnauthorizedAccessException') ||
-    haystack.includes('MethodInvocationException') ||
+    haystack.includes('SecurityException') ||
     haystack.includes('Requested registry access is not allowed') ||
     haystack.includes('Access is denied') ||
     haystack.includes('Access to the registry key')
