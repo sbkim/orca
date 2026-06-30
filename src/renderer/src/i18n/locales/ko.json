@@ -8674,6 +8674,10 @@
           "refresh": "Refresh ephemeral VM recipes",
           "checking": "Checking recipes...",
           "none": "No recipes found yet."
+        },
+        "ephemeralVmsExperimentalSetting": {
+          "description": "Shows setup controls and workspace run targets for repo-owned, on-demand environments.",
+          "toggleLabel": "Toggle per-workspace environments"
         }
       },
       "right": {

@@ -373,7 +373,7 @@ export function ExperimentalPane({
         </SearchableSetting>
       ) : null}
 
-      <EphemeralVmsExperimentalSetting />
+      <EphemeralVmsExperimentalSetting settings={settings} updateSettings={updateSettings} />
 
       {hiddenExperimentalUnlocked ? <HiddenExperimentalGroup /> : null}
     </div>
