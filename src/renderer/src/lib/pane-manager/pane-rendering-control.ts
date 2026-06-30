@@ -8,6 +8,10 @@ import {
   shouldUseTerminalWebgl
 } from './pane-webgl-renderer'
 import { reattachWebglIfNeeded } from './pane-webgl-reattach'
+import {
+  installTransparentWebglClear,
+  uninstallTransparentWebglClear
+} from './pane-webgl-transparent-clear'
 
 export function setPaneGpuRenderingState(
   panes: Map<number, ManagedPaneInternal>,
@@ -41,13 +45,26 @@ export function setPaneTerminalTransparency(
   if (!pane || pane.terminalTransparencyEnabled === enabled) {
     return
   }
-  // Why: xterm's WebGL renderer flickers under background transparency (#6491),
-  // so DOM rendering is the only correct path when opacity < 1. Flip the
-  // renderer the moment transparency toggles, reusing the same attach/dispose
-  // guards as setPaneGpuRenderingState so the conditions stay in sync.
   pane.terminalTransparencyEnabled = enabled
   if (!shouldUseTerminalWebgl(pane)) {
     disposeWebgl(pane, { refreshDimensions: true })
+    return
+  }
+  if (pane.webglAddon) {
+    // Why: transparent WebGL is correct only when xterm's private renderer can
+    // clear the alpha canvas before redraw; otherwise fall back to DOM.
+    if (enabled && !installTransparentWebglClear(pane.webglAddon)) {
+      disposeWebgl(pane, { refreshDimensions: true })
+      return
+    }
+    if (!enabled) {
+      uninstallTransparentWebglClear(pane.webglAddon)
+    }
+    try {
+      pane.terminal.refresh(0, pane.terminal.rows - 1)
+    } catch {
+      /* ignore - pane may have been disposed in the meantime */
+    }
     return
   }
   if (

@@ -4,6 +4,10 @@ import {
   getTerminalWebglAutoDecision,
   resetTerminalWebglAutoDecision
 } from './terminal-webgl-auto-policy'
+import {
+  installTransparentWebglClear,
+  uninstallTransparentWebglClear
+} from './pane-webgl-transparent-clear'
 
 export const ENABLE_WEBGL_RENDERER = true
 let suggestedRendererType: 'dom' | undefined
@@ -16,16 +20,6 @@ export function resetTerminalWebglSuggestion(): void {
 }
 
 export function shouldUseTerminalWebgl(pane: ManagedPaneInternal): boolean {
-  // Why: xterm's WebGL renderer re-blends semi-transparent per-cell backgrounds
-  // over the retained framebuffer on partial redraws, so transparency makes the
-  // background flicker/accumulate alpha on every output update (#6491). DOM
-  // rendering composites the full background each frame, so force it here. This
-  // sits before the gpuAcceleration === 'on' check so an explicit GPU 'on'
-  // setting still yields to transparency — the flicker is a correctness bug,
-  // not a perf preference.
-  if (pane.terminalTransparencyEnabled) {
-    return false
-  }
   if (pane.terminalGpuAcceleration === 'on') {
     return true
   }
@@ -61,7 +55,9 @@ export function disposeWebgl(
     return
   }
   try {
-    pane.webglAddon.dispose()
+    const webglAddon = pane.webglAddon
+    uninstallTransparentWebglClear(webglAddon)
+    webglAddon.dispose()
   } catch {
     /* ignore */
   }
@@ -127,6 +123,15 @@ export function attachWebgl(pane: ManagedPaneInternal): void {
     })
     pane.terminal.loadAddon(webglAddon)
     pane.webglAddon = webglAddon
+    if (pane.terminalTransparencyEnabled && !installTransparentWebglClear(webglAddon)) {
+      console.warn(
+        '[terminal] WebGL transparent-background clear unavailable for pane',
+        pane.id,
+        '— using DOM renderer'
+      )
+      disposeWebgl(pane, { refreshDimensions: true })
+      return
+    }
     refreshTerminalAfterWebglAttach(pane)
   } catch (err) {
     if (pane.terminalGpuAcceleration === 'auto') {

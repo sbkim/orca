@@ -41,7 +41,7 @@ describe('shouldUseTerminalWebgl', () => {
   beforeEach(() => {
     resetTerminalWebglSuggestion()
     // Why: pin a non-Linux host so the "auto" path resolves deterministically
-    // to allowWebgl=true, isolating the transparency gate under test.
+    // to allowWebgl=true, isolating the policy checks under test.
     vi.stubGlobal('navigator', {
       platform: 'MacIntel',
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)'
@@ -53,14 +53,14 @@ describe('shouldUseTerminalWebgl', () => {
     resetTerminalWebglSuggestion()
   })
 
-  it('forces DOM rendering under transparency even when GPU acceleration is forced on', () => {
+  it('allows WebGL under transparency when GPU acceleration is forced on', () => {
     const pane = createPane({ terminalGpuAcceleration: 'on', terminalTransparencyEnabled: true })
-    expect(shouldUseTerminalWebgl(pane)).toBe(false)
+    expect(shouldUseTerminalWebgl(pane)).toBe(true)
   })
 
-  it('forces DOM rendering under transparency on the auto policy', () => {
+  it('allows WebGL under transparency on the auto policy', () => {
     const pane = createPane({ terminalGpuAcceleration: 'auto', terminalTransparencyEnabled: true })
-    expect(shouldUseTerminalWebgl(pane)).toBe(false)
+    expect(shouldUseTerminalWebgl(pane)).toBe(true)
   })
 
   it('allows WebGL when transparency is off and GPU is forced on', () => {

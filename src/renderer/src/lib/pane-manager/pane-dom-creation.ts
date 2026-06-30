@@ -98,7 +98,7 @@ export function createPaneDOM(
     terminalGpuAcceleration: options.terminalGpuAcceleration ?? 'auto',
     gpuRenderingEnabled: ENABLE_WEBGL_RENDERER,
     // Why: opacity is applied later via applyTerminalAppearance; panes start
-    // opaque so WebGL is eligible until transparency is actually enabled (#6491).
+    // opaque so WebGL can attach before transparent clear handling is needed.
     terminalTransparencyEnabled: false,
     webglAttachmentDeferred: false,
     webglDisabledAfterContextLoss: false,

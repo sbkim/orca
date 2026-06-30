@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { WebglAddon } from '@xterm/addon-webgl'
 import type { ManagedPaneInternal } from './pane-manager-types'
 import {
@@ -19,20 +19,45 @@ import {
 const webglMock = vi.hoisted(() => ({
   contextLossHandler: null as (() => void) | null,
   clearTextureAtlas: vi.fn(),
-  dispose: vi.fn()
+  dispose: vi.fn(),
+  renderer: null as null | {
+    _gl: {
+      COLOR_BUFFER_BIT: number
+      clear: Mock<(mask: number) => void>
+      clearColor: Mock<(red: number, green: number, blue: number, alpha: number) => void>
+    }
+    renderRows: Mock<(start: number, end: number) => void>
+  }
 }))
 
 vi.mock('@xterm/addon-webgl', () => ({
   WebglAddon: vi.fn().mockImplementation(function WebglAddon() {
-    return {
+    const addon = {
       onContextLoss: vi.fn((handler: () => void) => {
         webglMock.contextLossHandler = handler
       }),
       clearTextureAtlas: webglMock.clearTextureAtlas,
       dispose: webglMock.dispose
     }
+    if (webglMock.renderer) {
+      return { ...addon, _renderer: webglMock.renderer }
+    }
+    return addon
   })
 }))
+
+function createClearableWebglRenderer(): NonNullable<typeof webglMock.renderer> {
+  const renderer = {
+    _gl: {
+      COLOR_BUFFER_BIT: 0x4000,
+      clear: vi.fn<(mask: number) => void>(),
+      clearColor: vi.fn<(red: number, green: number, blue: number, alpha: number) => void>()
+    },
+    renderRows: vi.fn<(start: number, end: number) => void>()
+  }
+  webglMock.renderer = renderer
+  return renderer
+}
 
 function createPane(): ManagedPaneInternal {
   const leafId = '11111111-1111-4111-8111-111111111111' as never
@@ -132,6 +157,7 @@ describe('attachWebgl', () => {
     webglMock.contextLossHandler = null
     webglMock.clearTextureAtlas.mockClear()
     webglMock.dispose.mockClear()
+    webglMock.renderer = null
     vi.mocked(WebglAddon).mockClear()
     resetTerminalWebglSuggestion()
     vi.stubGlobal('navigator', {
@@ -234,6 +260,36 @@ describe('attachWebgl', () => {
 
     expect(pane.webglAddon).not.toBeNull()
     expect(pane.terminal.loadAddon).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps transparent panes on WebGL when the alpha clear patch installs', () => {
+    const pane = createPane()
+    pane.terminalGpuAcceleration = 'on'
+    pane.terminalTransparencyEnabled = true
+    const renderer = createClearableWebglRenderer()
+    const originalRenderRows = renderer.renderRows
+
+    attachWebgl(pane)
+    renderer.renderRows(3, 5)
+
+    expect(pane.webglAddon).not.toBeNull()
+    expect(webglMock.dispose).not.toHaveBeenCalled()
+    expect(renderer._gl.clearColor).toHaveBeenCalledWith(0, 0, 0, 0)
+    expect(renderer._gl.clear).toHaveBeenCalledWith(renderer._gl.COLOR_BUFFER_BIT)
+    expect(originalRenderRows).toHaveBeenCalledWith(3, 5)
+  })
+
+  it('falls back to DOM for transparent panes when WebGL alpha clearing is unavailable', () => {
+    const pane = createPane()
+    pane.terminalGpuAcceleration = 'on'
+    pane.terminalTransparencyEnabled = true
+
+    attachWebgl(pane)
+
+    expect(pane.webglAddon).toBeNull()
+    expect(webglMock.dispose).toHaveBeenCalledTimes(1)
+    expect(pane.fitAddon.fit).toHaveBeenCalledTimes(1)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
   })
 
   it('uses DOM rendering for auto GPU acceleration on Linux', () => {

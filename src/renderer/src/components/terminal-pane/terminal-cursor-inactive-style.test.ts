@@ -18,6 +18,7 @@ describe('terminal inactive cursor style', () => {
     const manager = {
       getPanes: () => [pane],
       setPaneLigaturesEnabled: vi.fn(),
+      setPaneTransparency: vi.fn(),
       setPaneStyleOptions: vi.fn()
     } as unknown as PaneManager
     const settings = {

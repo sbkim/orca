@@ -6,10 +6,16 @@ import type { ManagedPaneInternal } from './pane-manager-types'
 // gate (shouldUseTerminalWebgl) still decides which path runs.
 const attachWebgl = vi.fn()
 const disposeWebgl = vi.fn()
+const installTransparentWebglClear = vi.fn(() => true)
+const uninstallTransparentWebglClear = vi.fn()
 vi.mock('./pane-webgl-renderer', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>()
   return { ...actual, attachWebgl, disposeWebgl }
 })
+vi.mock('./pane-webgl-transparent-clear', () => ({
+  installTransparentWebglClear,
+  uninstallTransparentWebglClear
+}))
 vi.mock('./pane-tree-ops', () => ({ safeFit: vi.fn() }))
 
 const { setPaneTerminalTransparency } = await import('./pane-rendering-control')
@@ -24,7 +30,7 @@ function createPane(
     id: 1,
     leafId,
     stablePaneId: leafId,
-    terminal: { cols: 80, rows: 24 } as never,
+    terminal: { cols: 80, rows: 24, refresh: vi.fn() } as never,
     container: {} as never,
     xtermContainer: {} as never,
     linkTooltip: {} as never,
@@ -53,13 +59,30 @@ describe('setPaneTerminalTransparency', () => {
   beforeEach(() => {
     attachWebgl.mockReset()
     disposeWebgl.mockReset()
+    installTransparentWebglClear.mockReset()
+    installTransparentWebglClear.mockReturnValue(true)
+    uninstallTransparentWebglClear.mockReset()
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('tears down WebGL and switches to DOM when transparency is enabled', () => {
+  it('keeps WebGL and installs transparent clearing when transparency is enabled', () => {
+    const pane = createPane({ terminalTransparencyEnabled: false, webglAddon: {} as never })
+    const panes = new Map([[1, pane]])
+
+    setPaneTerminalTransparency(panes, 1, true)
+
+    expect(pane.terminalTransparencyEnabled).toBe(true)
+    expect(installTransparentWebglClear).toHaveBeenCalledWith(pane.webglAddon)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
+    expect(disposeWebgl).not.toHaveBeenCalled()
+    expect(attachWebgl).not.toHaveBeenCalled()
+  })
+
+  it('falls back to DOM when transparent WebGL clearing is unavailable', () => {
+    installTransparentWebglClear.mockReturnValue(false)
     const pane = createPane({ terminalTransparencyEnabled: false, webglAddon: {} as never })
     const panes = new Map([[1, pane]])
 
@@ -67,6 +90,19 @@ describe('setPaneTerminalTransparency', () => {
 
     expect(pane.terminalTransparencyEnabled).toBe(true)
     expect(disposeWebgl).toHaveBeenCalledTimes(1)
+    expect(attachWebgl).not.toHaveBeenCalled()
+  })
+
+  it('removes transparent clearing when transparency is disabled on an attached WebGL pane', () => {
+    const pane = createPane({ terminalTransparencyEnabled: true, webglAddon: {} as never })
+    const panes = new Map([[1, pane]])
+
+    setPaneTerminalTransparency(panes, 1, false)
+
+    expect(pane.terminalTransparencyEnabled).toBe(false)
+    expect(uninstallTransparentWebglClear).toHaveBeenCalledWith(pane.webglAddon)
+    expect(pane.terminal.refresh).toHaveBeenCalledWith(0, 23)
+    expect(disposeWebgl).not.toHaveBeenCalled()
     expect(attachWebgl).not.toHaveBeenCalled()
   })
 
