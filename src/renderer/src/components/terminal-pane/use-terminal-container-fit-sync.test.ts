@@ -10,6 +10,7 @@ import {
 } from '@/lib/pane-manager/terminal-container-resize-settle'
 import {
   TERMINAL_CONTAINER_RESIZE_DEBOUNCE_MS,
+  TERMINAL_CONTAINER_RESIZE_LEADING_FIT_MAX_SCROLLBACK_ROWS,
   TERMINAL_CONTAINER_RESIZE_MAX_SETTLE_MS,
   useTerminalContainerFitSync
 } from './use-terminal-container-fit-sync'
@@ -62,6 +63,31 @@ function createPaneElement(): HTMLElement {
   } as unknown as HTMLElement
 }
 
+function createManagerWithScrollback(scrollbackRows: number): {
+  fitAllPanes: ReturnType<typeof vi.fn>
+  getPanes: ReturnType<typeof vi.fn>
+} {
+  return {
+    fitAllPanes: vi.fn(),
+    getPanes: vi.fn(() => [
+      {
+        terminal: {
+          buffer: {
+            active: {
+              type: 'normal',
+              baseY: scrollbackRows
+            }
+          }
+        }
+      }
+    ])
+  }
+}
+
+function createLargeScrollbackManager(): ReturnType<typeof createManagerWithScrollback> {
+  return createManagerWithScrollback(TERMINAL_CONTAINER_RESIZE_LEADING_FIT_MAX_SCROLLBACK_ROWS + 1)
+}
+
 describe('useTerminalContainerFitSync', () => {
   beforeEach(() => {
     mockResizeObservers = []
@@ -95,13 +121,15 @@ describe('useTerminalContainerFitSync', () => {
     delete (globalThis as { window?: unknown }).window
   })
 
-  it('fits once after container resize settles and flushes the final held PTY size', () => {
+  it('fits low-scrollback panes immediately and flushes the final held PTY size after settle', () => {
     const paneElement = createPaneElement()
     const container = {
       classList: { contains: () => false },
       querySelectorAll: () => [paneElement]
     } as unknown as HTMLDivElement
-    const manager = { fitAllPanes: vi.fn() }
+    const manager = createManagerWithScrollback(
+      TERMINAL_CONTAINER_RESIZE_LEADING_FIT_MAX_SCROLLBACK_ROWS
+    )
 
     useTerminalContainerFitSync({
       isVisible: true,
@@ -113,6 +141,40 @@ describe('useTerminalContainerFitSync', () => {
     mockResizeObservers[0]?.trigger()
 
     expect(isTerminalContainerResizeSettling()).toBe(true)
+    expect(mocks.fitPanes).toHaveBeenCalledTimes(1)
+    expect(queuePanePtyResizeIfHeld(paneElement, 100, 30)).toBe(true)
+
+    vi.advanceTimersByTime(TERMINAL_CONTAINER_RESIZE_DEBOUNCE_MS - 1)
+
+    expect(mocks.fitPanes).toHaveBeenCalledTimes(1)
+    expect(paneElement.dispatchEvent).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+
+    expect(mocks.fitPanes).toHaveBeenCalledTimes(2)
+    expect(isTerminalContainerResizeSettling()).toBe(false)
+    expect(paneElement.dispatchEvent).toHaveBeenCalledTimes(1)
+    const event = vi.mocked(paneElement.dispatchEvent).mock.calls[0]?.[0] as CustomEvent
+    expect(event.type).toBe(PANE_PTY_RESIZE_HOLD_FLUSH_EVENT)
+    expect(event.detail).toEqual({ cols: 100, rows: 30 })
+  })
+
+  it('keeps large-scrollback panes settle-only during container resize', () => {
+    const paneElement = createPaneElement()
+    const container = {
+      classList: { contains: () => false },
+      querySelectorAll: () => [paneElement]
+    } as unknown as HTMLDivElement
+    const manager = createLargeScrollbackManager()
+
+    useTerminalContainerFitSync({
+      isVisible: true,
+      isSyncFitEnabled: true,
+      managerRef: { current: manager as never },
+      containerRef: { current: container }
+    })
+
+    mockResizeObservers[0]?.trigger()
     expect(queuePanePtyResizeIfHeld(paneElement, 100, 30)).toBe(true)
 
     vi.advanceTimersByTime(TERMINAL_CONTAINER_RESIZE_DEBOUNCE_MS - 1)
@@ -125,9 +187,6 @@ describe('useTerminalContainerFitSync', () => {
     expect(mocks.fitPanes).toHaveBeenCalledTimes(1)
     expect(isTerminalContainerResizeSettling()).toBe(false)
     expect(paneElement.dispatchEvent).toHaveBeenCalledTimes(1)
-    const event = vi.mocked(paneElement.dispatchEvent).mock.calls[0]?.[0] as CustomEvent
-    expect(event.type).toBe(PANE_PTY_RESIZE_HOLD_FLUSH_EVENT)
-    expect(event.detail).toEqual({ cols: 100, rows: 30 })
   })
 
   it('flushes the held PTY resize when the manager is unavailable at settle time', () => {
@@ -167,7 +226,7 @@ describe('useTerminalContainerFitSync', () => {
     useTerminalContainerFitSync({
       isVisible: true,
       isSyncFitEnabled: true,
-      managerRef: { current: { fitAllPanes: vi.fn() } as never },
+      managerRef: { current: createLargeScrollbackManager() as never },
       containerRef: { current: container }
     })
 
@@ -193,7 +252,7 @@ describe('useTerminalContainerFitSync', () => {
     useTerminalContainerFitSync({
       isVisible: true,
       isSyncFitEnabled: true,
-      managerRef: { current: { fitAllPanes: vi.fn() } as never },
+      managerRef: { current: createLargeScrollbackManager() as never },
       containerRef: { current: container }
     })
 
@@ -231,7 +290,7 @@ describe('useTerminalContainerFitSync', () => {
     useTerminalContainerFitSync({
       isVisible: true,
       isSyncFitEnabled: true,
-      managerRef: { current: { fitAllPanes: vi.fn() } as never },
+      managerRef: { current: createLargeScrollbackManager() as never },
       containerRef: { current: container }
     })
 
@@ -269,7 +328,7 @@ describe('useTerminalContainerFitSync', () => {
     useTerminalContainerFitSync({
       isVisible: true,
       isSyncFitEnabled: true,
-      managerRef: { current: { fitAllPanes: vi.fn() } as never },
+      managerRef: { current: createManagerWithScrollback(0) as never },
       containerRef: { current: container }
     })
 
@@ -284,6 +343,8 @@ describe('useTerminalContainerFitSync', () => {
     expect(isTerminalContainerResizeSettling()).toBe(true)
 
     mocks.minimizedChangedCallbacks[0]?.(false)
+    expect(mocks.fitPanes).not.toHaveBeenCalled()
+
     vi.advanceTimersByTime(TERMINAL_CONTAINER_RESIZE_DEBOUNCE_MS)
 
     expect(mocks.fitPanes).toHaveBeenCalledTimes(1)
@@ -303,7 +364,7 @@ describe('useTerminalContainerFitSync', () => {
     useTerminalContainerFitSync({
       isVisible: true,
       isSyncFitEnabled: true,
-      managerRef: { current: { fitAllPanes: vi.fn() } as never },
+      managerRef: { current: createLargeScrollbackManager() as never },
       containerRef: { current: container }
     })
 
