@@ -152,6 +152,8 @@ export const WorktreeCreate = z
     automationProvenanceRequest: AutomationWorkspaceProvenanceRequest.optional()
   })
   .superRefine((params, ctx) => {
+    // Why: runtime only carries initialAgentStatus through the startup payload,
+    // so reject seeds that cannot be attached to a startup launch.
     if (params.startupInitialAgentStatus && !params.startupCommand) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
