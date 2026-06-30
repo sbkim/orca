@@ -8,10 +8,14 @@ import WebConnect from './WebConnect'
 import { RecoverableRenderErrorBoundary } from '../components/error-boundaries/RecoverableRenderErrorBoundary'
 import {
   clearPairingInputFromAddressBar,
-  parseWebPairingInput,
+  decideWebPairingStartup,
   readPairingInputFromLocation
 } from './web-pairing'
-import { readStoredWebRuntimeEnvironment } from './web-runtime-environment'
+import {
+  createStoredWebRuntimeEnvironment,
+  readStoredWebRuntimeEnvironment,
+  saveStoredWebRuntimeEnvironment
+} from './web-runtime-environment'
 import { installWebPreloadApi } from './web-preload-api'
 import { I18nProvider } from '../i18n/I18nProvider'
 import { translate } from '../i18n/i18n'
@@ -20,27 +24,37 @@ const App = lazy(() => import('../App'))
 
 function WebRoot(): React.JSX.Element {
   const initialPairingInput = useMemo(() => readPairingInputFromLocation(window.location), [])
-  // Why: a freshly-parsed offer must be probed by WebConnect (status.get) before
-  // entering the app — auto-saving here would let a mobile-scope token through
-  // and silently render empty workspaces. Clear the secret-bearing URL now; the
-  // offer is handed to WebConnect via initialPairingInput. Stored environments
-  // were already scope-checked at connect time, so they keep the fast path.
-  const freshPairingInput = useMemo(() => {
-    const offer = initialPairingInput ? parseWebPairingInput(initialPairingInput) : null
-    if (!offer) {
-      return null
+  // Why: current runtime links carry scope metadata. Runtime-scope offers keep
+  // the instant save path; mobile/legacy-unknown offers must be shown/probed.
+  const startupDecision = useMemo(() => {
+    const decision = decideWebPairingStartup({
+      initialPairingInput,
+      hasStoredEnvironment: readStoredWebRuntimeEnvironment() !== null
+    })
+    if (
+      decision.kind === 'auto-save-runtime-offer' ||
+      (decision.kind === 'show-connect' && decision.initialPairingInput !== null)
+    ) {
+      clearPairingInputFromAddressBar()
     }
-    clearPairingInputFromAddressBar()
-    return initialPairingInput
+    return decision
   }, [initialPairingInput])
-  const [hasEnvironment, setHasEnvironment] = useState(
-    () => freshPairingInput === null && readStoredWebRuntimeEnvironment() !== null
-  )
+  const [hasEnvironment, setHasEnvironment] = useState(() => {
+    if (startupDecision.kind === 'auto-save-runtime-offer') {
+      saveStoredWebRuntimeEnvironment(
+        createStoredWebRuntimeEnvironment({ name: 'Orca Server', offer: startupDecision.offer })
+      )
+      return true
+    }
+    return startupDecision.kind === 'use-stored-environment'
+  })
 
   if (!hasEnvironment) {
     return (
       <WebConnect
-        initialPairingInput={freshPairingInput}
+        initialPairingInput={
+          startupDecision.kind === 'show-connect' ? startupDecision.initialPairingInput : null
+        }
         onConnected={() => setHasEnvironment(true)}
       />
     )

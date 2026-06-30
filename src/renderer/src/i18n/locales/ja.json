@@ -134,7 +134,7 @@
         "cb4d287238": "サーバー名",
         "3affe7de3a": "このブラウザが到達できる Orca サーバーからペアリング URL を貼り付けます。",
         "e3bcd082ac": "Orca に接続",
-        "mobileScopeRejected": "This QR code grants limited (mobile) access. To use the full web app, open the browser access link from Settings → Runtime Environments → Share this Orca server → New Link."
+        "mobileScopeRejected": "この QR コードは制限付き（モバイル）アクセスを許可します。完全な Web アプリを使うには、設定 → リモート Orca サーバー → この Orca サーバーを共有する → 新規リンク からブラウザー用アクセスリンクを開いてください。"
       },
       "web": {
         "preload": {
@@ -230,8 +230,8 @@
           "78e08cd877": "Git はブランチ\"{{value0}}\"を安全に削除できなかったため、Orca はローカルコミットを失わないように保持しました。",
           "3b57982bf6": "ワークスペース\"{{value1}}\"を削除した後、Git はブランチ\"{{value0}}\"を安全に削除できなかったため、Orca はローカルコミットを失わないように保持しました。",
           "81f13f48d2": "ワークツリー\"{{value1}}\"を削除した後、Git はブランチ\"{{value0}}\"を安全に削除できなかったため、Orca はローカルコミットを失わないように保持しました。",
-          "runtimeScopeForbiddenTitle": "This connection has limited (mobile) access",
-          "runtimeScopeForbiddenDescription": "Workspaces are unavailable on a mobile-scope pairing. Reconnect using the browser access link from Settings → Runtime Environments → Share this Orca server."
+          "runtimeScopeForbiddenTitle": "この接続は制限付き（モバイル）アクセスです",
+          "runtimeScopeForbiddenDescription": "モバイル範囲のペアリングではワークスペースを使用できません。設定 → リモート Orca サーバー → この Orca サーバーを共有する からブラウザー用リンクで再接続してください。"
         },
         "repos": {
           "2975400634": "Update Orca server to open non-Git folders on this runtime.",

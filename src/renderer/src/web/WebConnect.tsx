@@ -38,6 +38,15 @@ export default function WebConnect({
       setError('Enter a valid Orca pairing URL or pairing code.')
       return
     }
+    if (parsedOffer.scope === 'mobile') {
+      setError(
+        translate(
+          'auto.web.WebConnect.mobileScopeRejected',
+          'This QR code grants limited (mobile) access. To use the full web app, open the browser access link from Settings → Runtime Environments → Share this Orca server → New Link.'
+        )
+      )
+      return
+    }
     if (isMixedContentWebSocket(parsedOffer.endpoint)) {
       setError(
         'This HTTPS page cannot connect to a plain ws:// Orca server. Open the web client over HTTP or pair with a wss:// endpoint.'
@@ -52,9 +61,8 @@ export default function WebConnect({
       if (!response.ok) {
         throw new Error(response.error.message)
       }
-      // Why: a mobile-scope token (from the phone QR) can pass status.get but is
-      // denied the worktree/repo RPCs the full app needs, so it would silently
-      // render empty workspaces. Refuse here and steer to the full-access link.
+      // Why: older pairing offers may not carry scope metadata. The server
+      // stamps it onto status.get so those links still fail before app entry.
       if ((response.result as RuntimeStatus | null)?.deviceScope === 'mobile') {
         setError(
           translate(
@@ -78,9 +86,8 @@ export default function WebConnect({
     }
   }
 
-  // Why: a deep-linked offer (from a QR/share link) should probe status.get
-  // automatically so a valid runtime-scope token enters the app in one tap,
-  // while a mobile-scope token surfaces the actionable error in this same view.
+  // Why: a deep-linked offer that reaches this screen either has mobile scope
+  // or unknown legacy scope; run the same connect path to reject/probe it.
   useEffect(() => {
     if (autoConnectAttempted.current || !initialPairingInput || !parsedOffer) {
       return

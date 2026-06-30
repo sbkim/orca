@@ -512,7 +512,8 @@ export class OrcaRuntimeRpcServer {
       v: PAIRING_OFFER_VERSION,
       endpoint,
       deviceToken: device.token,
-      publicKeyB64
+      publicKeyB64,
+      scope
     })
     return {
       available: true,
@@ -986,10 +987,8 @@ export class OrcaRuntimeRpcServer {
       this.activeLongPolls += 1
     }
 
-    // Why: WebSocket clients can't see their own token scope (the pairing offer
-    // omits it), so stamp it onto the one method that probes the connection.
-    // A mobile-scope web client then refuses to enter the full app instead of
-    // rendering empty workspaces from silently-forbidden worktree RPCs.
+    // Why: older/saved WebSocket pairings may not carry scope metadata, so
+    // stamp the authenticated scope onto the one method that probes the runtime.
     const replyForRequest =
       request.method === 'status.get'
         ? (response: string): void => reply(injectDeviceScope(response, device.scope))

@@ -351,6 +351,7 @@ describe('OrcaRuntimeRpcServer', () => {
       expect(parsed?.endpoint).toBe(offer.endpoint)
       expect(parsed?.deviceToken).toBeTruthy()
       expect(parsed?.publicKeyB64).toBeTruthy()
+      expect(parsed?.scope).toBe('runtime')
       expect(server.getDeviceRegistry()?.getDevice(offer.deviceId)?.scope).toBe('runtime')
     }
 
@@ -2648,6 +2649,7 @@ describe('OrcaRuntimeRpcServer', () => {
     if (!phoneOffer.available) {
       throw new Error('WebSocket pairing unavailable')
     }
+    expect(parsePairingCode(phoneOffer.pairingUrl)?.scope).toBe('mobile')
     const phone = await authenticateMobileWsSession(phoneOffer.pairingUrl)
     const phoneResponses = createEncryptedWsResponseReader(phone)
     const metadata = readRuntimeMetadata(userDataPath)

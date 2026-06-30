@@ -134,7 +134,7 @@
         "cb4d287238": "서버 이름",
         "3affe7de3a": "이 브라우저가 연결할 수 있는 Orca 서버의 페어링 URL을 붙여넣습니다.",
         "e3bcd082ac": "Orca에 연결",
-        "mobileScopeRejected": "This QR code grants limited (mobile) access. To use the full web app, open the browser access link from Settings → Runtime Environments → Share this Orca server → New Link."
+        "mobileScopeRejected": "이 QR 코드는 제한된(모바일) 액세스 권한만 제공합니다. 전체 웹 앱을 사용하려면 설정 → 원격 Orca 서버 → 이 Orca 서버 공유 → 새 링크에서 브라우저 액세스 링크를 여세요."
       },
       "web": {
         "preload": {
@@ -230,8 +230,8 @@
           "78e08cd877": "Git이 \"{{value0}}\" 브랜치를 안전하게 삭제할 수 없어 Orca가 로컬 커밋 손실을 방지하기 위해 유지했습니다.",
           "3b57982bf6": "\"{{value1}}\" 워크스페이스를 삭제한 후 Git이 \"{{value0}}\" 브랜치를 안전하게 삭제할 수 없어 Orca가 로컬 커밋 손실을 방지하기 위해 유지했습니다.",
           "81f13f48d2": "\"{{value1}}\" 워크트리를 삭제한 후 Git이 \"{{value0}}\" 브랜치를 안전하게 삭제할 수 없어 Orca가 로컬 커밋 손실을 방지하기 위해 유지했습니다.",
-          "runtimeScopeForbiddenTitle": "This connection has limited (mobile) access",
-          "runtimeScopeForbiddenDescription": "Workspaces are unavailable on a mobile-scope pairing. Reconnect using the browser access link from Settings → Runtime Environments → Share this Orca server."
+          "runtimeScopeForbiddenTitle": "이 연결은 제한된(모바일) 액세스입니다",
+          "runtimeScopeForbiddenDescription": "모바일 범위 페어링에서는 워크스페이스를 사용할 수 없습니다. 설정 → 원격 Orca 서버 → 이 Orca 서버 공유에서 브라우저 액세스 링크로 다시 연결하세요."
         },
         "repos": {
           "2975400634": "Update Orca server to open non-Git folders on this runtime.",
