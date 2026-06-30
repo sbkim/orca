@@ -14,6 +14,12 @@ vi.mock('../../store', () => ({
     selector({ settingsSearchQuery: '' })
 }))
 
+vi.mock('./EphemeralVmsPane', () => ({
+  EphemeralVmsPane: () => (
+    <div data-testid="ephemeral-vms-pane">Per-Workspace Environments pane</div>
+  )
+}))
+
 vi.mock('../ui/select', async () => {
   const React = await import('react')
 
@@ -126,6 +132,19 @@ describe('ExperimentalPane', () => {
     expect(getExperimentalPaneSearchEntries().map((entry) => entry.title)).toContain(
       'New card style'
     )
+  })
+
+  it('renders per-workspace environments as an experimental subsection', () => {
+    const markup = renderToStaticMarkup(
+      <ExperimentalPane settings={getDefaultSettings('/tmp')} updateSettings={vi.fn()} />
+    )
+    const entry = getExperimentalPaneSearchEntries().find(
+      (searchEntry) => searchEntry.title === 'Per-Workspace Environments'
+    )
+
+    expect(markup).toContain('Per-Workspace Environments')
+    expect(markup).toContain('Per-Workspace Environments pane')
+    expect(entry?.targetSectionId).toBe('ephemeral-vms')
   })
 
   it('shows native chat default-mode as a child setting only when native chat is enabled', async () => {
