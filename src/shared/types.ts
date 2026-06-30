@@ -2693,11 +2693,10 @@ export type GlobalSettings = {
    *  hook entries right after the user removes them from Settings or CLI. */
   agentStatusHooksEnabled: boolean
   /** Why: opt-in escape hatch so Codex launched inside Orca terminals reads the
-   *  user's real ~/.codex config instead of Orca's managed runtime home. When
-   *  true, Orca injects no CODEX_HOME and the background quota poller refreshes
-   *  ~/.codex instead of the managed home — stopping the single-OAuth-session
-   *  refresh-token revocation war with non-Orca Codex. Disables Codex account
-   *  hot-swap and auth sync. Default false preserves the managed-home behavior. */
+   *  user's real ~/.codex config instead of Orca's host managed runtime home.
+   *  Host managed account switching is paused while true; WSL managed accounts
+   *  continue to use their separate runtime homes. Default false preserves the
+   *  managed-home behavior. */
   codexUseDefaultConfigDir?: boolean
   /** Why: generated tab titles are semantic but subjective, so they stay opt-in
    *  and manual renames remain the stronger user intent. */

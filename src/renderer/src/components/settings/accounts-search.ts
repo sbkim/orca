@@ -101,7 +101,7 @@ export const getAccountsCodexSearchEntries = createLocalizedCatalog(() => [
     ),
     description: translate(
       'auto.components.settings.accounts.search.edd9a67f8d',
-      "Run Codex with your system ~/.codex config instead of Orca's managed home."
+      "Run host Codex with your system ~/.codex config instead of Orca's managed home."
     ),
     keywords: [
       ...translateSearchKeyword('auto.components.settings.accounts.search.70d1b8def5', 'codex'),

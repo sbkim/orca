@@ -260,6 +260,8 @@ export function AccountsPane({
     wslDistros,
     wslCapabilitiesLoading
   )
+  const hostCodexDefaultHomeEnabled =
+    settings.codexUseDefaultConfigDir === true && accountRuntime.runtime === 'host'
 
   const [codexAccounts, setCodexAccounts] = useState<CodexRateLimitAccountsState>({
     accounts: [],
@@ -286,7 +288,11 @@ export function AccountsPane({
   const visibleCodexAccounts = codexAccounts.accounts.filter((account) =>
     accountMatchesRuntime(account, accountRuntime)
   )
-  const activeCodexAccountId = getActiveCodexAccountIdForRuntime(codexAccounts, accountRuntime)
+  const configuredActiveCodexAccountId = getActiveCodexAccountIdForRuntime(
+    codexAccounts,
+    accountRuntime
+  )
+  const activeCodexAccountId = hostCodexDefaultHomeEnabled ? null : configuredActiveCodexAccountId
   const activeClaudeAccountId = getActiveClaudeAccountIdForRuntime(claudeAccounts, accountRuntime)
   const activeCodexAuthWarning = codexAccountsLoaded
     ? getCodexAccountAuthWarning({
@@ -479,13 +485,17 @@ export function AccountsPane({
     action: typeof codexAction,
     operation: () => Promise<CodexRateLimitAccountsState>
   ): Promise<void> => {
-    const previousActiveAccountId = getActiveCodexAccountIdForRuntime(codexAccounts, accountRuntime)
+    const previousActiveAccountId = hostCodexDefaultHomeEnabled
+      ? null
+      : getActiveCodexAccountIdForRuntime(codexAccounts, accountRuntime)
     setCodexAction(action)
     try {
       const next = await operation()
       await syncCodexAccounts(next)
       recordFeatureInteraction('codex-account-switching')
-      const nextActiveAccountId = getActiveCodexAccountIdForRuntime(next, accountRuntime)
+      const nextActiveAccountId = hostCodexDefaultHomeEnabled
+        ? null
+        : getActiveCodexAccountIdForRuntime(next, accountRuntime)
       const shouldPromptRestart =
         action === 'adding' ||
         (action.startsWith('select:') && previousActiveAccountId !== nextActiveAccountId) ||
@@ -854,11 +864,16 @@ export function AccountsPane({
                 {translate('auto.components.settings.AccountsPane.94d351af4a', 'Accounts')}
               </Label>
               <p className="text-xs text-muted-foreground">
-                {translate(
-                  'auto.components.settings.AccountsPane.c0a52abfc5',
-                  'Showing accounts for {{value0}}. New accounts are added there.',
-                  { value0: accountRuntime.label }
-                )}
+                {hostCodexDefaultHomeEnabled
+                  ? translate(
+                      'auto.components.settings.AccountsPane.4f3a6c2d19',
+                      'Host managed Codex accounts are paused while default ~/.codex is enabled. WSL accounts still use managed homes.'
+                    )
+                  : translate(
+                      'auto.components.settings.AccountsPane.c0a52abfc5',
+                      'Showing accounts for {{value0}}. New accounts are added there.',
+                      { value0: accountRuntime.label }
+                    )}
               </p>
             </div>
             <Button
@@ -873,7 +888,10 @@ export function AccountsPane({
                 )
               }
               disabled={
-                codexAction !== 'idle' || wslCapabilitiesLoading || accountRuntimeUnavailable
+                codexAction !== 'idle' ||
+                wslCapabilitiesLoading ||
+                accountRuntimeUnavailable ||
+                hostCodexDefaultHomeEnabled
               }
               className="gap-1.5"
             >
@@ -898,7 +916,9 @@ export function AccountsPane({
                   })
                 )
               }
-              disabled={codexAction !== 'idle' || accountRuntimeUnavailable}
+              disabled={
+                codexAction !== 'idle' || accountRuntimeUnavailable || hostCodexDefaultHomeEnabled
+              }
               className={`flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-left transition-colors ${
                 systemCodexNeedsReauthentication
                   ? 'border-destructive/50 bg-destructive/5'
@@ -976,6 +996,7 @@ export function AccountsPane({
                 const isReauthing = codexAction === `reauth:${account.id}`
                 const isRemoving = codexAction === `remove:${account.id}`
                 const isBusy = codexAction !== 'idle' || accountRuntimeUnavailable
+                const isManagedActionPaused = hostCodexDefaultHomeEnabled
 
                 return (
                   <div
@@ -1000,7 +1021,7 @@ export function AccountsPane({
                             })
                           )
                         }
-                        disabled={isBusy}
+                        disabled={isBusy || isManagedActionPaused}
                         className="flex min-w-0 flex-1 flex-col gap-0.5 text-left disabled:cursor-default"
                       >
                         <div className="flex min-w-0 items-center gap-2">
@@ -1071,7 +1092,7 @@ export function AccountsPane({
                               window.api.codexAccounts.reauthenticate({ accountId: account.id })
                             )
                           }}
-                          disabled={isBusy}
+                          disabled={isBusy || isManagedActionPaused}
                           className="h-6 px-2 text-muted-foreground hover:text-foreground"
                         >
                           {isReauthing ? (
@@ -1117,7 +1138,7 @@ export function AccountsPane({
           )}
           description={translate(
             'auto.components.settings.AccountsPane.e321640e44',
-            "Run Codex with your system ~/.codex config instead of Orca's managed home. Also stops Orca's background quota poller from refreshing the managed home, so it no longer revokes your ~/.codex session. Disables Orca's Codex account hot-swap and auth sync."
+            "Run host Codex with your system ~/.codex config instead of Orca's managed home. This stops background quota refreshes from touching host managed homes, preventing single-session token revocation with non-Orca Codex. Host managed account switching is paused while on; WSL accounts stay managed."
           )}
           keywords={['codex', 'config', 'directory', 'home', 'managed', 'default', 'account']}
           className="space-y-3 py-2"
@@ -1129,7 +1150,7 @@ export function AccountsPane({
             )}
             description={translate(
               'auto.components.settings.AccountsPane.e321640e44',
-              "Run Codex with your system ~/.codex config instead of Orca's managed home. Also stops Orca's background quota poller from refreshing the managed home, so it no longer revokes your ~/.codex session. Disables Orca's Codex account hot-swap and auth sync."
+              "Run host Codex with your system ~/.codex config instead of Orca's managed home. This stops background quota refreshes from touching host managed homes, preventing single-session token revocation with non-Orca Codex. Host managed account switching is paused while on; WSL accounts stay managed."
             )}
             checked={settings.codexUseDefaultConfigDir === true}
             onChange={() =>

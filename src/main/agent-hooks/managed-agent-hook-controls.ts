@@ -78,9 +78,9 @@ export function isAgentStatusHooksEnabled(
 }
 
 /**
- * Why: opt-in setting that makes Codex use its default config home (~/.codex)
- * by skipping the managed CODEX_HOME injection. Default off (undefined/false)
- * keeps Orca's managed runtime home and its account hot-swap behavior.
+ * Why: opt-in setting that makes host Codex use its default config home
+ * (~/.codex) by skipping managed CODEX_HOME injection. Default off
+ * (undefined/false) keeps Orca's managed runtime home and account switching.
  */
 export function isCodexDefaultHomeEnabled(
   settings: Pick<GlobalSettings, 'codexUseDefaultConfigDir'> | null | undefined
