@@ -12,6 +12,7 @@ import type { AgentStatus } from '../../shared/agent-detection'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 import {
   AGENT_STATUS_STALE_AFTER_MS,
+  normalizeAgentStatusPayload,
   type AgentStatusIpcPayload,
   type ParsedAgentStatusPayload,
   type AgentStatusOrchestrationContext,
@@ -65,6 +66,7 @@ import type {
   GitHubCreateIssueFields,
   GitHubOwnerRepo,
   GlobalSettings,
+  InitialAgentStatusSeed,
   PersistedUIState,
   Project,
   ProjectUpdateArgs,
@@ -1131,6 +1133,7 @@ type RuntimeNotifier = {
       launchConfig?: SleepingAgentLaunchConfig
       launchToken?: string
       launchAgent?: TuiAgent
+      initialAgentStatus?: InitialAgentStatusSeed
       activate?: boolean
       presentation?: RuntimeTerminalPresentation
       tabId?: string
@@ -12016,6 +12019,17 @@ export class OrcaRuntimeService {
     }
   }
 
+  private buildInitialAgentStatusSeed(
+    agent: TuiAgent | undefined,
+    prompt: string | undefined
+  ): InitialAgentStatusSeed | undefined {
+    if (!agent) {
+      return undefined
+    }
+    const normalized = normalizeAgentStatusPayload({ state: 'working', prompt, agentType: agent })
+    return normalized?.prompt ? { agent, prompt: normalized.prompt } : undefined
+  }
+
   private markLocalWorkspaceTrustedForAgent(agent: TuiAgent, workspacePath: string): void {
     const preset = TUI_AGENT_CONFIG[agent].preflightTrust
     if (!preset) {
@@ -12459,6 +12473,11 @@ export class OrcaRuntimeService {
       : (agentStartup?.agent ??
         draftStartup?.agent ??
         (requestedAgentEnabled ? requestedAgent : undefined))
+    const effectiveInitialAgentStatus =
+      args.startup?.initialAgentStatus ??
+      (agentStartup
+        ? this.buildInitialAgentStatusSeed(agentStartup.agent, args.startupPrompt)
+        : undefined)
     const effectiveDraftPaste = args.startupDraftPaste ?? draftStartup?.draftPaste
     if (isFolderRepo(repo)) {
       const now = Date.now()
@@ -12524,6 +12543,9 @@ export class OrcaRuntimeService {
               ? { launchConfig: effectiveStartup.launchConfig }
               : {}),
             ...(effectiveCreatedWithAgent ? { launchAgent: effectiveCreatedWithAgent } : {}),
+            ...(effectiveInitialAgentStatus
+              ? { initialAgentStatus: effectiveInitialAgentStatus }
+              : {}),
             startupCommandDelivery: effectiveStartup.startupCommandDelivery,
             telemetry: effectiveStartup.telemetry
           })
@@ -12584,6 +12606,7 @@ export class OrcaRuntimeService {
         ...(effectiveStartup ? { startup: effectiveStartup } : {}),
         ...(effectiveStartupFollowup ? { startupFollowup: effectiveStartupFollowup } : {}),
         ...(effectiveCreatedWithAgent ? { createdWithAgent: effectiveCreatedWithAgent } : {}),
+        ...(effectiveInitialAgentStatus ? { initialAgentStatus: effectiveInitialAgentStatus } : {}),
         ...(effectiveDraftPaste ? { startupDraftPaste: effectiveDraftPaste } : {})
       })
       const recordedLineage = this.recordCreatedWorktreeLineage(result.worktree, lineageResolution)
@@ -13140,6 +13163,9 @@ export class OrcaRuntimeService {
           env: sequencedStartup.env,
           ...(sequencedStartup.launchConfig ? { launchConfig: sequencedStartup.launchConfig } : {}),
           ...(effectiveCreatedWithAgent ? { launchAgent: effectiveCreatedWithAgent } : {}),
+          ...(effectiveInitialAgentStatus
+            ? { initialAgentStatus: effectiveInitialAgentStatus }
+            : {}),
           startupCommandDelivery: sequencedStartup.startupCommandDelivery,
           telemetry: sequencedStartup.telemetry
         })
@@ -13332,6 +13358,7 @@ export class OrcaRuntimeService {
       automationProvenance?: AutomationWorkspaceProvenance
       startup?: WorktreeStartupLaunch
       startupFollowup?: WorktreeStartupFollowup
+      initialAgentStatus?: InitialAgentStatusSeed
       startupDraftPaste?: WorktreeStartupDraftPaste
     }
   ): Promise<CreateWorktreeResult> {
@@ -13441,6 +13468,7 @@ export class OrcaRuntimeService {
           env: sequencedStartup.env,
           ...(sequencedStartup.launchConfig ? { launchConfig: sequencedStartup.launchConfig } : {}),
           ...(args.createdWithAgent ? { launchAgent: args.createdWithAgent } : {}),
+          ...(args.initialAgentStatus ? { initialAgentStatus: args.initialAgentStatus } : {}),
           startupCommandDelivery: sequencedStartup.startupCommandDelivery,
           telemetry: sequencedStartup.telemetry
         })
@@ -15141,6 +15169,7 @@ export class OrcaRuntimeService {
       launchConfig?: WorktreeStartupLaunch['launchConfig']
       launchToken?: string
       launchAgent?: TuiAgent
+      initialAgentStatus?: InitialAgentStatusSeed
       startupCommandDelivery?: WorktreeStartupLaunch['startupCommandDelivery']
       telemetry?: WorktreeStartupLaunch['telemetry']
       title?: string
@@ -15329,6 +15358,7 @@ export class OrcaRuntimeService {
             ...(effectiveLaunchConfig ? { launchConfig: effectiveLaunchConfig } : {}),
             ...(launchToken ? { launchToken } : {}),
             ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
+            ...(opts.initialAgentStatus ? { initialAgentStatus: opts.initialAgentStatus } : {}),
             activate: presentation === 'focused',
             ...(presentation ? { presentation } : {}),
             tabId,
@@ -15396,6 +15426,7 @@ export class OrcaRuntimeService {
         ...(opts.launchConfig ? { launchConfig: opts.launchConfig } : {}),
         ...(opts.launchToken ? { launchToken: opts.launchToken } : {}),
         ...(opts.launchAgent ? { launchAgent: opts.launchAgent } : {}),
+        ...(opts.initialAgentStatus ? { initialAgentStatus: opts.initialAgentStatus } : {}),
         startupCommandDelivery: opts.startupCommandDelivery,
         title: opts.title,
         activate: presentation === 'focused',
@@ -15431,11 +15462,13 @@ export class OrcaRuntimeService {
     } else {
       this.markLocalWorkspaceTrustedForAgent(opts.agent, worktree.path)
     }
+    const initialAgentStatus = this.buildInitialAgentStatusSeed(startup.agent, opts.prompt)
     return await this.createTerminal(`id:${worktree.id}`, {
       command: startup.startup.command,
       env: startup.startup.env,
       ...(startup.startup.launchConfig ? { launchConfig: startup.startup.launchConfig } : {}),
       launchAgent: startup.agent,
+      ...(initialAgentStatus ? { initialAgentStatus } : {}),
       startupCommandDelivery: startup.startup.startupCommandDelivery,
       telemetry: startup.startup.telemetry,
       title: opts.title

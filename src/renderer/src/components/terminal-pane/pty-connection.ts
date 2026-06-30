@@ -76,7 +76,11 @@ import { createBrowserUuid } from '@/lib/browser-uuid'
 import { makePaneKey, parseLegacyNumericPaneKey } from '../../../../shared/stable-pane-id'
 import { createTerminalCommandLifecycle } from './terminal-command-lifecycle'
 import { e2eConfig } from '@/lib/e2e-config'
-import type { AgentStatusEntry, AgentType } from '../../../../shared/agent-status-types'
+import {
+  normalizeAgentStatusPayload,
+  type AgentStatusEntry,
+  type AgentType
+} from '../../../../shared/agent-status-types'
 import { isWebTerminalSurfaceTabId } from '@/runtime/web-terminal-surface-id'
 import {
   createAgentInterruptInference,
@@ -1498,19 +1502,30 @@ export function connectPanePty(
   }
 
   const applyInitialAgentStatus = (terminalTitle?: string): void => {
-    const initialStatus = paneStartup?.initialAgentStatus
+    const initialStatus = paneStartup?.initialAgentStatus ?? deps.initialAgentStatus
     if (!initialStatus) {
+      return
+    }
+    if (useAppStore.getState().agentStatusByPaneKey[cacheKey]) {
+      return
+    }
+    const normalized = normalizeAgentStatusPayload({
+      state: 'working',
+      prompt: initialStatus.prompt,
+      agentType: initialStatus.agent
+    })
+    if (!normalized?.prompt) {
       return
     }
     const statusPayload = {
       state: 'working' as const,
-      prompt: initialStatus.prompt,
+      prompt: normalized.prompt,
       agentType: resolveCompatibleAgentTypeForOwner(
         initialStatus.agent,
         getAuthoritativePaneAgent()
       )
     }
-    if (paneStartup.launchConfig) {
+    if (paneStartup?.launchConfig) {
       useAppStore
         .getState()
         .setAgentStatus(cacheKey, statusPayload, terminalTitle, undefined, undefined, {
@@ -2704,7 +2719,10 @@ export function connectPanePty(
           ) {
             // Why: daemon createOrAttach can turn an apparent fresh spawn into
             // a reattach; the transport skips onPtySpawn there to preserve recency.
-            bindActivePanePty(resolvedPtyId, { updateTabPtyId: 'if-missing' })
+            bindActivePanePty(resolvedPtyId, {
+              seedInitialAgentStatus: true,
+              updateTabPtyId: 'if-missing'
+            })
           }
           if (resolvedPtyId) {
             reconcilePtySizeAfterSpawn(resolvedPtyId, cols, rows)
@@ -4400,7 +4418,10 @@ export function connectPanePty(
             onError: reportError
           }
         })
-        bindActivePanePty(attachPtyId, { updateTabPtyId: 'if-missing' })
+        bindActivePanePty(attachPtyId, {
+          seedInitialAgentStatus: true,
+          updateTabPtyId: 'if-missing'
+        })
         if (attachPtyId === eagerLivePtyId) {
           registerPaneSerializerFor(attachPtyId)
         }
@@ -4454,7 +4475,10 @@ export function connectPanePty(
             })
             // Why: this path reuses a PTY spawned by an earlier mount, so no
             // later spawn event will bind this remounted pane's DOM/container.
-            bindActivePanePty(spawnedPtyId, { updateTabPtyId: 'if-missing' })
+            bindActivePanePty(spawnedPtyId, {
+              seedInitialAgentStatus: true,
+              updateTabPtyId: 'if-missing'
+            })
           })
           .catch((err) => {
             reportError(err instanceof Error ? err.message : String(err))

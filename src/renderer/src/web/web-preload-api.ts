@@ -1246,6 +1246,9 @@ function createWorktreesApi(): NonNullable<Partial<PreloadApi>['worktrees']> {
               ...(args.startup.startupCommandDelivery
                 ? { startupCommandDelivery: args.startup.startupCommandDelivery }
                 : {}),
+              ...(args.startup.initialAgentStatus
+                ? { startupInitialAgentStatus: args.startup.initialAgentStatus }
+                : {}),
               activate: true
             }
           : {}),
