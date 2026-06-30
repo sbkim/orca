@@ -58,11 +58,11 @@ let pendingQuitAndInstallTimer: ReturnType<typeof setTimeout> | null = null
 let quitAndInstallInProgress = false
 let persistLastUpdateCheckAt: ((timestamp: number) => void) | null = null
 let _getLastUpdateCheckAt: (() => number | null) | null = null
-let getAutomaticUpdatesEnabled: (() => boolean) | null = null
 let backgroundCheckLaunchPending = false
 // Why: a manually promoted background check can emit an error event before the
 // paired promise catch runs; keep the promotion attached to that launch.
 let backgroundCheckPromotedToUserInitiated = false
+let getAutomaticUpdatesEnabled: (() => boolean) | null = null
 let updateCheckStallTimer: ReturnType<typeof setTimeout> | null = null
 let updateCheckSilentSettleTimer: ReturnType<typeof setTimeout> | null = null
 let updateCheckAttemptSequence = 0
@@ -1165,24 +1165,24 @@ export function setupAutoUpdater(
   mainWindow: BrowserWindow,
   opts?: {
     getLastUpdateCheckAt?: () => number | null
-    getAutomaticUpdates?: () => boolean
     onBeforeQuit?: () => void | Promise<void>
     setLastUpdateCheckAt?: (timestamp: number) => void
     getPendingUpdateNudgeId?: () => string | null
     getDismissedUpdateNudgeId?: () => string | null
     setPendingUpdateNudgeId?: (id: string | null) => void
     setDismissedUpdateNudgeId?: (id: string | null) => void
+    getAutomaticUpdates?: () => boolean
   }
 ): void {
   mainWindowRef = mainWindow
   onBeforeQuitCleanup = opts?.onBeforeQuit ?? null
   persistLastUpdateCheckAt = opts?.setLastUpdateCheckAt ?? null
   _getLastUpdateCheckAt = opts?.getLastUpdateCheckAt ?? null
-  getAutomaticUpdatesEnabled = opts?.getAutomaticUpdates ?? null
   _getPendingUpdateNudgeId = opts?.getPendingUpdateNudgeId ?? null
   _getDismissedUpdateNudgeId = opts?.getDismissedUpdateNudgeId ?? null
   _setPendingUpdateNudgeId = opts?.setPendingUpdateNudgeId ?? null
   _setDismissedUpdateNudgeId = opts?.setDismissedUpdateNudgeId ?? null
+  getAutomaticUpdatesEnabled = opts?.getAutomaticUpdates ?? null
 
   if (!app.isPackaged && !is.dev) {
     return
@@ -1249,7 +1249,6 @@ export function setupAutoUpdater(
     getPendingInstallVersion,
     getUserInitiatedCheck: () => userInitiatedCheck,
     hasNewerDownloadedVersion,
-    maybeAutoDownload,
     shouldHandleUpdaterErrorEvent,
     performQuitAndInstall,
     clearUpdateAvailableEventPending,
@@ -1264,6 +1263,7 @@ export function setupAutoUpdater(
     recordCompletedUpdateCheck,
     sendStatus,
     scheduleAutomaticUpdateCheck,
+    maybeAutoDownload,
     clearBackgroundCheckLaunchPending,
     setAvailableReleaseUrl: (releaseUrl) => {
       availableReleaseUrl = releaseUrl

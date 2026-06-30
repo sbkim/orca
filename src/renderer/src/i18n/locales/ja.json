@@ -5094,6 +5094,8 @@
           "f44299636f": "再起動してアップデート (",
           "42717918f4": "アップデートのインストール (",
           "02dc082e70": "アップデートのダウンロードを開始できませんでした。",
+          "a73f0c19be": "Automatic updates",
+          "b8e724f0d3": "Download new updates automatically in the background. Once an update is downloaded, Orca installs it the next time you quit — your terminal sessions are never interrupted.",
           "e1a647adc5": "アップデートをチェックする",
           "ceb579abaf": "アプリのアップデートを確認し、新規 Orca バージョンをインストールします。",
           "d91ebfb87e": "現在のバージョン: {{value0}}",
@@ -5110,9 +5112,7 @@
           "31fd7150cf": "アップデートをチェックしています...",
           "3394d1f663": "チェック中",
           "d69a09b672": "アップデートは起動時に自動的にチェックされます。",
-          "7173352632": "idle",
-          "a73f0c19be": "Automatic updates",
-          "b8e724f0d3": "Download new updates automatically in the background. Once an update is downloaded, Orca installs it the next time you quit — your terminal sessions are never interrupted."
+          "7173352632": "idle"
         },
         "GeneralWorkspaceSettingsSection": {
           "3d538a98f7": "ワークスペースの「開く」メニューから利用可能なアプリを選択します。",

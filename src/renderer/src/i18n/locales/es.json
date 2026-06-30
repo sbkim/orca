@@ -5109,6 +5109,8 @@
           "f44299636f": "Reiniciar para actualizar (",
           "42717918f4": "Instalar actualización (",
           "02dc082e70": "No se pudo iniciar la descarga de la actualización.",
+          "a73f0c19be": "Automatic updates",
+          "b8e724f0d3": "Download new updates automatically in the background. Once an update is downloaded, Orca installs it the next time you quit — your terminal sessions are never interrupted.",
           "e1a647adc5": "Buscar actualizaciones",
           "ceb579abaf": "Busque actualizaciones de la aplicación e instale una versión más reciente de Orca.",
           "d91ebfb87e": "Versión actual: {{value0}}",
@@ -5125,9 +5127,7 @@
           "31fd7150cf": "Buscando actualizaciones...",
           "3394d1f663": "de cheques",
           "d69a09b672": "Las actualizaciones se verifican automáticamente al iniciarse.",
-          "7173352632": "idle",
-          "a73f0c19be": "Automatic updates",
-          "b8e724f0d3": "Download new updates automatically in the background. Once an update is downloaded, Orca installs it the next time you quit — your terminal sessions are never interrupted."
+          "7173352632": "idle"
         },
         "GeneralWorkspaceSettingsSection": {
           "3d538a98f7": "Elija las aplicaciones disponibles en el menú Abrir en de un espacio de trabajo.",

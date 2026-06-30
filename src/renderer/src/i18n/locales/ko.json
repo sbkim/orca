@@ -5094,6 +5094,8 @@
           "f44299636f": "업데이트하려면 다시 시작하세요(",
           "42717918f4": "업데이트 설치(",
           "02dc082e70": "업데이트 다운로드를 시작할 수 없습니다.",
+          "a73f0c19be": "Automatic updates",
+          "b8e724f0d3": "Download new updates automatically in the background. Once an update is downloaded, Orca installs it the next time you quit — your terminal sessions are never interrupted.",
           "e1a647adc5": "업데이트 확인",
           "ceb579abaf": "앱 업데이트를 확인하고 최신 Orca 버전을 설치하세요.",
           "d91ebfb87e": "현재 버전: {{value0}}",
@@ -5110,9 +5112,7 @@
           "31fd7150cf": "업데이트 확인 중...",
           "3394d1f663": "확인 중",
           "d69a09b672": "업데이트는 시작 시 자동으로 확인됩니다.",
-          "7173352632": "idle",
-          "a73f0c19be": "Automatic updates",
-          "b8e724f0d3": "Download new updates automatically in the background. Once an update is downloaded, Orca installs it the next time you quit — your terminal sessions are never interrupted."
+          "7173352632": "idle"
         },
         "GeneralWorkspaceSettingsSection": {
           "3d538a98f7": "워크스페이스의 열기 메뉴에서 사용 가능한 앱을 선택하세요.",

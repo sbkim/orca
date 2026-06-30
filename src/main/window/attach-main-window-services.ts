@@ -118,7 +118,6 @@ export function attachMainWindowServices(
   registerFileDropRelay(mainWindow)
   setupAutoUpdater(mainWindow, {
     getLastUpdateCheckAt: () => store.getUI().lastUpdateCheckAt,
-    getAutomaticUpdates: () => store.getSettings().automaticUpdates === true,
     onBeforeQuit: async () => {
       try {
         await options?.onBeforeUpdateQuit?.()
@@ -146,7 +145,8 @@ export function attachMainWindowServices(
     },
     setDismissedUpdateNudgeId: (id) => {
       store.updateUI({ dismissedUpdateNudgeId: id })
-    }
+    },
+    getAutomaticUpdates: () => store.getSettings().automaticUpdates === true
   })
   registerRuntimeWindowLifecycle(mainWindow, runtime)
 
