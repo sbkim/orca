@@ -146,6 +146,22 @@ describe('terminal mouse wheel multiplier', () => {
     expect(dispatch).toHaveBeenCalledTimes(2)
   })
 
+  it('reads the current TUI multiplier for each wheel event', () => {
+    const { terminal, getHandler, target, dispatch } = fakeTerminal(terminalElement())
+    let multiplier = 1
+    attachTerminalMouseWheelMultiplier(terminal, {
+      getTuiMouseWheelMultiplier: () => multiplier
+    })
+    const handler = getHandler()
+
+    expect(handler(discreteWheelEventOn(target))).toBe(true)
+    expect(dispatch).not.toHaveBeenCalled()
+
+    multiplier = 4
+    expect(handler(discreteWheelEventOn(target))).toBe(true)
+    expect(dispatch).toHaveBeenCalledTimes(3)
+  })
+
   it('marks replayed clones so they do not re-trigger multiplication', () => {
     const { terminal, getHandler, target, dispatch } = fakeTerminal(terminalElement())
     attachTerminalMouseWheelMultiplier(terminal, {
