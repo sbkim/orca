@@ -974,6 +974,20 @@ export class OrchestrationDb {
       .get(workspaceKey) as CoordinatorRun | undefined
   }
 
+  getActiveGlobalCoordinatorRun(): CoordinatorRun | undefined {
+    return this.db
+      .prepare(
+        "SELECT * FROM coordinator_runs WHERE status = 'running' AND workspace_key IS NULL ORDER BY created_at DESC LIMIT 1"
+      )
+      .get() as CoordinatorRun | undefined
+  }
+
+  listActiveCoordinatorRuns(): CoordinatorRun[] {
+    return this.db
+      .prepare("SELECT * FROM coordinator_runs WHERE status = 'running' ORDER BY created_at")
+      .all() as CoordinatorRun[]
+  }
+
   // ── Queries for Coordinator ──
 
   getIdleTerminals(excludeHandles: string[] = [], workspaceKey?: string | null): string[] {
