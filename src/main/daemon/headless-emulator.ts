@@ -2,16 +2,16 @@ import './xterm-env-polyfill'
 import { Terminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { extractLastOscTitle } from '../../shared/agent-detection'
+import { collectHeadlessOscLinkRanges } from './headless-osc-link-ranges'
+import { extractOscScanTail, scanOsc7Uris } from './osc7-uri-extraction'
+import { parseFileUriPath } from './osc7-file-uri'
 import type { TerminalSnapshot, TerminalModes } from './types'
+import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
 
 export type HeadlessEmulatorOptions = {
   cols: number
   rows: number
   scrollback?: number
-}
-
-export type HeadlessSnapshotOptions = {
-  scrollbackRows?: number
 }
 
 type TerminalWithSynchronousWrite = Terminal & {
@@ -27,34 +27,6 @@ const OSC_SCAN_TAIL_LIMIT = 4096
 const PRIVATE_MODE_SCAN_TAIL_LIMIT = 4096
 type MouseTrackingMode = NonNullable<TerminalModes['mouseTrackingMode']>
 
-function parseFileUriPath(uri: string): string | null {
-  try {
-    const url = new URL(uri)
-    if (url.protocol !== 'file:') {
-      return null
-    }
-
-    const decodedPath = decodeURIComponent(url.pathname)
-    if (process.platform !== 'win32') {
-      return decodedPath
-    }
-
-    // Why: Windows OSC-7 cwd updates can describe both drive-letter paths
-    // (`file:///C:/repo`) and UNC shares (`file://server/share/repo`). Use the
-    // hostname when present so live cwd tracking, snapshots, and restore all
-    // round-trip to a native Windows path instead of dropping the server name.
-    if (url.hostname) {
-      return `\\\\${url.hostname}${decodedPath.replace(/\//g, '\\')}`
-    }
-    if (/^\/[A-Za-z]:/.test(decodedPath)) {
-      return decodedPath.slice(1)
-    }
-    return decodedPath.replace(/\//g, '\\')
-  } catch {
-    return null
-  }
-}
-
 export class HeadlessEmulator {
   private terminal: Terminal
   private serializer: SerializeAddon
@@ -65,6 +37,7 @@ export class HeadlessEmulator {
   private mouseTrackingMode: MouseTrackingMode = 'none'
   private sgrMouseMode = false
   private sgrMousePixelsMode = false
+  private restoredOscLinks: TerminalOscLinkRange[] = []
   private disposed = false
 
   constructor(opts: HeadlessEmulatorOptions) {
@@ -97,21 +70,10 @@ export class HeadlessEmulator {
       return Promise.resolve()
     }
 
-    const oscInput = this.oscScanTail + data
-    this.oscScanTail = this.extractOscScanTail(oscInput)
-    this.scanOsc7(oscInput)
-    const lastTitle = extractLastOscTitle(oscInput)
-    if (lastTitle !== null) {
-      this.lastTitle = lastTitle
-    }
-    const writeSync = (this.terminal as TerminalWithSynchronousWrite)._core?.writeSync
-    if (typeof writeSync === 'function') {
-      // Why: hidden renderer restore snapshots are requested immediately after
-      // PTY bursts; queued headless writes can snapshot half-cleared TUI rows.
-      writeSync.call((this.terminal as TerminalWithSynchronousWrite)._core, data)
-      this.scanPrivateModes(data)
+    if (this.tryWriteSync(data)) {
       return Promise.resolve()
     }
+    this.scanInputForOscState(data)
     return new Promise<void>((resolve) => {
       this.terminal.write(data, () => {
         // Why: snapshots combine serialized xterm state with mirrored mouse
@@ -122,14 +84,57 @@ export class HeadlessEmulator {
     })
   }
 
+  /** Synchronous write used by cold-restore log replay, where a snapshot is
+   *  taken immediately after the last record and queued async writes would
+   *  serialize a half-applied stream. Returns false when xterm's synchronous
+   *  write path is unavailable — callers must then abandon the replay. */
+  writeSync(data: string): boolean {
+    if (this.disposed) {
+      return false
+    }
+    return this.tryWriteSync(data)
+  }
+
+  private tryWriteSync(data: string): boolean {
+    const writeSync = (this.terminal as TerminalWithSynchronousWrite)._core?.writeSync
+    if (typeof writeSync !== 'function') {
+      return false
+    }
+    this.scanInputForOscState(data)
+    // Why: hidden renderer restore snapshots are requested immediately after
+    // PTY bursts; queued headless writes can snapshot half-cleared TUI rows.
+    writeSync.call((this.terminal as TerminalWithSynchronousWrite)._core, data)
+    this.scanPrivateModes(data)
+    return true
+  }
+
+  private scanInputForOscState(data: string): void {
+    const oscInput = this.oscScanTail + data
+    this.oscScanTail = this.extractOscScanTail(oscInput)
+    this.scanOsc7(oscInput)
+    const lastTitle = extractLastOscTitle(oscInput)
+    if (lastTitle !== null) {
+      this.lastTitle = lastTitle
+    }
+  }
+
   resize(cols: number, rows: number): void {
     if (this.disposed) {
       return
     }
+    this.restoredOscLinks = []
     this.terminal.resize(cols, rows)
   }
 
-  getSnapshot(opts: HeadlessSnapshotOptions = {}): TerminalSnapshot {
+  // Why: Session.resize applies this emulator and the node-pty subprocess
+  // together behind the same dead/invalid-size gate, so the emulator's dims are
+  // an accurate proxy for the size the child actually took — and stay stale
+  // when a resize is dropped, which is exactly the drop the renderer must detect.
+  getAppliedSize(): { cols: number; rows: number } {
+    return { cols: this.terminal.cols, rows: this.terminal.rows }
+  }
+
+  getSnapshot(opts: { scrollbackRows?: number } = {}): TerminalSnapshot {
     const modes = this.getModes()
     const snapshotAnsi = this.normalizeSnapshotAnsiForModes(
       this.serializer.serialize({ scrollback: opts.scrollbackRows }),
@@ -138,6 +143,11 @@ export class HeadlessEmulator {
     return {
       snapshotAnsi,
       scrollbackAnsi: '',
+      oscLinks: collectHeadlessOscLinkRanges(
+        this.terminal,
+        opts.scrollbackRows,
+        this.restoredOscLinks
+      ),
       rehydrateSequences: this.buildRehydrateSequences(modes),
       cwd: this.cwd,
       modes,
@@ -173,7 +183,12 @@ export class HeadlessEmulator {
     this.lastTitle = title
   }
 
+  setRestoredOscLinks(links: TerminalOscLinkRange[] | undefined): void {
+    this.restoredOscLinks = links?.slice() ?? []
+  }
+
   clearScrollback(): void {
+    this.restoredOscLinks = []
     this.terminal.clear()
   }
 
@@ -183,28 +198,13 @@ export class HeadlessEmulator {
   }
 
   private scanOsc7(data: string): void {
-    // OSC-7 format: ESC ] 7 ; <uri> BEL  or  ESC ] 7 ; <uri> ST
-    // BEL = \x07, ST = ESC \
-    // oxlint-disable-next-line no-control-regex -- terminal escape sequences require control chars
-    const osc7Re = /\x1b\]7;([^\x07\x1b]*?)(?:\x07|\x1b\\)/g
-    let match: RegExpExecArray | null
-    while ((match = osc7Re.exec(data)) !== null) {
-      this.parseOsc7Uri(match[1])
-    }
+    scanOsc7Uris(data, (uri) => {
+      this.parseOsc7Uri(uri)
+    })
   }
 
   private extractOscScanTail(input: string): string {
-    const lastOsc = input.lastIndexOf('\x1b]')
-    const lastEscape = input.endsWith('\x1b') ? input.length - 1 : -1
-    const start = Math.max(lastOsc, lastEscape)
-    if (start === -1) {
-      return ''
-    }
-    const suffix = input.slice(start)
-    if (suffix.includes('\x07') || suffix.includes('\x1b\\')) {
-      return ''
-    }
-    return suffix.slice(-OSC_SCAN_TAIL_LIMIT)
+    return extractOscScanTail(input, OSC_SCAN_TAIL_LIMIT)
   }
 
   private scanPrivateModes(data: string): void {

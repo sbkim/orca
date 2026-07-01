@@ -3,9 +3,9 @@
    stay in one consistency boundary. */
 import { safeStorage } from 'electron'
 import { LinearClient, AuthenticationLinearError } from '@linear/sdk'
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'fs'
-import { homedir } from 'os'
-import { join } from 'path'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import {
   CredentialDecryptionError,
   credentialFileHasContent,
@@ -60,6 +60,7 @@ type LinearWorkspaceFile = {
 export type LinearClientForWorkspace = {
   workspace: LinearWorkspace
   client: LinearClient
+  apiKey: string
 }
 
 let cachedTokens = new Map<string, string>()
@@ -519,18 +520,31 @@ export function getClients(
   workspaceId?: LinearWorkspaceSelection | null
 ): LinearClientForWorkspace[] {
   const state = getWorkspaceState()
-  const selectedWorkspaces =
-    workspaceId === 'all'
-      ? state.workspaces
-      : state.workspaces.filter((workspace) => workspace.id === resolveWorkspaceId(workspaceId))
+  const isAllSelection = workspaceId === 'all'
+  const selectedWorkspaces = isAllSelection
+    ? state.workspaces
+    : state.workspaces.filter((workspace) => workspace.id === resolveWorkspaceId(workspaceId))
 
   const clients: LinearClientForWorkspace[] = []
   for (const workspace of selectedWorkspaces) {
-    const token = loadToken({ force: true, workspaceId: workspace.id })
+    let token: string | null
+    try {
+      token = loadToken({ force: true, workspaceId: workspace.id })
+    } catch (error) {
+      // Why: under an 'all' selection one un-decryptable workspace must not
+      // collapse reads for the healthy ones. loadToken already recorded the
+      // per-workspace credentialError for getStatus to surface, so skip this
+      // workspace like a missing token. A specific-workspace selection still
+      // rethrows so the renderer can surface the decrypt banner promptly.
+      if (isAllSelection && error instanceof CredentialDecryptionError) {
+        continue
+      }
+      throw error
+    }
     if (!token) {
       continue
     }
-    clients.push({ workspace, client: new LinearClient({ apiKey: token }) })
+    clients.push({ workspace, client: new LinearClient({ apiKey: token }), apiKey: token })
   }
   return clients
 }

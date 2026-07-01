@@ -5,6 +5,7 @@ import {
   CUSTOM_AGENT_ID,
   getCommitMessageAgentSpec,
   getCommitMessageModel,
+  listCommitMessageAgentCapabilities,
   type CustomAgentId,
   isCustomAgentId,
   resolveCommitMessageAgentChoice
@@ -103,6 +104,12 @@ const PR_CREATION_DEFAULT_KEYS = [
   'generateDetailsOnOpen',
   'openAfterCreate'
 ] as const
+
+function supportedSourceControlAiAgentSummary(): string {
+  return `Supported agents: ${listCommitMessageAgentCapabilities()
+    .map((capability) => capability.label)
+    .join(', ')}, or Custom command.`
+}
 
 function copyRecord<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : structuredClone(value)
@@ -1141,12 +1148,6 @@ export function resolveSourceControlAiForOperation(
   const legacy = input.settings.commitMessageAi
   const source = normalizeSourceControlAiSettings(input.settings.sourceControlAi, legacy)
   const repoOverrides = normalizeRepoSourceControlAiOverrides(input.repo?.sourceControlAi)
-  if (!(repoOverrides?.enabled ?? source.enabled)) {
-    return {
-      ok: false,
-      error: 'Enable Source Control AI in Settings -> Git.'
-    }
-  }
 
   const prCreationDefaults = resolvePrCreationDefaults(
     source,
@@ -1171,8 +1172,7 @@ export function resolveSourceControlAiForOperation(
   if (!agentChoice) {
     return {
       ok: false,
-      error:
-        'Choose a supported Source Control AI agent for this action in Settings -> Git -> Source Control AI.'
+      error: `Choose a supported Source Control AI agent for this action in Settings -> Git -> Source Control AI. ${supportedSourceControlAiAgentSummary()}`
     }
   }
 
@@ -1220,14 +1220,14 @@ export function resolveSourceControlAiForOperation(
   if (!resolvedActionAgentId || isCustomAgentId(resolvedActionAgentId)) {
     return {
       ok: false,
-      error: 'Choose a supported Source Control AI agent for this action.'
+      error: `Choose a supported Source Control AI agent for this action. ${supportedSourceControlAiAgentSummary()}`
     }
   }
   const spec = getCommitMessageAgentSpec(resolvedActionAgentId)
   if (!spec) {
     return {
       ok: false,
-      error: `Agent "${resolvedActionAgentId}" does not support Source Control AI ${OPERATION_LABEL[input.operation]}.`
+      error: `Agent "${resolvedActionAgentId}" does not support Source Control AI ${OPERATION_LABEL[input.operation]}. ${supportedSourceControlAiAgentSummary()}`
     }
   }
 

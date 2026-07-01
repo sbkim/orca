@@ -28,14 +28,25 @@ import {
   readTerminalPathExistsCache,
   writeTerminalPathExistsCache
 } from './terminal-path-exists-cache'
+import {
+  getTerminalHtmlFileOpenHint,
+  getTerminalOrcaFileOpenHint,
+  getTerminalWorktreePathOpenHint,
+  getTerminalFileOpenHint,
+  getTerminalUrlOpenHint,
+  isMacPlatform
+} from './terminal-link-open-hints'
+import { resolveKnownWorktreeRootPathLink } from './terminal-worktree-path-link'
 
 export { openDetectedFilePath } from './terminal-file-open-routing'
 export { openFilePathLinkAtBufferPosition } from './terminal-file-link-hit-testing'
+export { getTerminalFileOpenHint, getTerminalHtmlFileOpenHint, getTerminalUrlOpenHint }
 
 export type LinkHandlerDeps = {
   worktreeId: string
   worktreePath: string
   startupCwd: string
+  getPaneLinkCwd?: (paneId: number) => string | null
   managerRef: React.RefObject<PaneManager | null>
   linkProviderDisposablesRef: React.RefObject<Map<number, IDisposable>>
   pathExistsCache: Map<string, boolean>
@@ -76,34 +87,6 @@ function preferLongestNonOverlappingLinks(links: ProvidedFileLink[]): ProvidedFi
   )
 }
 
-function isMacPlatform(): boolean {
-  return navigator.userAgent.includes('Mac')
-}
-
-export function getTerminalFileOpenHint(): string {
-  return isMacPlatform()
-    ? '⌘+click to open or ⇧⌘+click for default app'
-    : 'Ctrl+click to open or Shift+Ctrl+click for default app'
-}
-
-export function getTerminalOrcaFileOpenHint(): string {
-  return isMacPlatform() ? '⌘+click to open in Orca' : 'Ctrl+click to open in Orca'
-}
-
-// Why: local .html/.htm links keep the ordinary Orca browser route, with the
-// same Shift+modifier escape hatch to the system default browser as URL links.
-export function getTerminalHtmlFileOpenHint(): string {
-  return isMacPlatform()
-    ? '⌘+click to open or ⇧⌘+click for default browser'
-    : 'Ctrl+click to open or Shift+Ctrl+click for default browser'
-}
-
-export function getTerminalUrlOpenHint(): string {
-  return isMacPlatform()
-    ? '⌘+click to open or ⇧⌘+click for system browser'
-    : 'Ctrl+click to open or Shift+Ctrl+click for system browser'
-}
-
 export function createFilePathLinkProvider(
   paneId: number,
   deps: LinkHandlerDeps,
@@ -141,8 +124,9 @@ export function createFilePathLinkProvider(
         logicalLines.flatMap((logicalLine) =>
           extractTerminalFileLinkCandidates(logicalLine.text).map(
             async (parsed): Promise<ProvidedFileLink | null> => {
-              const resolved = startupCwd
-                ? resolveTerminalFileLink(parsed, startupCwd, deps.terminalHomePath)
+              const paneLinkCwd = deps.getPaneLinkCwd?.(paneId) ?? startupCwd
+              const resolved = paneLinkCwd
+                ? resolveTerminalFileLink(parsed, paneLinkCwd, deps.terminalHomePath)
                 : null
               if (!resolved) {
                 return null
@@ -169,15 +153,23 @@ export function createFilePathLinkProvider(
                 isRemoteRuntimePath,
                 runtimeEnvironmentId
               })
-              const cachedExists = readTerminalPathExistsCache(pathExistsCache, cacheKey)
-              const exists =
-                cachedExists ??
-                (fileContext.connectionId || isRemoteRuntimePath
-                  ? await runtimePathExists(fileContext, resolved.absolutePath)
-                  : await window.api.shell.pathExists(resolved.absolutePath))
-              writeTerminalPathExistsCache(pathExistsCache, cacheKey, exists)
-              if (!exists) {
+              const worktreeRootLink = resolveKnownWorktreeRootPathLink(resolved.absolutePath)
+              if (/[\\/]$/.test(parsed.pathText) && !worktreeRootLink) {
                 return null
+              }
+              // Why: exact known workspace roots must stay clickable for SSH or
+              // stale local paths even when filesystem probing says "missing".
+              if (!worktreeRootLink) {
+                const cachedExists = readTerminalPathExistsCache(pathExistsCache, cacheKey)
+                const exists =
+                  cachedExists ??
+                  (fileContext.connectionId || isRemoteRuntimePath
+                    ? await runtimePathExists(fileContext, resolved.absolutePath)
+                    : await window.api.shell.pathExists(resolved.absolutePath))
+                writeTerminalPathExistsCache(pathExistsCache, cacheKey, exists)
+                if (!exists) {
+                  return null
+                }
               }
 
               return {
@@ -203,11 +195,13 @@ export function createFilePathLinkProvider(
                       fileContext,
                       resolved.absolutePath
                     )
-                    const hint = canOpenWithSystemDefault
-                      ? isHtmlFilePath(resolved.absolutePath)
-                        ? getTerminalHtmlFileOpenHint()
-                        : openLinkHint
-                      : getTerminalOrcaFileOpenHint()
+                    const hint = worktreeRootLink
+                      ? getTerminalWorktreePathOpenHint(canOpenWithSystemDefault)
+                      : canOpenWithSystemDefault
+                        ? isHtmlFilePath(resolved.absolutePath)
+                          ? getTerminalHtmlFileOpenHint()
+                          : openLinkHint
+                        : getTerminalOrcaFileOpenHint()
                     linkTooltip.textContent = `${resolved.absolutePath} (${hint})`
                     linkTooltip.style.display = ''
                   },
@@ -297,7 +291,7 @@ export function installFilePathLinkClickFallback(
       position,
       terminal.cols,
       {
-        startupCwd: deps.startupCwd,
+        startupCwd: deps.getPaneLinkCwd?.(paneId) ?? deps.startupCwd,
         terminalHomePath: deps.terminalHomePath,
         worktreeId: deps.worktreeId,
         worktreePath: deps.worktreePath,

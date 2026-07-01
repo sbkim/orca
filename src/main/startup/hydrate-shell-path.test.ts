@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { EventEmitter } from 'events'
+import { EventEmitter } from 'node:events'
 import { delimiter } from 'node:path'
-import type { ChildProcessWithoutNullStreams } from 'child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import {
   _resetHydrateShellPathCache,
   hydrateShellPath,
@@ -198,12 +198,7 @@ describe('mergePathSegments', () => {
   })
 
   it('moves user-local shell paths ahead of packaged Homebrew fallbacks', () => {
-    process.env.PATH = joinPath(
-      '/opt/homebrew/bin',
-      '/Users/tester/.local/bin',
-      '/usr/bin',
-      '/bin'
-    )
+    process.env.PATH = joinPath('/opt/homebrew/bin', '/Users/tester/.local/bin', '/usr/bin', '/bin')
 
     const added = mergePathSegments(['/Users/tester/.local/bin', '/opt/homebrew/bin'])
 

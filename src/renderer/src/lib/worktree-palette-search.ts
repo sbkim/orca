@@ -1,5 +1,8 @@
 import { branchName } from '@/lib/git-utils'
+import { issueCacheKey as getIssueCacheKey } from '@/store/slices/github'
 import type { Repo, Worktree } from '../../../shared/types'
+import { extractWorktreePaletteCommentSnippet } from './worktree-palette-comment-snippet'
+import { isWorktreePaletteQueryTooLarge } from './worktree-palette-query-bounds'
 
 export type MatchRange = { start: number; end: number }
 
@@ -44,38 +47,6 @@ export function getWorktreePaletteSearchScope(args: {
 type PRCacheEntry = { data?: { number: number; title: string } | null } | undefined
 type IssueCacheEntry = { data?: { number: number; title: string } | null } | undefined
 
-function extractCommentSnippet(
-  comment: string,
-  matchStart: number,
-  matchEnd: number
-): { text: string; matchRange: MatchRange } {
-  let snippetStart = Math.max(0, matchStart - 40)
-  let snippetEnd = Math.min(comment.length, matchEnd + 40)
-
-  for (let i = 0; i < 10 && snippetStart > 0; i++) {
-    if (/\s/.test(comment[snippetStart - 1])) {
-      break
-    }
-    snippetStart--
-  }
-  for (let i = 0; i < 10 && snippetEnd < comment.length; i++) {
-    if (/\s/.test(comment[snippetEnd])) {
-      break
-    }
-    snippetEnd++
-  }
-
-  const prefix = snippetStart > 0 ? '\u2026' : ''
-  const suffix = snippetEnd < comment.length ? '\u2026' : ''
-  return {
-    text: `${prefix}${comment.slice(snippetStart, snippetEnd)}${suffix}`,
-    matchRange: {
-      start: prefix.length + matchStart - snippetStart,
-      end: prefix.length + matchEnd - snippetStart
-    }
-  }
-}
-
 function makeResult(
   worktreeId: string,
   matchedField: PaletteMatchedField | null,
@@ -100,11 +71,15 @@ export function searchWorktrees(
   issueCache: Record<string, IssueCacheEntry> | null,
   workspacePortsByWorktreeId?: Map<string, { port: number; processName?: string }[]>
 ): PaletteSearchResult[] {
-  if (!query) {
+  if (isWorktreePaletteQueryTooLarge(query)) {
+    return []
+  }
+  const trimmedQuery = query.trim()
+  if (!trimmedQuery) {
     return worktrees.map((worktree) => makeResult(worktree.id, null))
   }
 
-  const q = query.toLowerCase()
+  const q = trimmedQuery.toLowerCase()
   const numericQuery = q.startsWith('#') ? q.slice(1) : q
   const results: PaletteSearchResult[] = []
 
@@ -174,7 +149,7 @@ export function searchWorktrees(
     if (worktree.comment) {
       const commentIndex = worktree.comment.toLowerCase().indexOf(q)
       if (commentIndex !== -1) {
-        const snippet = extractCommentSnippet(
+        const snippet = extractWorktreePaletteCommentSnippet(
           worktree.comment,
           commentIndex,
           commentIndex + q.length
@@ -301,7 +276,16 @@ export function searchWorktrees(
       continue
     }
 
-    const issueKey = repo ? `${repo.path}::${worktree.linkedIssue}` : ''
+    const issueKey = repo
+      ? getIssueCacheKey(
+          repo.path,
+          repo.id,
+          worktree.linkedIssue,
+          undefined,
+          repo.connectionId,
+          repo.executionHostId
+        )
+      : ''
     const issue = issueKey && issueCache ? issueCache[issueKey]?.data : undefined
     if (!issue?.title) {
       continue

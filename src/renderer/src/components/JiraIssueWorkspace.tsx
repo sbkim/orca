@@ -24,6 +24,10 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import {
+  getCommentBodySubmitState,
+  hasBoundedCommentBodyText
+} from '@/lib/comment-body-submit-state'
 import { createBrowserUuid } from '@/lib/browser-uuid'
 import { useAppStore } from '@/store'
 import {
@@ -42,12 +46,14 @@ import type {
   JiraTransition,
   JiraUser
 } from '../../../shared/types'
+import type { TaskSourceContext } from '../../../shared/task-source-context'
 import { translate } from '@/i18n/i18n'
 
 type JiraIssueWorkspaceProps = {
   issue: JiraIssue | null
   onUse: (issue: JiraIssue) => void
   onClose: () => void
+  sourceContext?: TaskSourceContext | null
 }
 
 const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
@@ -111,9 +117,11 @@ async function copyTextToClipboard(text: string, label: string): Promise<void> {
 export default function JiraIssueWorkspace({
   issue,
   onUse,
-  onClose
+  onClose,
+  sourceContext
 }: JiraIssueWorkspaceProps): React.JSX.Element {
   const settings = useAppStore((s) => s.settings)
+  const providerSettings = sourceContext ?? settings
   const patchJiraIssue = useAppStore((s) => s.patchJiraIssue)
   const [fullIssue, setFullIssue] = useState<JiraIssue | null>(null)
   const [issueLoading, setIssueLoading] = useState(false)
@@ -139,7 +147,7 @@ export default function JiraIssueWorkspace({
       setCommentsLoading(true)
       setCommentsError(null)
       try {
-        let fetched = await jiraIssueComments(settings, targetIssue.key, targetIssue.siteId)
+        let fetched = await jiraIssueComments(providerSettings, targetIssue.key, targetIssue.siteId)
         if (requestId !== requestIdRef.current) {
           return
         }
@@ -159,7 +167,7 @@ export default function JiraIssueWorkspace({
         }
       }
     },
-    [settings]
+    [providerSettings]
   )
 
   useEffect(() => {
@@ -186,7 +194,7 @@ export default function JiraIssueWorkspace({
     setCommentsError(null)
     setIssueLoading(true)
 
-    void jiraGetIssue(settings, issue.key, issue.siteId)
+    void jiraGetIssue(providerSettings, issue.key, issue.siteId)
       .then((result) => {
         if (requestId !== requestIdRef.current) {
           return
@@ -205,9 +213,9 @@ export default function JiraIssueWorkspace({
       })
 
     void Promise.all([
-      jiraListTransitions(settings, issue.key, issue.siteId),
-      jiraListPriorities(settings, issue.siteId),
-      jiraListAssignableUsers(settings, issue.key, undefined, issue.siteId)
+      jiraListTransitions(providerSettings, issue.key, issue.siteId),
+      jiraListPriorities(providerSettings, issue.siteId),
+      jiraListAssignableUsers(providerSettings, issue.key, undefined, issue.siteId)
     ])
       .then(([nextTransitions, nextPriorities, nextUsers]) => {
         if (requestId !== requestIdRef.current) {
@@ -220,22 +228,22 @@ export default function JiraIssueWorkspace({
       .catch(() => {})
 
     void loadComments(issue, requestId)
-  }, [issue, loadComments, settings])
+  }, [issue, loadComments, providerSettings])
 
   const refreshIssue = useCallback(async (): Promise<void> => {
     if (!displayed) {
       return
     }
     try {
-      const latest = await jiraGetIssue(settings, displayed.key, displayed.siteId)
+      const latest = await jiraGetIssue(providerSettings, displayed.key, displayed.siteId)
       if (latest) {
         setFullIssue(latest)
-        patchJiraIssue(latest.key, latest)
+        patchJiraIssue(latest.key, latest, { sourceContext })
       }
     } catch {
       // Keep the visible issue snapshot if refresh fails.
     }
-  }, [displayed, patchJiraIssue, settings])
+  }, [displayed, patchJiraIssue, providerSettings, sourceContext])
 
   const mutateIssue = useCallback(
     async (
@@ -251,16 +259,16 @@ export default function JiraIssueWorkspace({
       try {
         if (optimistic) {
           setFullIssue({ ...displayed, ...optimistic })
-          patchJiraIssue(displayed.key, optimistic)
+          patchJiraIssue(displayed.key, optimistic, { sourceContext })
         }
-        const result = await jiraUpdateIssue(settings, displayed.key, updates, siteId)
+        const result = await jiraUpdateIssue(providerSettings, displayed.key, updates, siteId)
         if (!result.ok) {
           throw new Error(result.error)
         }
         await refreshIssue()
       } catch (error) {
         setFullIssue(previous)
-        patchJiraIssue(previous.key, previous)
+        patchJiraIssue(previous.key, previous, { sourceContext })
         toast.error(
           error instanceof Error
             ? error.message
@@ -273,7 +281,7 @@ export default function JiraIssueWorkspace({
         setPendingField(null)
       }
     },
-    [displayed, patchJiraIssue, pendingField, refreshIssue, settings, siteId]
+    [displayed, patchJiraIssue, pendingField, refreshIssue, providerSettings, siteId, sourceContext]
   )
 
   const handleSaveTitle = useCallback(() => {
@@ -303,19 +311,33 @@ export default function JiraIssueWorkspace({
     if (!displayed || commentSubmitting) {
       return
     }
-    const body = commentDraft.trim()
-    if (!body) {
+    const bodyState = getCommentBodySubmitState(commentDraft)
+    if (bodyState.status === 'empty') {
+      return
+    }
+    if (bodyState.status === 'too-large-leading-whitespace') {
+      toast.error(
+        translate(
+          'auto.components.JiraIssueWorkspace.commentTooLarge',
+          'Comment is too large to submit safely.'
+        )
+      )
       return
     }
     setCommentSubmitting(true)
     try {
-      const result = await jiraAddIssueComment(settings, displayed.key, body, displayed.siteId)
+      const result = await jiraAddIssueComment(
+        providerSettings,
+        displayed.key,
+        bodyState.body,
+        displayed.siteId
+      )
       if (!result.ok) {
         throw new Error(result.error)
       }
       const comment: JiraComment = {
         id: result.id || createBrowserUuid(),
-        body,
+        body: bodyState.body,
         createdAt: new Date().toISOString(),
         user: { accountId: 'local', displayName: 'You' }
       }
@@ -331,7 +353,8 @@ export default function JiraIssueWorkspace({
     } finally {
       setCommentSubmitting(false)
     }
-  }, [commentDraft, commentSubmitting, displayed, settings])
+  }, [commentDraft, commentSubmitting, displayed, providerSettings])
+  const canSubmitComment = hasBoundedCommentBodyText(commentDraft)
 
   const actionItems = useMemo(() => {
     if (!displayed) {
@@ -650,6 +673,7 @@ export default function JiraIssueWorkspace({
                   {displayed.description?.trim() ? (
                     <CommentMarkdown
                       content={displayed.description}
+                      variant="document"
                       className="text-[14px] leading-relaxed"
                     />
                   ) : (
@@ -791,7 +815,7 @@ export default function JiraIssueWorkspace({
                 />
                 <Button
                   onClick={() => void handleSubmitComment()}
-                  disabled={!commentDraft.trim() || commentSubmitting}
+                  disabled={!canSubmitComment || commentSubmitting}
                   className="self-end gap-2"
                 >
                   {commentSubmitting ? (

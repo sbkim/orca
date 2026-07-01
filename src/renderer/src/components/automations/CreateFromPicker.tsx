@@ -13,10 +13,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils'
 import type { Repo, Worktree } from '../../../../shared/types'
 import { useAppStore } from '@/store'
+import { getRuntimeEnvironmentIdForRepo } from '@/lib/repo-runtime-owner'
 import {
   getRuntimeRepoBaseRefDefault,
   searchRuntimeRepoBaseRefs
 } from '@/runtime/runtime-repo-client'
+import { isRuntimeRepoRefSearchQueryWithinLimit } from '@/runtime/runtime-repo-search-bounds'
 import { translate } from '@/i18n/i18n'
 
 const DEFAULT_VALUE = '__project_default__'
@@ -40,8 +42,8 @@ export function CreateFromPicker({
   triggerClassName?: string
   onValueChange: (baseBranch: string) => void
 }): React.JSX.Element {
-  const activeRuntimeEnvironmentId = useAppStore(
-    (state) => state.settings?.activeRuntimeEnvironmentId ?? null
+  const activeRuntimeEnvironmentId = useAppStore((state) =>
+    getRuntimeEnvironmentIdForRepo(state, repoId)
   )
   const repo = repoMap.get(repoId)
   const [open, setOpen] = React.useState(false)
@@ -130,6 +132,11 @@ export function CreateFromPicker({
   }, [activeRuntimeEnvironmentId, repoId])
 
   React.useEffect(() => {
+    if (!isRuntimeRepoRefSearchQueryWithinLimit(query)) {
+      setSearchResults([])
+      setIsSearching(false)
+      return
+    }
     const trimmedQuery = query.trim()
     if (!open || !repoId || trimmedQuery.length < 2) {
       setSearchResults([])

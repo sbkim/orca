@@ -7,6 +7,7 @@ import { FileExplorerRow, InlineInputRow, type InlineInput } from './FileExplore
 import { shouldShowIgnoredDecoration, STATUS_COLORS } from './status-display'
 import type { DirCache, TreeNode } from './file-explorer-types'
 import type { FileExplorerRowProjection } from './file-explorer-row-projection'
+import type { RuntimeFileOperationArgs } from '@/runtime/runtime-file-client'
 
 type FileExplorerVirtualRowsProps = {
   virtualizer: Virtualizer<HTMLDivElement, Element>
@@ -19,12 +20,14 @@ type FileExplorerVirtualRowsProps = {
   statusByRelativePath: Map<string, GitFileStatus>
   ignoredByRelativePath: Set<string>
   expanded: Set<string>
+  canCollapseFolderSubtree?: boolean
   dirCache: Record<string, DirCache>
   selectedPaths: Set<string>
   activeFileId: string | null
   flashingPath: string | null
   deleteShortcutLabel: string
   connectionId?: string | null
+  runtimeDownloadContext?: RuntimeFileOperationArgs | null
   onClick: (node: TreeNode, event: React.MouseEvent<HTMLButtonElement>) => void
   onDoubleClick: (node: TreeNode) => void
   onContextMenuSelect: (node: TreeNode) => void
@@ -60,12 +63,14 @@ export function FileExplorerVirtualRows(props: FileExplorerVirtualRowsProps): Re
     statusByRelativePath,
     ignoredByRelativePath,
     expanded,
+    canCollapseFolderSubtree = true,
     dirCache,
     selectedPaths,
     activeFileId,
     flashingPath,
     deleteShortcutLabel,
     connectionId,
+    runtimeDownloadContext,
     onClick,
     onDoubleClick,
     onContextMenuSelect,
@@ -166,6 +171,8 @@ export function FileExplorerVirtualRows(props: FileExplorerVirtualRowsProps): Re
               isIgnored={isIgnored}
               deleteShortcutLabel={deleteShortcutLabel}
               connectionId={connectionId}
+              runtimeDownloadContext={runtimeDownloadContext}
+              canCollapseFolderSubtree={canCollapseFolderSubtree}
               targetDir={n.isDirectory ? n.path : dirname(n.path)}
               targetDepth={n.isDirectory ? n.depth + 1 : n.depth}
               selectionSize={selectedPaths.has(n.path) ? visibleSelectionCount : 1}

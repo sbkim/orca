@@ -16,10 +16,6 @@ function sourceBetween(source: string, startPattern: string, endPattern: string)
   return source.slice(start, end)
 }
 
-function componentBodyBeforeRender(source: string, componentName: string): string {
-  return sourceBetween(source, `function ${componentName}`, '\n  return (\n    <')
-}
-
 describe('feature interaction writer boundaries', () => {
   it('keeps Cmd+J feature writers in open/selection handlers, not query or navigation rendering', () => {
     const source = componentSource('WorktreeJumpPalette.tsx')
@@ -45,11 +41,7 @@ describe('feature interaction writer boundaries', () => {
 
     const passiveSections = [
       sourceBetween(source, 'const handleRefreshGithubTasks', 'const [newIssueOpen'),
-      sourceBetween(
-        source,
-        'const handleLoadNextPage',
-        'useEffect(() => {\n    if (!taskResumeApplied)'
-      ),
+      sourceBetween(source, 'const handleLoadNextPage', 'const handleApplyTaskSearch'),
       sourceBetween(source, 'const handleApplyTaskSearch', 'const handleSetDefaultTaskPreset'),
       sourceBetween(source, 'const handleSelectGithubTaskKind', 'const handleResetGithubTaskSearch')
     ]
@@ -64,7 +56,7 @@ describe('feature interaction writer boundaries', () => {
     const mutationSections = [
       sourceBetween(source, 'function GHAssigneesCell', 'const triggerContent ='),
       sourceBetween(source, 'function PRReviewCell', 'const requestReviewer ='),
-      componentBodyBeforeRender(source, 'PRMergeCell'),
+      sourceBetween(source, 'function PRMergeCell', 'const handleAutoMerge'),
       sourceBetween(
         source,
         'const handleOpenOrUseGitHubWorkItem',
@@ -77,15 +69,43 @@ describe('feature interaction writer boundaries', () => {
     }
   })
 
+  it('threads GitHub task source context through inline task mutations', () => {
+    const source = componentSource('TaskPage.tsx')
+    const sections = [
+      sourceBetween(source, 'function GHStatusCell', 'function GitHubAssigneeAvatar'),
+      sourceBetween(source, 'function GHAssigneesCell', 'const triggerContent ='),
+      sourceBetween(source, 'function PRReviewCell', 'function PRChecksCell'),
+      sourceBetween(source, 'function PRMergeCell', 'const handleAutoMerge'),
+      sourceBetween(source, 'const handleCreateNewIssue', 'const handleCreateNewLinearProject')
+    ]
+
+    for (const section of sections) {
+      expect(section).toContain('sourceContext')
+    }
+    const rowRenderStart = source.indexOf('filteredWorkItems.map((item) => {')
+    expect(rowRenderStart).toBeGreaterThanOrEqual(0)
+    expect(source.slice(rowRenderStart, rowRenderStart + 12_000)).toContain(
+      'sourceContext={getTaskPageRepoSourceContext(itemRepo,'
+    )
+  })
+
   it('suppresses Tasks surface telemetry for in-page provider switches and detail opens', () => {
     const source = componentSource('TaskPage.tsx')
     const suppression = 'recordTasksInteraction: false'
+    const githubDetailSection = sourceBetween(
+      source,
+      'const openGitHubDetailPage',
+      'const patchTaskPageWorkItemRows'
+    )
 
     const inPageNavigationSections = [
-      sourceBetween(source, 'const openGitHubDetailPage', 'const patchTaskPageWorkItemRows'),
       sourceBetween(source, 'const openLinearDetailPage', 'const openRelatedLinearIssue'),
       sourceBetween(source, 'taskSourceManuallyChangedRef.current = true', 'void updateSettings')
     ]
+
+    expect(githubDetailSection).toContain('openGitHubSourceContext')
+    expect(githubDetailSection).toContain('openTaskPage')
+    expect(githubDetailSection).toContain(suppression)
 
     for (const section of inPageNavigationSections) {
       expect(section).toContain(suppression)
@@ -179,6 +199,15 @@ describe('feature interaction writer boundaries', () => {
     for (const section of drawerMutationSections) {
       expect(section).toContain(linearWriter)
     }
+  })
+
+  it('records Jira provider-depth for workspace use', () => {
+    const taskPageSource = componentSource('TaskPage.tsx')
+    const jiraWriter = "recordFeatureInteraction('jira-tasks')"
+
+    expect(
+      sourceBetween(taskPageSource, 'const handleUseJiraItem', 'const handleJiraConnect')
+    ).toContain(jiraWriter)
   })
 
   it('records browser annotation agent handoff only from the prompt-delivered callback', () => {

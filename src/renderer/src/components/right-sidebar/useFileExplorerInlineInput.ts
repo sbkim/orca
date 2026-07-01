@@ -11,6 +11,7 @@ import type { TreeNode } from './file-explorer-types'
 import type { FileExplorerRowProjection } from './file-explorer-row-projection'
 import { commitFileExplorerOp } from './fileExplorerUndoRedo'
 import { createRuntimePath, deleteRuntimePath } from '@/runtime/runtime-file-client'
+import { getRightSidebarWorktreeRuntimeSettings } from './file-explorer-runtime-owner'
 
 type UseFileExplorerInlineInputParams = {
   activeWorktreeId: string | null
@@ -110,7 +111,7 @@ export function useFileExplorerInlineInput({
       const run = async (): Promise<void> => {
         const connectionId = getConnectionId(activeWorktreeId ?? null) ?? undefined
         const fileContext = {
-          settings: useAppStore.getState().settings,
+          settings: getRightSidebarWorktreeRuntimeSettings(activeWorktreeId),
           worktreeId: activeWorktreeId,
           worktreePath,
           connectionId
@@ -157,13 +158,19 @@ export function useFileExplorerInlineInput({
             }
             await refreshDir(inlineInput.parentPath)
             if (inlineInput.type === 'file') {
-              openFile({
-                filePath: fullPath,
-                relativePath: worktreePath ? fullPath.slice(worktreePath.length + 1) : name,
-                worktreeId: activeWorktreeId,
-                language: detectLanguage(name),
-                mode: 'edit'
-              })
+              const runtimeEnvironmentId =
+                fileContext.settings.activeRuntimeEnvironmentId?.trim() || null
+              openFile(
+                {
+                  filePath: fullPath,
+                  relativePath: worktreePath ? fullPath.slice(worktreePath.length + 1) : name,
+                  worktreeId: activeWorktreeId,
+                  runtimeEnvironmentId: runtimeEnvironmentId ?? undefined,
+                  language: detectLanguage(name),
+                  mode: 'edit'
+                },
+                { suppressActiveRuntimeFallback: runtimeEnvironmentId === null }
+              )
             }
           } catch (err) {
             // Refresh the directory even on failure so the tree stays consistent

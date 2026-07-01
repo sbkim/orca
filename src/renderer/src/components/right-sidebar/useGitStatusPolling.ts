@@ -6,9 +6,11 @@ import { isGitRepoKind } from '../../../../shared/repo-kind'
 import { getConnectionId } from '@/lib/connection-context'
 import { getRuntimeGitConflictOperation } from '@/runtime/runtime-git-client'
 import { refreshGitStatusForWorktree } from './git-status-refresh'
-import { createCoalescedPollRunner } from './coalesced-poll-runner'
+import { type CoalescedPollRunner, createCoalescedPollRunner } from './coalesced-poll-runner'
 import { installWindowVisibilityInterval } from '@/lib/window-visibility-interval'
 import { shouldPollActiveGitStatus } from '@/lib/passive-macos-app-data-access'
+import { getRightSidebarWorktreeRuntimeSettings } from './file-explorer-runtime-owner'
+import { useGitStatusFileWatchRefresh } from './git-status-file-watch-refresh'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -19,6 +21,7 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
   const allWorktrees = useAllWorktrees()
   const updateWorktreeGitIdentity = useAppStore((s) => s.updateWorktreeGitIdentity)
   const setGitStatus = useAppStore((s) => s.setGitStatus)
+  const gitStatusHugeByWorktree = useAppStore((s) => s.gitStatusHugeByWorktree)
   const fetchUpstreamStatus = useAppStore((s) => s.fetchUpstreamStatus)
   const setUpstreamStatus = useAppStore((s) => s.setUpstreamStatus)
   const setConflictOperation = useAppStore((s) => s.setConflictOperation)
@@ -26,11 +29,9 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
   const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
   const rightSidebarOpen = useAppStore((s) => s.rightSidebarOpen)
   const rightSidebarTab = useAppStore((s) => s.rightSidebarTab)
+  const rightSidebarExplorerView = useAppStore((s) => s.rightSidebarExplorerView)
   const openFiles = useAppStore((s) => s.openFiles)
   const repoMap = useRepoMap()
-  const statusPollInFlightRef = useRef(false)
-  const statusPollRerunRef = useRef(false)
-  const fetchStatusRef = useRef<() => void>(() => {})
 
   const worktreePath = activeWorktree?.path ?? null
   const activePushTarget = activeWorktree?.pushTarget
@@ -79,6 +80,7 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
         worktreePath,
         rightSidebarOpen,
         rightSidebarTab,
+        rightSidebarExplorerView,
         openFiles
       }) ||
       !activeRepoSupportsGit
@@ -88,10 +90,18 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
     if (!isConnectionReady(activeConnectionId)) {
       return
     }
+    // Why: once a repo's status was truncated at the entry limit, re-running git
+    // status every 3s just re-does expensive work and re-truncates. Pause the
+    // automatic poll while huge (a manual refresh still goes through its own
+    // path); resolving the changes (e.g. .gitignoring the huge folder) clears
+    // the flag and polling resumes. Mirrors a "huge repo" disabling auto status.
+    if (gitStatusHugeByWorktree?.[activeWorktreeId]) {
+      return
+    }
     try {
       const connectionId = getConnectionId(activeWorktreeId) ?? undefined
       await refreshGitStatusForWorktree({
-        settings: useAppStore.getState().settings,
+        settings: getRightSidebarWorktreeRuntimeSettings(activeWorktreeId),
         worktreeId: activeWorktreeId,
         worktreePath,
         connectionId,
@@ -113,8 +123,10 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
     activeWorktreeId,
     enabled,
     fetchUpstreamStatus,
+    gitStatusHugeByWorktree,
     isConnectionReady,
     openFiles,
+    rightSidebarExplorerView,
     rightSidebarOpen,
     rightSidebarTab,
     worktreePath,
@@ -123,24 +135,30 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
     updateWorktreeGitIdentity
   ])
 
-  const fetchStatus = useCallback(() => {
-    if (statusPollInFlightRef.current) {
-      statusPollRerunRef.current = true
-      return
-    }
-    statusPollInFlightRef.current = true
-    // Why: git status can exceed the 3s poll interval on large repos. Keep at
-    // most one subprocess chain in flight, then run one trailing refresh if a
-    // tick was skipped so the UI catches up without process pileups.
-    void runFetchStatus().finally(() => {
-      statusPollInFlightRef.current = false
-      if (statusPollRerunRef.current) {
-        statusPollRerunRef.current = false
-        fetchStatusRef.current()
-      }
+  // Why: the runner must survive rerenders so `lastRunEndedAt` and `inFlight`
+  // are never reset by a UI-state change mid-burst (e.g. openFiles update while
+  // git is still running). A ref keeps one runner per active-worktree lifetime;
+  // `runFetchStatusRef` lets the runner always call the latest closure without
+  // being recreated. The runner is disposed and replaced only when the active
+  // worktree changes or the hook unmounts.
+  const runFetchStatusRef = useRef(runFetchStatus)
+  runFetchStatusRef.current = runFetchStatus
+
+  const statusPollRunnerRef = useRef<CoalescedPollRunner | null>(null)
+  useEffect(() => {
+    const runner = createCoalescedPollRunner(() => runFetchStatusRef.current(), {
+      minIntervalMs: POLL_INTERVAL_MS
     })
-  }, [runFetchStatus])
-  fetchStatusRef.current = fetchStatus
+    statusPollRunnerRef.current = runner
+    return () => {
+      runner.dispose()
+      statusPollRunnerRef.current = null
+    }
+  }, [activeWorktreeId])
+
+  const fetchStatus = useCallback(() => {
+    statusPollRunnerRef.current?.run()
+  }, [activeWorktreeId])
 
   useEffect(() => {
     if (!enabled) {
@@ -150,6 +168,21 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
     // unfocused windows still need fresh status for second-display workflows.
     return installWindowVisibilityInterval({ run: fetchStatus, intervalMs: POLL_INTERVAL_MS })
   }, [enabled, fetchStatus])
+
+  useGitStatusFileWatchRefresh({
+    activeConnectionId,
+    activeRepoSupportsGit,
+    activeWorktreeId,
+    enabled,
+    fetchStatus,
+    gitStatusHugeByWorktree,
+    isConnectionReady,
+    openFiles,
+    rightSidebarExplorerView,
+    rightSidebarOpen,
+    rightSidebarTab,
+    worktreePath
+  })
 
   // Why: poll conflict operation for non-active worktrees that have a stale
   // non-unknown operation. This is a lightweight fs-only check (no git status)
@@ -172,7 +205,7 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
             continue
           }
           const op = (await getRuntimeGitConflictOperation({
-            settings: useAppStore.getState().settings,
+            settings: getRightSidebarWorktreeRuntimeSettings(id),
             worktreeId: id,
             worktreePath: path,
             connectionId

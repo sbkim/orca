@@ -30,6 +30,18 @@ describe('getChecksPanelEmptyStateCopy', () => {
     ).toBe('Branch not published')
   })
 
+  it('does not show unpublished branch copy when HEAD is detached', () => {
+    expect(
+      getChecksPanelEmptyStateCopy({
+        operationLabel: null,
+        prRefreshStatus: 'error',
+        hostedReviewBlockedReason: 'no_upstream',
+        hasUpstream: false,
+        hasCurrentBranch: false
+      }).title
+    ).toBe('Could not refresh pull request')
+  })
+
   it('uses remote status as a fallback when eligibility has no concrete blocker', () => {
     expect(
       getChecksPanelEmptyStateCopy({
@@ -92,6 +104,81 @@ describe('getChecksPanelEmptyStateCopy', () => {
       description: 'Create a merge request to start checks and review.'
     })
   })
+
+  it('uses neutral copy when GitHub hosted-review data exists without PR cache', () => {
+    expect(
+      getChecksPanelEmptyStateCopy({
+        operationLabel: null,
+        prRefreshStatus: undefined,
+        hostedReviewBlockedReason: null,
+        hasUpstream: true,
+        hasAmbiguousGitHubHostedReview: true
+      })
+    ).toEqual({
+      title: 'Pull request status unavailable',
+      description: 'Refresh GitHub status for this branch to load checks and review.'
+    })
+  })
+
+  it('does not show no-PR copy for paused ambiguous GitHub hosted-review data', () => {
+    expect(
+      getChecksPanelEmptyStateCopy({
+        operationLabel: null,
+        prRefreshStatus: 'paused',
+        hostedReviewBlockedReason: null,
+        hasUpstream: true,
+        hasAmbiguousGitHubHostedReview: true
+      }).title
+    ).toBe('Pull request status unavailable')
+  })
+
+  it('keeps refresh errors for ambiguous GitHub hosted-review data', () => {
+    expect(
+      getChecksPanelEmptyStateCopy({
+        operationLabel: null,
+        prRefreshStatus: 'error',
+        hostedReviewBlockedReason: null,
+        hasUpstream: true,
+        hasAmbiguousGitHubHostedReview: true
+      }).title
+    ).toBe('Could not refresh pull request')
+  })
+
+  it('uses neutral copy for ambiguous GitHub hosted-review data before unpublished branch copy', () => {
+    expect(
+      getChecksPanelEmptyStateCopy({
+        operationLabel: null,
+        prRefreshStatus: undefined,
+        hostedReviewBlockedReason: 'no_upstream',
+        hasUpstream: false,
+        hasAmbiguousGitHubHostedReview: true
+      }).title
+    ).toBe('Pull request status unavailable')
+  })
+
+  it('uses neutral copy for ambiguous GitHub hosted-review data before remote fallback publish copy', () => {
+    expect(
+      getChecksPanelEmptyStateCopy({
+        operationLabel: null,
+        prRefreshStatus: undefined,
+        hostedReviewBlockedReason: undefined,
+        hasUpstream: false,
+        hasAmbiguousGitHubHostedReview: true
+      }).title
+    ).toBe('Pull request status unavailable')
+  })
+
+  it('uses neutral copy for ambiguous GitHub hosted-review data before unpushed commit copy', () => {
+    expect(
+      getChecksPanelEmptyStateCopy({
+        operationLabel: null,
+        prRefreshStatus: undefined,
+        hostedReviewBlockedReason: 'needs_push',
+        hasUpstream: true,
+        hasAmbiguousGitHubHostedReview: true
+      }).title
+    ).toBe('Pull request status unavailable')
+  })
 })
 
 describe('shouldShowChecksPanelPublishBranchAction', () => {
@@ -117,5 +204,15 @@ describe('shouldShowChecksPanelPublishBranchAction', () => {
         hasUpstream: false
       })
     ).toBe(true)
+  })
+
+  it('does not show publish when HEAD is detached', () => {
+    expect(
+      shouldShowChecksPanelPublishBranchAction({
+        hostedReviewBlockedReason: 'no_upstream',
+        hasUpstream: false,
+        hasCurrentBranch: false
+      })
+    ).toBe(false)
   })
 })

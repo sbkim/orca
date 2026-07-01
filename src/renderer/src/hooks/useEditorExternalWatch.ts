@@ -10,6 +10,7 @@ import { normalizeRuntimePathForComparison } from '../../../shared/cross-platfor
 import {
   getOpenFilesForExternalFileChange,
   isExternalReloadableEditorTab,
+  isWorkingTreeCombinedDiffTab,
   notifyEditorExternalFileChange
 } from '@/components/editor/editor-autosave'
 import {
@@ -21,6 +22,12 @@ import type { FsChangedPayload } from '../../../shared/types'
 import { findWorktreeById } from '@/store/slices/worktree-helpers'
 import type { OpenFile } from '@/store/slices/editor'
 import { readRuntimeFileContent, subscribeRuntimeFileChanges } from '@/runtime/runtime-file-client'
+import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
+import {
+  ORCA_WORKTREE_FILE_CHANGE_EVENT,
+  type WorktreeFileChangeEventDetail
+} from './worktree-file-change-event'
+import { isGitRepoKind } from '../../../shared/repo-kind'
 
 // Why: atomic-write patterns (Claude Code's Edit tool, editors like vim,
 // VSCode) land as a short burst of `update` events — or `delete + create` on
@@ -88,6 +95,9 @@ export type EditorExternalWatchTargetState = Pick<
   | 'settings'
   | 'rightSidebarOpen'
   | 'rightSidebarTab'
+  | 'rightSidebarExplorerView'
+  | 'gitStatusHugeByWorktree'
+  | 'sshConnectionStates'
 >
 
 let cachedOpenFiles: AppState['openFiles'] | null = null
@@ -97,6 +107,9 @@ let cachedActiveWorktreeId: string | null = null
 let cachedRuntimeEnvironmentId: string | undefined
 let cachedRightSidebarOpen: boolean | null = null
 let cachedRightSidebarTab: AppState['rightSidebarTab'] | null = null
+let cachedRightSidebarExplorerView: AppState['rightSidebarExplorerView'] | null = null
+let cachedGitStatusHugeByWorktree: AppState['gitStatusHugeByWorktree'] | null = null
+let cachedSshConnectionStates: AppState['sshConnectionStates'] | null = null
 let cachedWatchedTargetsSnapshot: WatchedTargetsSnapshot = { targets: [], targetsKey: '' }
 
 export function getWatchedTargetKey(target: WatchedTarget): string {
@@ -121,7 +134,10 @@ export function getEditorExternalWatchTargets(
     cachedActiveWorktreeId === state.activeWorktreeId &&
     cachedRuntimeEnvironmentId === runtimeEnvironmentId &&
     cachedRightSidebarOpen === state.rightSidebarOpen &&
-    cachedRightSidebarTab === state.rightSidebarTab
+    cachedRightSidebarTab === state.rightSidebarTab &&
+    cachedRightSidebarExplorerView === state.rightSidebarExplorerView &&
+    cachedGitStatusHugeByWorktree === state.gitStatusHugeByWorktree &&
+    cachedSshConnectionStates === state.sshConnectionStates
   ) {
     return cachedWatchedTargetsSnapshot
   }
@@ -141,16 +157,37 @@ export function getEditorExternalWatchTargets(
     // storing the tab, so an ownerless stored tab must stay local here.
     owners.add(openFileRuntimeOwner(f))
   }
-  if (state.activeWorktreeId && state.rightSidebarOpen && state.rightSidebarTab === 'explorer') {
-    // Why: the right sidebar stays mounted while hidden; do not create a
-    // worktree-level watcher just because the user clicked a workspace.
-    // macOS can surface privacy prompts for those passive filesystem probes.
-    let owners = targetOwnersByWorktreeId.get(state.activeWorktreeId)
+  const activeWorktreeId = state.activeWorktreeId
+  const activeWorktree = activeWorktreeId
+    ? findWorktreeById(state.worktreesByRepo, activeWorktreeId)
+    : undefined
+  const activeRepo = activeWorktree
+    ? state.repos.find((repo) => repo.id === activeWorktree.repoId)
+    : undefined
+  const sourceControlCanConsumeWatch =
+    !!activeWorktreeId &&
+    !!activeRepo &&
+    isGitRepoKind(activeRepo) &&
+    !state.gitStatusHugeByWorktree[activeWorktreeId] &&
+    (!activeRepo.connectionId ||
+      state.sshConnectionStates.get(activeRepo.connectionId)?.status === 'connected')
+  const activeWorktreeNeedsSidebarWatch =
+    activeWorktreeId !== null &&
+    state.rightSidebarOpen &&
+    ((state.rightSidebarTab === 'explorer' && state.rightSidebarExplorerView === 'files') ||
+      (state.rightSidebarTab === 'source-control' && sourceControlCanConsumeWatch))
+  if (activeWorktreeNeedsSidebarWatch) {
+    // Why: this app-level watcher owns subscriptions for Explorer and Source
+    // Control so downstream consumers do not fight over watch/unwatch IPC.
+    let owners = targetOwnersByWorktreeId.get(activeWorktreeId)
     if (!owners) {
       owners = new Set()
-      targetOwnersByWorktreeId.set(state.activeWorktreeId, owners)
+      targetOwnersByWorktreeId.set(activeWorktreeId, owners)
     }
-    owners.add(runtimeEnvironmentId ?? null)
+    // Why: sidebar consumers are mounted for the selected worktree. Their
+    // watcher must follow that worktree's host owner, not the host currently
+    // focused in the UI.
+    owners.add(getRuntimeEnvironmentIdForWorktree(state, activeWorktreeId))
   }
 
   const nextTargets: WatchedTarget[] = []
@@ -185,6 +222,9 @@ export function getEditorExternalWatchTargets(
   cachedRuntimeEnvironmentId = runtimeEnvironmentId
   cachedRightSidebarOpen = state.rightSidebarOpen
   cachedRightSidebarTab = state.rightSidebarTab
+  cachedRightSidebarExplorerView = state.rightSidebarExplorerView
+  cachedGitStatusHugeByWorktree = state.gitStatusHugeByWorktree
+  cachedSshConnectionStates = state.sshConnectionStates
 
   if (targetsKey === cachedWatchedTargetsSnapshot.targetsKey) {
     return cachedWatchedTargetsSnapshot
@@ -399,6 +439,15 @@ export function createExternalWatchEventHandler(
     if (!target) {
       return
     }
+    // Why: this app-level hook owns worktree watcher subscriptions. Other
+    // consumers listen here so they do not fight over watch/unwatch ownership.
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(
+        new CustomEvent<WorktreeFileChangeEventDetail>(ORCA_WORKTREE_FILE_CHANGE_EVENT, {
+          detail: { payload, runtimeEnvironmentId: target.runtimeEnvironmentId }
+        })
+      )
+    }
 
     // Why: collect create/update paths first so we can cancel any pending
     // same-path delete before scheduling a new one. This is what absorbs
@@ -560,6 +609,16 @@ export function createExternalWatchEventHandler(
     // `useFileExplorerHandlers`. Read `openFiles` once per payload to avoid
     // N store reads for large batched events.
     const openFilesSnapshot = useAppStore.getState().openFiles
+    // Why: a combined "Changes" tab matches no single path but renders every
+    // changed file's working-tree diff. This is per-worktree, not per-path, so
+    // compute it once instead of rescanning openFiles for each changed file in
+    // a large batched payload (e.g. a branch switch touching hundreds of files).
+    const hasCombinedDiffConsumer = openFilesSnapshot.some(
+      (f) =>
+        f.worktreeId === target.worktreeId &&
+        openFileRuntimeOwner(f) === target.runtimeEnvironmentId &&
+        isWorkingTreeCombinedDiffTab(f)
+    )
     for (const relativePath of changedFiles) {
       const notification = {
         worktreeId: target.worktreeId,
@@ -569,9 +628,19 @@ export function createExternalWatchEventHandler(
       }
       const matching = getOpenFilesForExternalFileChange(openFilesSnapshot, notification)
       if (matching.length === 0) {
+        // Why: notify the combined-diff tab so its section reloads. Its own
+        // dirty/section guards make a blanket reload safe, and there is no
+        // in-memory editor content to clobber, so self-write suppression is
+        // unnecessary here.
+        if (hasCombinedDiffConsumer) {
+          scheduleDebouncedExternalReload(notification)
+        }
         continue
       }
       if (matching.some((f) => f.isDirty)) {
+        if (hasCombinedDiffConsumer) {
+          scheduleDebouncedExternalReload(notification)
+        }
         continue
       }
       const absolutePath = joinPath(notification.worktreePath, notification.relativePath)

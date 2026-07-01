@@ -30,8 +30,16 @@ import {
   uploadDirectoryViaSystemSsh,
   writeFileViaSystemSsh
 } from './ssh-system-fallback'
+import { spawnSystemSshPortForward } from './system-ssh-forward-process'
 import { getRemoteHostPlatform } from './ssh-remote-platform'
 import type { SshTarget } from '../../shared/ssh-types'
+
+const SYSTEM_SSH_PATH =
+  process.platform === 'win32' ? 'C:\\Windows\\System32\\OpenSSH\\ssh.exe' : '/usr/bin/ssh'
+
+function mockSystemSshExists(): void {
+  existsSyncMock.mockImplementation((p: string) => p === SYSTEM_SSH_PATH)
+}
 
 function createTarget(overrides?: Partial<SshTarget>): SshTarget {
   return {
@@ -109,8 +117,8 @@ describe('findSystemSsh', () => {
   })
 
   it('returns the first existing ssh path', () => {
-    existsSyncMock.mockImplementation((p: string) => p === '/usr/bin/ssh')
-    expect(findSystemSsh()).toBe('/usr/bin/ssh')
+    mockSystemSshExists()
+    expect(findSystemSsh()).toBe(SYSTEM_SSH_PATH)
   })
 
   it('returns null when no ssh binary is found', () => {
@@ -146,14 +154,14 @@ describe('spawnSystemSsh', () => {
       kill: vi.fn()
     }
     spawnMock.mockReturnValue(mockProc)
-    existsSyncMock.mockImplementation((p: string) => p === '/usr/bin/ssh')
+    mockSystemSshExists()
   })
 
   it('spawns ssh with correct arguments for basic target', () => {
     spawnSystemSsh(createTarget())
 
     expect(spawnMock).toHaveBeenCalledWith(
-      '/usr/bin/ssh',
+      SYSTEM_SSH_PATH,
       expect.arrayContaining(['-T', 'deploy@example.com']),
       expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'] })
     )
@@ -239,9 +247,30 @@ describe('spawnSystemSsh', () => {
     spawnSystemSshCommand(createTarget({ configHost: 'fdpass-host' }), 'echo hello')
 
     expect(spawnMock).toHaveBeenCalledWith(
-      '/usr/bin/ssh',
+      SYSTEM_SSH_PATH,
       expect.arrayContaining(['--', 'deploy@fdpass-host', "exec /bin/sh -c 'echo hello'"]),
       expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'] })
+    )
+  })
+
+  it('spawns port forwards before the ssh destination terminator', () => {
+    spawnSystemSshPortForward(createTarget({ configHost: 'fdpass-host' }), 5173, '127.0.0.1', 3000)
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      SYSTEM_SSH_PATH,
+      [
+        '-o',
+        'BatchMode=no',
+        '-T',
+        '-N',
+        '-o',
+        'ExitOnForwardFailure=yes',
+        '-L',
+        '127.0.0.1:5173:127.0.0.1:3000',
+        '--',
+        'deploy@fdpass-host'
+      ],
+      expect.objectContaining({ stdio: ['ignore', 'ignore', 'pipe'] })
     )
   })
 
@@ -251,7 +280,7 @@ describe('spawnSystemSsh', () => {
     })
 
     expect(spawnMock).toHaveBeenCalledWith(
-      '/usr/bin/ssh',
+      SYSTEM_SSH_PATH,
       expect.arrayContaining(['--', 'deploy@fdpass-host', 'echo hello']),
       expect.objectContaining({ stdio: ['pipe', 'pipe', 'pipe'] })
     )
@@ -379,7 +408,7 @@ describe('system SSH operation aborts', () => {
   beforeEach(() => {
     existsSyncMock.mockReset()
     spawnMock.mockReset()
-    existsSyncMock.mockImplementation((p: string) => p === '/usr/bin/ssh')
+    mockSystemSshExists()
   })
 
   it('rejects directory uploads when aborted even if child processes do not close', async () => {

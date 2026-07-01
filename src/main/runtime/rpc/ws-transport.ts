@@ -6,14 +6,17 @@
 // to prevent passive sniffing; otherwise it falls back to plain ws://. Per-device
 // tokens (validated by the message handler in OrcaRuntimeRpcServer) provide auth
 // regardless of transport encryption.
-import { createServer as createHttpsServer, type Server as HttpsServer } from 'https'
-import { createServer as createHttpServer, type Server as HttpServer } from 'http'
+import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https'
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { RpcTransport } from './transport'
 import { createStaticWebClientHandler } from './static-web-client-handler'
 
 const MAX_WS_MESSAGE_BYTES = 1024 * 1024
-const MAX_WS_CONNECTIONS = 32
+// Why: desktop remote-host clients can legitimately hold many concurrent
+// streams (session tabs, terminals, file watches, browser streams). Keep the
+// cap high enough that leaked/stale streams do not starve short control RPCs.
+const MAX_WS_CONNECTIONS = 128
 const PRE_AUTH_TIMEOUT_MS = 10_000
 type WebSocketMessagePayload = string | Uint8Array<ArrayBufferLike>
 type WebSocketMessageHandler = {

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import type { GlobalSettings } from '../../../../shared/types'
 import { useAppStore } from '../../store'
 import { matchesSettingsSearch } from './settings-search'
@@ -10,13 +10,22 @@ import { BrowserDefaultZoomSetting } from './BrowserDefaultZoomSetting'
 import { BrowserUseSetup } from './BrowserUsePane'
 import { BrowserSearchEngineSetting } from './BrowserSearchEngineSetting'
 import { BrowserLinkRoutingSetting } from './BrowserLinkRoutingSetting'
+import { BrowserLocalhostWorktreeLabelsSetting } from './BrowserLocalhostWorktreeLabelsSetting'
 import { BrowserSessionCookiesSection } from './BrowserSessionCookiesSection'
 import { BrowserNewProfileDialog } from './BrowserNewProfileDialog'
 import {
   createBrowserHomePageDraftState,
   resolveBrowserHomePageDraftState
 } from './browser-home-page-draft-state'
+import { buildSidebarHostOptions } from '../sidebar/sidebar-host-options'
+import { getHostDisplayLabelOverrides } from '../../../../shared/host-setting-overrides'
+import {
+  getSettingsFocusedExecutionHostId,
+  parseExecutionHostId,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 import { isMacUserAgent } from '@/components/terminal-pane/pane-helpers'
+import { translate } from '@/i18n/i18n'
 export { getBrowserPaneCombinedSearchEntries }
 
 type BrowserPaneProps = {
@@ -45,6 +54,12 @@ export function BrowserPane({
   const browserDefaultZoomLevel = useAppStore((s) => s.browserDefaultZoomLevel)
   const setBrowserDefaultZoomLevel = useAppStore((s) => s.setBrowserDefaultZoomLevel)
   const browserSessionProfiles = useAppStore((s) => s.browserSessionProfiles)
+  const repos = useAppStore((s) => s.repos)
+  const sshTargetLabels = useAppStore((s) => s.sshTargetLabels)
+  const sshConnectionStates = useAppStore((s) => s.sshConnectionStates)
+  const runtimeEnvironments = useAppStore((s) => s.runtimeEnvironments)
+  const runtimeStatusByEnvironmentId = useAppStore((s) => s.runtimeStatusByEnvironmentId)
+  const switchRuntimeEnvironment = useAppStore((s) => s.switchRuntimeEnvironment)
   const detectedBrowsers = useAppStore((s) => s.detectedBrowsers)
   const browserSessionImportState = useAppStore((s) => s.browserSessionImportState)
   const defaultBrowserSessionProfileId = useAppStore((s) => s.defaultBrowserSessionProfileId)
@@ -83,10 +98,59 @@ export function BrowserPane({
   const showSearchEngine = matchesSettingsSearch(searchQuery, [getBrowserPaneSearchEntries()[1]])
   const showDefaultZoom = matchesSettingsSearch(searchQuery, [getBrowserPaneSearchEntries()[2]])
   const showLinkRouting = matchesSettingsSearch(searchQuery, [getBrowserPaneSearchEntries()[3]])
-  const showCookies = matchesSettingsSearch(searchQuery, [getBrowserPaneSearchEntries()[4]])
+  const showLocalhostLabels = matchesSettingsSearch(searchQuery, [getBrowserPaneSearchEntries()[4]])
+  const showCookies = matchesSettingsSearch(searchQuery, [getBrowserPaneSearchEntries()[5]])
   const showBrowserUse = matchesSettingsSearch(searchQuery, getBrowserUsePaneSearchEntries())
   const isMac = isMacUserAgent()
   const linkRoutingDescription = getBrowserLinkRoutingDescription({ isMac })
+  const hostLabelOverrides = useMemo(() => getHostDisplayLabelOverrides(settings), [settings])
+  const browserSessionHostOptions = useMemo(
+    () =>
+      buildSidebarHostOptions({
+        repos,
+        sshTargetLabels,
+        sshConnectionStates,
+        settings,
+        runtimeEnvironments,
+        runtimeStatusByEnvironmentId,
+        hostLabelOverrides
+      })
+        .filter((host) => host.kind === 'local' || host.kind === 'runtime')
+        .map((host) => ({
+          id: host.id,
+          label: host.label,
+          detail:
+            host.kind === 'local'
+              ? translate('auto.components.settings.BrowserPane.86b7c83fee', 'This computer')
+              : translate(
+                  'auto.components.settings.BrowserPane.c0f85056d9',
+                  'Browser profiles on this Orca server.'
+                )
+        })),
+    [
+      repos,
+      sshTargetLabels,
+      sshConnectionStates,
+      settings,
+      runtimeEnvironments,
+      runtimeStatusByEnvironmentId,
+      hostLabelOverrides
+    ]
+  )
+  const selectedBrowserSessionHostId = getSettingsFocusedExecutionHostId(settings)
+  const selectBrowserSessionHost = useCallback(
+    (hostId: ExecutionHostId) => {
+      const parsed = parseExecutionHostId(hostId)
+      if (parsed?.kind === 'runtime') {
+        void switchRuntimeEnvironment(parsed.environmentId)
+        return
+      }
+      if (parsed?.kind === 'local') {
+        void switchRuntimeEnvironment(null)
+      }
+    },
+    [switchRuntimeEnvironment]
+  )
 
   const requestSessionCookieScrollFrame = (callback: FrameRequestCallback): void => {
     let completed = false
@@ -164,6 +228,13 @@ export function BrowserPane({
         />
       ) : null}
 
+      {showLocalhostLabels ? (
+        <BrowserLocalhostWorktreeLabelsSetting
+          settings={settings}
+          updateSettings={updateSettings}
+        />
+      ) : null}
+
       {showCookies ? (
         <BrowserSessionCookiesSection
           defaultProfile={defaultProfile}
@@ -171,7 +242,10 @@ export function BrowserPane({
           detectedBrowsers={detectedBrowsers}
           importState={browserSessionImportState}
           defaultBrowserSessionProfileId={defaultBrowserSessionProfileId}
+          hostOptions={browserSessionHostOptions}
+          selectedHostId={selectedBrowserSessionHostId}
           onAddProfile={() => setNewProfileDialogOpen(true)}
+          onSelectHost={selectBrowserSessionHost}
           onSelectDefaultProfile={() => setDefaultBrowserSessionProfileId(null)}
           onSelectProfile={setDefaultBrowserSessionProfileId}
         />

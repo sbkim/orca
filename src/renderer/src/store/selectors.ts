@@ -3,6 +3,9 @@ import { useShallow } from 'zustand/react/shallow'
 import type { Repo, Worktree, TerminalTab } from '../../../shared/types'
 import type { AppState } from './types'
 import { FLOATING_TERMINAL_WORKTREE_ID } from '../../../shared/constants'
+import { getProjectHostSetupProjectionFromState } from './project-host-setup-selector'
+
+export { getProjectHostSetupProjectionFromState } from './project-host-setup-selector'
 
 const EMPTY_WORKTREES: Worktree[] = []
 const EMPTY_TABS: TerminalTab[] = []
@@ -132,6 +135,10 @@ export function selectFloatingVisibleTabCount(state: FloatingVisibleTabCountStat
       count += terminalIds.has(tab.entityId) ? 1 : 0
     } else if (tab.contentType === 'browser') {
       count += browserIds.has(tab.entityId) ? 1 : 0
+    } else if (tab.contentType === 'simulator') {
+      // Why: simulator unified tabs have no separate backing record; the tab
+      // itself is the visible floating workspace item.
+      count += 1
     } else {
       count += editorIds.has(tab.entityId) ? 1 : 0
     }
@@ -171,12 +178,13 @@ export function getRepoMapFromState(state: Pick<AppState, 'repos'>): Map<string,
 
 // ─── Repos ──────────────────────────────────────────────────────────
 export const useRepos = () => useAppStore((s) => s.repos)
-export const useActiveRepoId = () => useAppStore((s) => s.activeRepoId)
 export const useActiveRepo = () =>
   useAppStore(useShallow((s) => s.repos.find((r) => r.id === s.activeRepoId) ?? null))
 export const useRepoMap = () => useAppStore((s) => getCachedRepoMap(s.repos))
 export const useRepoById = (repoId: string | null) =>
   useAppStore((s) => (repoId ? (getCachedRepoMap(s.repos).get(repoId) ?? null) : null))
+export const useProjectHostSetupProjection = () =>
+  useAppStore((s) => getProjectHostSetupProjectionFromState(s))
 
 // ─── Worktrees ──────────────────────────────────────────────────────
 export const useActiveWorktreeId = () => useAppStore((s) => s.activeWorktreeId)
@@ -194,29 +202,3 @@ export const useActiveWorktree = () => {
     activeWorktreeId ? (s.getKnownWorktreeById(activeWorktreeId) ?? null) : null
   )
 }
-
-// ─── Terminals ──────────────────────────────────────────────────────
-export const useActiveTerminalTabs = () =>
-  useAppStore((s) =>
-    s.activeWorktreeId ? (s.tabsByWorktree[s.activeWorktreeId] ?? EMPTY_TABS) : EMPTY_TABS
-  )
-export const useActiveTabId = () => useAppStore((s) => s.activeTabId)
-
-// ─── Settings ───────────────────────────────────────────────────────
-export const useSettings = () => useAppStore((s) => s.settings)
-
-// ─── UI ─────────────────────────────────────────────────────────────
-export const useSidebarOpen = () => useAppStore((s) => s.sidebarOpen)
-export const useSidebarWidth = () => useAppStore((s) => s.sidebarWidth)
-export const useActiveView = () => useAppStore((s) => s.activeView)
-export const useActiveModal = () => useAppStore((s) => s.activeModal)
-export const useModalData = () => useAppStore((s) => s.modalData)
-export const useGroupBy = () => useAppStore((s) => s.groupBy)
-export const useSortBy = () => useAppStore((s) => s.sortBy)
-export const useShowActiveOnly = () => useAppStore((s) => s.showActiveOnly)
-export const useShowSleepingWorkspaces = () => useAppStore((s) => s.showSleepingWorkspaces)
-export const useFilterRepoIds = () => useAppStore((s) => s.filterRepoIds)
-
-// ─── GitHub ─────────────────────────────────────────────────────────
-export const usePRCache = () => useAppStore((s) => s.prCache)
-export const useIssueCache = () => useAppStore((s) => s.issueCache)

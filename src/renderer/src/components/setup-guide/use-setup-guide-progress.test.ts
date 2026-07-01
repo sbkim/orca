@@ -30,7 +30,6 @@ function makeProgress(overrides: Partial<FeatureWallSetupProgress> = {}): Featur
       'default-agent': false,
       'add-two-repos': false,
       notifications: false,
-      'split-terminal': false,
       'two-worktrees': false,
       browser: false,
       'task-sources': false,
@@ -48,15 +47,27 @@ describe('browser milestone legacy setup guide progress', () => {
     expect(
       shouldMarkBrowserMilestoneLegacyComplete({
         stepDone: makePreBrowserDoneStepState(),
+        historicalSplitTerminalDone: true,
         setupGuideSidebarDismissed: false
       })
     ).toBe(true)
+  })
+
+  it('does not waive browser for old profiles missing historical split completion', () => {
+    expect(
+      shouldMarkBrowserMilestoneLegacyComplete({
+        stepDone: makePreBrowserDoneStepState(),
+        historicalSplitTerminalDone: false,
+        setupGuideSidebarDismissed: false
+      })
+    ).toBe(false)
   })
 
   it('marks old profiles as legacy-complete when the sidebar checklist was dismissed', () => {
     expect(
       shouldMarkBrowserMilestoneLegacyComplete({
         stepDone: {},
+        historicalSplitTerminalDone: false,
         setupGuideSidebarDismissed: true
       })
     ).toBe(true)
@@ -66,8 +77,9 @@ describe('browser milestone legacy setup guide progress', () => {
     expect(
       shouldMarkBrowserMilestoneLegacyComplete({
         stepDone: {
-          'split-terminal': true
+          'two-worktrees': true
         },
+        historicalSplitTerminalDone: true,
         setupGuideSidebarDismissed: false
       })
     ).toBe(false)
@@ -137,6 +149,7 @@ describe('getSetupGuideProgressReady', () => {
     settingsLoaded: true,
     preflightStatusChecked: true,
     linearStatusChecked: true,
+    jiraStatusChecked: true,
     browserUseSkillDiscoveryLoading: false,
     computerUseSkillDiscoveryLoading: false,
     orchestrationSkillDiscoveryLoading: false,
@@ -194,9 +207,10 @@ describe('getSetupGuideProgressReady', () => {
     ).toBe(false)
   })
 
-  it('waits for preflight and Linear checks', () => {
+  it('waits for preflight, Linear, and Jira checks', () => {
     expect(getSetupGuideProgressReady({ ...readyInput, preflightStatusChecked: false })).toBe(false)
     expect(getSetupGuideProgressReady({ ...readyInput, linearStatusChecked: false })).toBe(false)
+    expect(getSetupGuideProgressReady({ ...readyInput, jiraStatusChecked: false })).toBe(false)
   })
 })
 

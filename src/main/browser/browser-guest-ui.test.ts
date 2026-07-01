@@ -414,13 +414,62 @@ describe('setupGuestShortcutForwarding', () => {
     return preventDefault
   }
 
+  function triggerGuestBlur(): void {
+    const handler = guestOnMock.mock.calls.find((call) => call[0] === 'blur')?.[1] as
+      | (() => void)
+      | undefined
+    expect(handler).toBeTypeOf('function')
+    handler!()
+  }
+
   beforeEach(() => {
     rendererSendMock = vi.fn()
     guestOnMock = vi.fn()
     guestOffMock = vi.fn()
   })
 
-  it('forwards browser page zoom shortcuts from focused guest pages', () => {
+  it('commits Ctrl+Tab switching from focused guest pages on generic release events', () => {
+    setupGuestShortcutForwarding({
+      browserTabId,
+      guest: makeGuest(),
+      resolveRenderer: () => makeRenderer()
+    })
+
+    const ctrlTabInput = { code: 'Tab', key: 'Tab', control: true, meta: false }
+    const releaseInputs: Partial<Electron.Input>[] = [
+      {
+        type: 'keyUp',
+        code: 'Control',
+        key: 'Control',
+        control: false,
+        meta: false
+      },
+      {
+        type: 'keyUp',
+        code: 'Tab',
+        key: 'Tab',
+        control: false,
+        meta: false
+      }
+    ]
+
+    for (const releaseInput of releaseInputs) {
+      rendererSendMock.mockClear()
+      const keyDownPreventDefault = triggerBeforeInput(ctrlTabInput)
+      const tabReleasePreventDefault = triggerBeforeInput({ ...ctrlTabInput, type: 'keyUp' })
+      const keyUpPreventDefault = triggerBeforeInput(releaseInput)
+
+      expect(keyDownPreventDefault).toHaveBeenCalledTimes(1)
+      expect(tabReleasePreventDefault).not.toHaveBeenCalled()
+      expect(keyUpPreventDefault).toHaveBeenCalledTimes(1)
+      expect(rendererSendMock).toHaveBeenNthCalledWith(1, 'ui:ctrlTabKeyDown', {
+        shiftKey: false
+      })
+      expect(rendererSendMock).toHaveBeenNthCalledWith(2, 'ui:ctrlTabKeyUp')
+    }
+  })
+
+  it('forwards app zoom shortcuts from focused guest pages', () => {
     setupGuestShortcutForwarding({
       browserTabId,
       guest: makeGuest(),
@@ -448,12 +497,60 @@ describe('setupGuestShortcutForwarding', () => {
     expect(numpadSubtractPreventDefault).toHaveBeenCalledTimes(1)
     expect(resetPreventDefault).toHaveBeenCalledTimes(1)
     expect(repeatPreventDefault).toHaveBeenCalledTimes(1)
-    expect(rendererSendMock).toHaveBeenNthCalledWith(1, 'ui:zoomBrowserPage', 'in')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(2, 'ui:zoomBrowserPage', 'in')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(3, 'ui:zoomBrowserPage', 'out')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(4, 'ui:zoomBrowserPage', 'out')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(5, 'ui:zoomBrowserPage', 'reset')
-    expect(rendererSendMock).toHaveBeenNthCalledWith(6, 'ui:zoomBrowserPage', 'in')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(1, 'terminal:zoom', 'in')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(2, 'terminal:zoom', 'in')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(3, 'terminal:zoom', 'out')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(4, 'terminal:zoom', 'out')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(5, 'terminal:zoom', 'reset')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(6, 'terminal:zoom', 'in')
+  })
+
+  it('forwards browser history shortcuts from focused guest pages', () => {
+    setupGuestShortcutForwarding({
+      browserTabId,
+      guest: makeGuest(),
+      resolveRenderer: () => makeRenderer()
+    })
+
+    const backInput =
+      process.platform === 'darwin'
+        ? { code: 'BracketLeft', key: '[', meta: true, control: false, alt: false }
+        : { code: 'ArrowLeft', key: 'ArrowLeft', meta: false, control: false, alt: true }
+    const forwardInput =
+      process.platform === 'darwin'
+        ? { code: 'BracketRight', key: ']', meta: true, control: false, alt: false }
+        : { code: 'ArrowRight', key: 'ArrowRight', meta: false, control: false, alt: true }
+
+    const backPreventDefault = triggerBeforeInput(backInput)
+    const forwardPreventDefault = triggerBeforeInput(forwardInput)
+
+    expect(backPreventDefault).toHaveBeenCalledTimes(1)
+    expect(forwardPreventDefault).toHaveBeenCalledTimes(1)
+    expect(rendererSendMock).toHaveBeenNthCalledWith(1, 'ui:browserHistoryNavigate', 'back')
+    expect(rendererSendMock).toHaveBeenNthCalledWith(2, 'ui:browserHistoryNavigate', 'forward')
+  })
+
+  it('forwards quick-command menu shortcuts from focused guest pages', () => {
+    setupGuestShortcutForwarding({
+      browserTabId,
+      guest: makeGuest(),
+      resolveRenderer: () => makeRenderer(),
+      getKeybindings: () => ({
+        'tab.openQuickCommandsMenu': ['Mod+Shift+Q']
+      })
+    })
+
+    const isMac = process.platform === 'darwin'
+    const preventDefault = triggerBeforeInput({
+      code: 'KeyQ',
+      key: 'q',
+      meta: isMac,
+      control: !isMac,
+      shift: true
+    })
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(rendererSendMock).toHaveBeenCalledWith('ui:toggleQuickCommandsMenu')
   })
 
   it('consumes guest zoom shortcuts even when the renderer is unavailable', () => {
@@ -484,6 +581,87 @@ describe('setupGuestShortcutForwarding', () => {
 
     expect(defaultPreventDefault).not.toHaveBeenCalled()
     expect(customPreventDefault).toHaveBeenCalledTimes(1)
-    expect(rendererSendMock).toHaveBeenCalledWith('ui:zoomBrowserPage', 'in')
+    expect(rendererSendMock).toHaveBeenCalledWith('terminal:zoom', 'in')
+  })
+
+  it('forwards double-tap window shortcuts from focused guest pages', () => {
+    setupGuestShortcutForwarding({
+      browserTabId,
+      guest: makeGuest(),
+      resolveRenderer: () => makeRenderer(),
+      getKeybindings: () => ({
+        'worktree.quickOpen': ['DoubleTap+Shift']
+      })
+    })
+
+    const modifierInput = {
+      code: 'ShiftLeft',
+      key: 'Shift',
+      shift: true,
+      meta: false,
+      control: false,
+      alt: false
+    }
+    const firstDownPreventDefault = triggerBeforeInput(modifierInput)
+    const firstUpPreventDefault = triggerBeforeInput({ ...modifierInput, type: 'keyUp' })
+    const secondDownPreventDefault = triggerBeforeInput(modifierInput)
+
+    expect(firstDownPreventDefault).not.toHaveBeenCalled()
+    expect(firstUpPreventDefault).not.toHaveBeenCalled()
+    expect(secondDownPreventDefault).toHaveBeenCalledTimes(1)
+    expect(rendererSendMock).toHaveBeenCalledWith('ui:openQuickOpen')
+  })
+
+  it('forwards double-tap tab shortcuts from focused guest pages', () => {
+    setupGuestShortcutForwarding({
+      browserTabId,
+      guest: makeGuest(),
+      resolveRenderer: () => makeRenderer(),
+      getKeybindings: () => ({
+        'tab.newBrowser': ['DoubleTap+Shift']
+      })
+    })
+
+    const modifierInput = {
+      code: 'ShiftLeft',
+      key: 'Shift',
+      shift: true,
+      meta: false,
+      control: false,
+      alt: false
+    }
+    triggerBeforeInput(modifierInput)
+    triggerBeforeInput({ ...modifierInput, type: 'keyUp' })
+    const secondDownPreventDefault = triggerBeforeInput(modifierInput)
+
+    expect(secondDownPreventDefault).toHaveBeenCalledTimes(1)
+    expect(rendererSendMock).toHaveBeenCalledWith('ui:newBrowserTab')
+  })
+
+  it('resets guest double-tap detection on blur', () => {
+    setupGuestShortcutForwarding({
+      browserTabId,
+      guest: makeGuest(),
+      resolveRenderer: () => makeRenderer(),
+      getKeybindings: () => ({
+        'worktree.quickOpen': ['DoubleTap+Shift']
+      })
+    })
+
+    const modifierInput = {
+      code: 'ShiftLeft',
+      key: 'Shift',
+      shift: true,
+      meta: false,
+      control: false,
+      alt: false
+    }
+    triggerBeforeInput(modifierInput)
+    triggerBeforeInput({ ...modifierInput, type: 'keyUp' })
+    triggerGuestBlur()
+    const nextDownPreventDefault = triggerBeforeInput(modifierInput)
+
+    expect(nextDownPreventDefault).not.toHaveBeenCalled()
+    expect(rendererSendMock).not.toHaveBeenCalledWith('ui:openQuickOpen')
   })
 })

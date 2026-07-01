@@ -1,6 +1,7 @@
 /* eslint-disable max-lines */
 import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
+import { normalizeRightSidebarRoute } from '../right-sidebar-route'
 import {
   findPrevLiveNonTaskStackHistoryIndex,
   findPrevLiveWorktreeHistoryIndex
@@ -9,6 +10,7 @@ import type {
   ChangelogData,
   CustomPet,
   GitHubWorkItem,
+  JiraIssue,
   LinearIssue,
   PersistedTrustedOrcaHooks,
   PersistedUIState,
@@ -21,10 +23,15 @@ import type {
   WorkspaceStatusDefinition,
   AgentActivityDisplayMode,
   ProjectOrderBy,
-  WorktreeCardProperty
+  WorktreeCardProperty,
+  WorktreeCardMode,
+  WorkspaceHostOrder,
+  WorkspaceHostScope,
+  VisibleWorkspaceHostIds
 } from '../../../../shared/types'
+import type { GitLabWorkItem } from '../../../../shared/gitlab-types'
 import type { LaunchSource } from '../../../../shared/telemetry-events'
-import { tuiAgentToAgentKind } from '../../../../shared/agent-kind'
+import type { TaskSourceContext } from '../../../../shared/task-source-context'
 import { PET_SIZE_DEFAULT, PET_SIZE_MAX, PET_SIZE_MIN } from '../../../../shared/types'
 import {
   WORKSPACE_CLEANUP_CLASSIFIER_VERSION,
@@ -54,6 +61,7 @@ import {
   DEFAULT_SHOW_SLEEPING_WORKSPACES,
   DEFAULT_STATUS_BAR_ITEMS,
   DEFAULT_WORKTREE_CARD_PROPERTIES,
+  getWorktreeCardModeUpdates,
   normalizeAgentActivityDisplayMode,
   normalizeWorktreeCardProperties
 } from '../../../../shared/constants'
@@ -61,6 +69,13 @@ import {
   DEFAULT_BROWSER_PAGE_ZOOM_LEVEL,
   normalizeBrowserPageZoomLevel
 } from '../../../../shared/browser-page-zoom'
+import { persistedUIValuesEqual } from '../../../../shared/persisted-ui-equality'
+import {
+  normalizeExecutionHostOrder,
+  normalizeExecutionHostScope,
+  normalizeVisibleExecutionHostIds,
+  type ExecutionHostId
+} from '../../../../shared/execution-host'
 import {
   WORKSPACE_BOARD_COLUMN_WIDTH_DEFAULT,
   clampWorkspaceBoardColumnWidth,
@@ -68,6 +83,7 @@ import {
   cloneDefaultWorkspaceStatuses,
   normalizeWorkspaceStatuses
 } from '../../../../shared/workspace-statuses'
+import { clampMarkdownTocPanelWidth } from '../../../../shared/markdown-toc-panel-width'
 import { normalizeKagiSessionLink } from '../../../../shared/browser-url'
 import type { OrcaHookScriptKind } from '../../lib/orca-hook-trust'
 import type { SettingsNavTarget } from '@/lib/settings-navigation-types'
@@ -85,7 +101,7 @@ import {
   getNextVisibleContextualTourStepIndex,
   getPreviousVisibleContextualTourStepIndex
 } from '../../components/contextual-tours/contextual-tour-gate'
-import { agentTypeToIconAgent, formatAgentTypeLabel } from '../../lib/agent-status'
+import { agentKindForAgentType, formatAgentTypeLabel } from '../../lib/agent-status'
 import {
   deriveRunningAgentSendTargets,
   resolveRunningAgentSendTarget
@@ -99,6 +115,12 @@ export type PendingSidebarWorktreeReveal = {
   behavior: 'auto' | 'smooth'
   highlight?: boolean
   beginRename?: boolean
+}
+
+export type PendingSidebarRowReveal = {
+  rowKey: string
+  behavior: 'auto' | 'smooth'
+  highlight?: boolean
 }
 
 export type AgentSendPopoverTargetMode = {
@@ -242,19 +264,13 @@ function migrateStatusBarItems(items: readonly string[] | undefined): StatusBarI
 const DEFAULT_ON_PORTS_STATUS_BAR_ITEM: StatusBarItem = 'ports'
 const DEFAULT_ON_KIMI_STATUS_BAR_ITEM: StatusBarItem = 'kimi'
 
-function normalizePersistedRightSidebarTab(
-  tab: PersistedUIState['rightSidebarTab'] | unknown
-): PersistedUIState['rightSidebarTab'] {
-  if (
-    tab === 'explorer' ||
-    tab === 'search' ||
-    tab === 'source-control' ||
-    tab === 'checks' ||
-    tab === 'ports'
-  ) {
-    return tab
+function normalizeHydratedVisibleWorkspaceHostIds(ui: PersistedUIState): VisibleWorkspaceHostIds {
+  const visibleHostIds = normalizeVisibleExecutionHostIds(ui.visibleWorkspaceHostIds)
+  if (visibleHostIds) {
+    return visibleHostIds
   }
-  return 'explorer'
+  const legacyScope = normalizeExecutionHostScope(ui.workspaceHostScope)
+  return legacyScope === 'all' ? null : [legacyScope]
 }
 
 const MIN_SIDEBAR_WIDTH = 220
@@ -429,9 +445,10 @@ function sanitizeWorkspaceCleanupDismissals(
   return out
 }
 
-function agentKindForTarget(agentType: Parameters<typeof agentTypeToIconAgent>[0]) {
-  const tuiAgent = agentTypeToIconAgent(agentType)
-  return tuiAgent ? tuiAgentToAgentKind(tuiAgent) : 'other'
+function hydratedUIPartialMatchesState(state: AppState, hydrated: Partial<UISlice>): boolean {
+  return Object.entries(hydrated).every(([key, value]) =>
+    persistedUIValuesEqual(state[key as keyof AppState], value)
+  )
 }
 
 let agentSendTargetModeInstanceCounter = 0
@@ -598,8 +615,14 @@ export type UISlice = {
     prefilledName?: string
     taskSource?: TaskProvider
     openGitHubWorkItem?: GitHubWorkItem
+    openGitHubSourceContext?: TaskSourceContext | null
     openGitHubInitialTab?: 'conversation' | 'checks' | 'files'
+    openGitLabWorkItem?: GitLabWorkItem
+    openGitLabSourceContext?: TaskSourceContext | null
     openLinearIssue?: LinearIssue
+    openLinearSourceContext?: TaskSourceContext | null
+    openJiraIssue?: JiraIssue
+    openJiraSourceContext?: TaskSourceContext | null
   }
   taskResumeState: TaskResumeState | undefined
   setTaskResumeState: (updates: Partial<TaskResumeState>) => void
@@ -607,6 +630,12 @@ export type UISlice = {
   setGithubTaskDrawerWorkItem: (item: GitHubWorkItem | null) => void
   newWorkspaceDraft: {
     repoId: string | null
+    // Why: project-first workspace creation resolves through these when present,
+    // while old drafts can keep using only repoId during the additive migration.
+    projectId?: string | null
+    projectGroupId?: string | null
+    hostId?: ExecutionHostId | null
+    projectHostSetupId?: string | null
     name: string
     prompt: string
     note: string
@@ -617,12 +646,10 @@ export type UISlice = {
       title: string
       url: string
       linearIdentifier?: string
-      linkedContext?: {
-        provider: TaskProvider
-        version: 1
-        renderedText: string
-      }
     } | null
+    /** Why: starting from a task must preserve where provider data came from
+     *  separately from the host selected to run the workspace. */
+    taskSourceContext?: TaskSourceContext | null
     agent: TuiAgent
     linkedIssue: string
     linkedPR: number | null
@@ -633,6 +660,9 @@ export type UISlice = {
     // Why: repo-scoped start ref selected via the "Start from" picker.
     // Absent means "use the repo's effective base ref".
     baseBranch?: string
+    // Why: review-created worktrees can start from a head ref/SHA while Source
+    // Control must compare against the provider target branch.
+    compareBaseRef?: string
   } | null
   openTaskPage: (
     data?: UISlice['taskPageData'],
@@ -643,6 +673,14 @@ export type UISlice = {
   closeActivityPage: () => void
   selectedAutomationId: string | null
   setSelectedAutomationId: (id: string | null) => void
+  pendingAutomationRunNavigation: {
+    automationId: string
+    runId: string | null
+    hostId?: ExecutionHostId
+  } | null
+  setPendingAutomationRunNavigation: (
+    navigation: { automationId: string; runId: string | null; hostId?: ExecutionHostId } | null
+  ) => void
   openAutomationsPage: () => void
   closeAutomationsPage: () => void
   openSpacePage: () => void
@@ -736,6 +774,12 @@ export type UISlice = {
   markSetupGuideBrowserMilestoneMigrated: (legacyComplete: boolean) => void
   browserImportHintHidden: boolean
   setBrowserImportHintHidden: (hidden: boolean) => void
+  mobileEmulatorTabIntroDismissed: boolean
+  dismissMobileEmulatorTabIntro: () => void
+  mobileEmulatorAgentSetupDismissed: boolean
+  dismissMobileEmulatorAgentSetup: () => void
+  projectOrderManualDefaultNoticeDismissed: boolean
+  dismissProjectOrderManualDefaultNotice: () => void
   usageEmptyStateDismissed: boolean
   dismissUsageEmptyState: () => void
   groupBy: 'none' | 'workspace-status' | 'repo' | 'pr-status'
@@ -748,8 +792,16 @@ export type UISlice = {
   setShowActiveOnly: (v: boolean) => void
   showSleepingWorkspaces: boolean
   setShowSleepingWorkspaces: (v: boolean) => void
+  workspaceHostScope: WorkspaceHostScope
+  setWorkspaceHostScope: (scope: WorkspaceHostScope) => void
+  visibleWorkspaceHostIds: VisibleWorkspaceHostIds
+  setVisibleWorkspaceHostIds: (ids: VisibleWorkspaceHostIds) => void
+  workspaceHostOrder: WorkspaceHostOrder
+  setWorkspaceHostOrder: (ids: WorkspaceHostOrder) => void
   hideDefaultBranchWorkspace: boolean
   setHideDefaultBranchWorkspace: (v: boolean) => void
+  hideAutomationGeneratedWorkspaces: boolean
+  setHideAutomationGeneratedWorkspaces: (v: boolean) => void
   showDotfilesByWorktree: Record<string, boolean>
   setShowDotfilesForWorktree: (worktreeId: string, showDotfiles: boolean) => void
   toggleShowDotfilesForWorktree: (worktreeId: string) => void
@@ -758,7 +810,9 @@ export type UISlice = {
   collapsedGroups: Set<string>
   toggleCollapsedGroup: (key: string) => void
   worktreeCardProperties: WorktreeCardProperty[]
-  toggleWorktreeCardProperty: (prop: WorktreeCardProperty) => void
+  _worktreeCardModeDefaulted: boolean
+  setWorktreeCardMode: (mode: WorktreeCardMode) => void
+  setWorktreeCardProperties: (properties: readonly WorktreeCardProperty[]) => void
   agentActivityDisplayMode: AgentActivityDisplayMode
   setAgentActivityDisplayMode: (mode: AgentActivityDisplayMode) => void
   workspaceStatuses: WorkspaceStatusDefinition[]
@@ -767,13 +821,17 @@ export type UISlice = {
   setWorkspaceBoardOpacity: (opacity: number) => void
   workspaceBoardColumnWidth: number
   setWorkspaceBoardColumnWidth: (width: number) => void
+  syncTaskStatusFromWorkspaceBoard: boolean
+  setSyncTaskStatusFromWorkspaceBoard: (enabled: boolean) => void
   statusBarItems: StatusBarItem[]
   toggleStatusBarItem: (item: StatusBarItem) => void
   statusBarVisible: boolean
   setStatusBarVisible: (v: boolean) => void
   workspacePortScan: { key: string; result: WorkspacePortScanResult } | null
+  workspacePortScansByKey: Record<string, WorkspacePortScanResult>
   workspacePortScanRefreshing: boolean
   setWorkspacePortScan: (scan: { key: string; result: WorkspacePortScanResult } | null) => void
+  setWorkspacePortScanForKey: (key: string, result: WorkspacePortScanResult | null) => void
   setWorkspacePortScanRefreshing: (refreshing: boolean) => void
   /** Whether the experimental pet overlay is currently visible. Persisted
    *  so "Hide pet" from the status-bar menu survives reload. Independent
@@ -795,6 +853,7 @@ export type UISlice = {
   petSize: number
   setPetSize: (size: number) => void
   pendingRevealWorktree: PendingSidebarWorktreeReveal | null
+  pendingRevealSidebarRow: PendingSidebarRowReveal | null
   revealWorktreeInSidebar: (
     worktreeId: string,
     options?: {
@@ -803,7 +862,15 @@ export type UISlice = {
       beginRename?: boolean
     }
   ) => void
+  revealSidebarRow: (
+    rowKey: string,
+    options?: {
+      behavior?: PendingSidebarRowReveal['behavior']
+      highlight?: boolean
+    }
+  ) => void
   clearPendingRevealWorktreeId: () => void
+  clearPendingRevealSidebarRow: () => void
   // Why: lets the SourceControl sidebar request that the diff editor scroll
   // to a specific note. Cleared by the diff decorator after it reveals the
   // line, so the same id can be requested again later without the surface
@@ -927,14 +994,28 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     )
 
     const label = formatAgentTypeLabel(target.entry.agentType)
-    const { sendBracketedPasteToRunningAgent } = await import('@/lib/agent-paste-draft')
-    const delivered = await sendBracketedPasteToRunningAgent({
-      ptyId: target.ptyId,
-      content: mode.prompt
-    }).catch(() => false)
+    const { activeAgentNotesSendFailureMessage, sendNotesToActiveAgentSession } =
+      await import('@/lib/active-agent-note-send')
+    const result = await sendNotesToActiveAgentSession({
+      worktreeId: mode.worktreeId,
+      prompt: mode.prompt,
+      noteTarget: { tabId: target.tabId, leafId: target.leafId }
+    }).catch((error) => {
+      console.error('Failed to send notes to sidebar agent target:', error)
+      return { status: 'no-active-terminal' as const }
+    })
 
-    if (!delivered) {
-      const message = 'Terminal is no longer available'
+    const stillCurrent = (): boolean => {
+      const current = get().agentSendPopoverTargetMode
+      return current?.id === mode.id && current.instanceId === mode.instanceId
+    }
+
+    if (!stillCurrent()) {
+      return false
+    }
+
+    if (result.status !== 'sent') {
+      const message = activeAgentNotesSendFailureMessage(result.status, { explicitTarget: true })
       set((s) =>
         s.agentSendPopoverTargetMode?.id === mode.id &&
         s.agentSendPopoverTargetMode.instanceId === mode.instanceId
@@ -949,6 +1030,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           : s
       )
       const { toast } = await import('sonner')
+      if (!stillCurrent()) {
+        return false
+      }
       toast.error(
         translate('auto.store.slices.ui.53883b7bc3', "Couldn't send to {{value0}}", {
           value0: label
@@ -958,10 +1042,13 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       return false
     }
 
-    mode.onPromptDelivered?.()
     const [{ toast }, { track }] = await Promise.all([import('sonner'), import('@/lib/telemetry')])
+    if (!stillCurrent()) {
+      return false
+    }
+    mode.onPromptDelivered?.()
     track('agent_prompt_sent', {
-      agent_kind: agentKindForTarget(target.entry.agentType),
+      agent_kind: agentKindForAgentType(target.entry.agentType),
       launch_source: mode.launchSource,
       request_kind: 'followup'
     })
@@ -1068,8 +1155,14 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     if (data.openGitHubWorkItem) {
       get().recordFeatureInteraction?.('github-tasks')
     }
+    if (data.openGitLabWorkItem) {
+      get().recordFeatureInteraction?.('gitlab-tasks')
+    }
     if (data.openLinearIssue) {
       get().recordFeatureInteraction?.('linear-tasks')
+    }
+    if (data.openJiraIssue) {
+      get().recordFeatureInteraction?.('jira-tasks')
     }
     // Why: record a Tasks visit in the shared back/forward history so the
     // titlebar Back/Forward buttons can return to Tasks. All task-source
@@ -1082,15 +1175,31 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           kind: 'task-detail',
           source: 'github',
           workItem: data.openGitHubWorkItem,
+          sourceContext: data.openGitHubSourceContext,
           initialTab: data.openGitHubInitialTab
         } as const)
-      : data.openLinearIssue
+      : data.openGitLabWorkItem
         ? ({
             kind: 'task-detail',
-            source: 'linear',
-            issue: data.openLinearIssue
+            source: 'gitlab',
+            workItem: data.openGitLabWorkItem,
+            sourceContext: data.openGitLabSourceContext
           } as const)
-        : null
+        : data.openLinearIssue
+          ? ({
+              kind: 'task-detail',
+              source: 'linear',
+              issue: data.openLinearIssue,
+              sourceContext: data.openLinearSourceContext
+            } as const)
+          : data.openJiraIssue
+            ? ({
+                kind: 'task-detail',
+                source: 'jira',
+                issue: data.openJiraIssue,
+                sourceContext: data.openJiraSourceContext
+              } as const)
+            : null
     const currentEntry = get().worktreeNavHistory[get().worktreeNavHistoryIndex]
     const currentIsTaskStack =
       currentEntry === 'tasks' ||
@@ -1159,22 +1268,36 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           ? (resume.githubItemsQuery ?? '').trim()
           : presetToQuery(resume?.githubItemsPreset ?? defaultPreset)
       for (const repo of selectedRepos) {
-        state.prefetchWorkItems(repo.id, repo.path, PER_REPO_FETCH_LIMIT, query)
+        state.prefetchWorkItems(repo.id, repo.path, PER_REPO_FETCH_LIMIT, query, {
+          sourceContext:
+            data.openGitHubSourceContext?.provider === 'github' &&
+            data.openGitHubSourceContext.repoId === repo.id
+              ? data.openGitHubSourceContext
+              : null
+        })
       }
     }
     if (resolvedSource === 'linear' && typeof state.prefetchLinearIssues === 'function') {
       const resume = state.taskResumeState
       const query = (resume?.linearQuery ?? '').trim()
+      const sourceContext =
+        data.openLinearSourceContext?.provider === 'linear' ? data.openLinearSourceContext : null
       if (query) {
-        state.prefetchLinearIssues({ kind: 'search', query, limit: LINEAR_TASK_PREFETCH_LIMIT })
+        state.prefetchLinearIssues(
+          { kind: 'search', query, limit: LINEAR_TASK_PREFETCH_LIMIT },
+          { sourceContext }
+        )
       } else {
         // Why: TaskPage no longer exposes Linear preset filters; keep warm
         // prefetch aligned with the default unsearched issue list.
-        state.prefetchLinearIssues({
-          kind: 'list',
-          filter: 'all',
-          limit: LINEAR_TASK_PREFETCH_LIMIT
-        })
+        state.prefetchLinearIssues(
+          {
+            kind: 'list',
+            filter: 'all',
+            limit: LINEAR_TASK_PREFETCH_LIMIT
+          },
+          { sourceContext }
+        )
       }
     }
   },
@@ -1232,6 +1355,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     })),
   selectedAutomationId: null,
   setSelectedAutomationId: (id) => set({ selectedAutomationId: id }),
+  pendingAutomationRunNavigation: null,
+  setPendingAutomationRunNavigation: (navigation) =>
+    set({ pendingAutomationRunNavigation: navigation }),
   openAutomationsPage: () => {
     get().recordViewVisit('automations')
     set((state) => ({
@@ -1713,6 +1839,33 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       window.api.ui.set({ browserImportHintHidden: hidden }).catch(console.error)
       return { browserImportHintHidden: hidden }
     }),
+  mobileEmulatorTabIntroDismissed: false,
+  dismissMobileEmulatorTabIntro: () =>
+    set((s) => {
+      if (s.mobileEmulatorTabIntroDismissed) {
+        return s
+      }
+      window.api.ui.set({ mobileEmulatorTabIntroDismissed: true }).catch(console.error)
+      return { mobileEmulatorTabIntroDismissed: true }
+    }),
+  mobileEmulatorAgentSetupDismissed: false,
+  dismissMobileEmulatorAgentSetup: () =>
+    set((s) => {
+      if (s.mobileEmulatorAgentSetupDismissed) {
+        return s
+      }
+      window.api.ui.set({ mobileEmulatorAgentSetupDismissed: true }).catch(console.error)
+      return { mobileEmulatorAgentSetupDismissed: true }
+    }),
+  projectOrderManualDefaultNoticeDismissed: true,
+  dismissProjectOrderManualDefaultNotice: () =>
+    set((s) => {
+      if (s.projectOrderManualDefaultNoticeDismissed) {
+        return s
+      }
+      window.api.ui.set({ projectOrderManualDefaultNoticeDismissed: true }).catch(console.error)
+      return { projectOrderManualDefaultNoticeDismissed: true }
+    }),
   usageEmptyStateDismissed: false,
   dismissUsageEmptyState: () =>
     set((s) => {
@@ -1728,7 +1881,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   // collapsed state from one mode is meaningless in another. Clearing
   // also prevents unbounded accumulation of stale keys across mode switches.
   setGroupBy: (g) => {
-    window.api.ui.set({ collapsedGroups: [] }).catch(console.error)
+    window.api.ui.set({ groupBy: g, collapsedGroups: [] }).catch(console.error)
     set({ groupBy: g, collapsedGroups: new Set<string>() })
   },
 
@@ -1746,8 +1899,44 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
   showSleepingWorkspaces: DEFAULT_SHOW_SLEEPING_WORKSPACES,
   setShowSleepingWorkspaces: (v) => set({ showSleepingWorkspaces: v }),
 
+  workspaceHostScope: 'all',
+  // Why (multi-host design): host scope is presentation/filtering only — it must
+  // never trigger resource teardown (terminals, browser pages, etc.).
+  setWorkspaceHostScope: (scope) => {
+    const normalized = normalizeExecutionHostScope(scope)
+    const visibleWorkspaceHostIds = normalized === 'all' ? null : [normalized]
+    set({ workspaceHostScope: normalized, visibleWorkspaceHostIds })
+    window.api.ui
+      .set({ workspaceHostScope: normalized, visibleWorkspaceHostIds })
+      .catch(console.error)
+  },
+  visibleWorkspaceHostIds: null,
+  setVisibleWorkspaceHostIds: (ids) => {
+    const normalized = normalizeVisibleExecutionHostIds(ids)
+    // Why: workspaceHostScope remains the compatibility/default-host signal
+    // for creation flows while visibility can now be multi-select.
+    let workspaceHostScope: WorkspaceHostScope = get().workspaceHostScope
+    if (normalized === null) {
+      workspaceHostScope = 'all'
+    } else if (normalized.length === 1) {
+      workspaceHostScope = normalized[0]
+    }
+    set({ visibleWorkspaceHostIds: normalized, workspaceHostScope })
+    window.api.ui
+      .set({ visibleWorkspaceHostIds: normalized, workspaceHostScope })
+      .catch(console.error)
+  },
+  workspaceHostOrder: [],
+  setWorkspaceHostOrder: (ids) => {
+    const workspaceHostOrder = normalizeExecutionHostOrder(ids)
+    set({ workspaceHostOrder })
+    window.api.ui.set({ workspaceHostOrder }).catch(console.error)
+  },
+
   hideDefaultBranchWorkspace: false,
   setHideDefaultBranchWorkspace: (v) => set({ hideDefaultBranchWorkspace: v }),
+  hideAutomationGeneratedWorkspaces: false,
+  setHideAutomationGeneratedWorkspaces: (v) => set({ hideAutomationGeneratedWorkspaces: v }),
 
   showDotfilesByWorktree: {},
   setShowDotfilesForWorktree: (worktreeId, showDotfiles) =>
@@ -1800,17 +1989,31 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     }),
 
   worktreeCardProperties: [...DEFAULT_WORKTREE_CARD_PROPERTIES],
+  _worktreeCardModeDefaulted: true,
+  setWorktreeCardMode: (mode) => {
+    const updates = getWorktreeCardModeUpdates(mode)
+    set((s) => ({
+      settings: s.settings ? { ...s.settings, ...updates.settings } : s.settings,
+      worktreeCardProperties: updates.ui.worktreeCardProperties,
+      _worktreeCardModeDefaulted: true
+    }))
+    void Promise.all([
+      window.api.settings.set(updates.settings).then((nextSettings) => {
+        if (nextSettings) {
+          set({ settings: nextSettings })
+        }
+      }),
+      window.api.ui.set(updates.ui)
+    ]).catch(console.error)
+  },
+  setWorktreeCardProperties: (properties) => {
+    const normalized = normalizeWorktreeCardProperties(properties)
+    set({ worktreeCardProperties: normalized, _worktreeCardModeDefaulted: false })
+    window.api.ui
+      .set({ worktreeCardProperties: normalized, _worktreeCardModeDefaulted: false })
+      .catch(console.error)
+  },
   agentActivityDisplayMode: DEFAULT_AGENT_ACTIVITY_DISPLAY_MODE,
-  toggleWorktreeCardProperty: (prop) =>
-    set((s) => {
-      const current = normalizeWorktreeCardProperties(s.worktreeCardProperties)
-      const next = current.includes(prop) ? current.filter((p) => p !== prop) : [...current, prop]
-      // Why: retired property toggles no longer exist, so their fields must
-      // stay visible even if an older saved preference hid them.
-      const updated = normalizeWorktreeCardProperties(next)
-      window.api.ui.set({ worktreeCardProperties: updated }).catch(console.error)
-      return { worktreeCardProperties: updated }
-    }),
   setAgentActivityDisplayMode: (mode) => {
     const normalized = normalizeAgentActivityDisplayMode(mode)
     window.api.ui.set({ agentActivityDisplayMode: normalized }).catch(console.error)
@@ -1838,6 +2041,12 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     set({ workspaceBoardColumnWidth: clamped })
   },
 
+  syncTaskStatusFromWorkspaceBoard: false,
+  setSyncTaskStatusFromWorkspaceBoard: (enabled) => {
+    window.api.ui.set({ syncTaskStatusFromWorkspaceBoard: enabled }).catch(console.error)
+    set({ syncTaskStatusFromWorkspaceBoard: enabled })
+  },
+
   statusBarItems: [...DEFAULT_STATUS_BAR_ITEMS],
   toggleStatusBarItem: (item) =>
     set((s) => {
@@ -1855,8 +2064,36 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     set({ statusBarVisible: v })
   },
   workspacePortScan: null,
+  workspacePortScansByKey: {},
   workspacePortScanRefreshing: false,
-  setWorkspacePortScan: (scan) => set({ workspacePortScan: scan }),
+  setWorkspacePortScan: (scan) =>
+    set((state) => {
+      if (!scan) {
+        return { workspacePortScan: null, workspacePortScansByKey: {} }
+      }
+      return {
+        workspacePortScan: scan,
+        workspacePortScansByKey: { ...state.workspacePortScansByKey, [scan.key]: scan.result }
+      }
+    }),
+  setWorkspacePortScanForKey: (key, result) =>
+    set((state) => {
+      const nextScansByKey = { ...state.workspacePortScansByKey }
+      if (result) {
+        nextScansByKey[key] = result
+      } else {
+        delete nextScansByKey[key]
+      }
+      return {
+        workspacePortScansByKey: nextScansByKey,
+        workspacePortScan:
+          state.workspacePortScan?.key === key
+            ? result
+              ? { key, result }
+              : null
+            : state.workspacePortScan
+      }
+    }),
   setWorkspacePortScanRefreshing: (refreshing) => set({ workspacePortScanRefreshing: refreshing }),
 
   // Why: default true so a user who enables experimentalPet sees the
@@ -1923,6 +2160,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     }),
 
   pendingRevealWorktree: null,
+  pendingRevealSidebarRow: null,
   revealWorktreeInSidebar: (worktreeId, options) =>
     set({
       pendingRevealWorktree: {
@@ -1932,7 +2170,16 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         ...(options?.beginRename ? { beginRename: true } : {})
       }
     }),
+  revealSidebarRow: (rowKey, options) =>
+    set({
+      pendingRevealSidebarRow: {
+        rowKey,
+        behavior: options?.behavior ?? 'smooth',
+        ...(options?.highlight === false ? {} : { highlight: true })
+      }
+    }),
   clearPendingRevealWorktreeId: () => set({ pendingRevealWorktree: null }),
+  clearPendingRevealSidebarRow: () => set({ pendingRevealSidebarRow: null }),
   scrollToDiffCommentId: null,
   setScrollToDiffCommentId: (id) => set({ scrollToDiffCommentId: id }),
   persistedUIReady: false,
@@ -1983,7 +2230,11 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           })
           .catch(console.error)
       }
-      return {
+      const rightSidebarRoute = normalizeRightSidebarRoute(
+        ui.rightSidebarTab,
+        ui.rightSidebarExplorerView
+      )
+      const hydrated = {
         // Why: persisted UI data comes from disk and may be stale, corrupted,
         // or manually edited. Clamp widths during hydration so invalid values
         // cannot push the renderer into broken layouts before the user drags a
@@ -1998,8 +2249,14 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
           s.rightSidebarWidth,
           MAX_RIGHT_SIDEBAR_WIDTH
         ),
+        markdownTocPanelWidth: clampMarkdownTocPanelWidth(
+          ui.markdownTocPanelWidth,
+          undefined,
+          s.markdownTocPanelWidth
+        ),
         rightSidebarOpen: typeof ui.rightSidebarOpen === 'boolean' ? ui.rightSidebarOpen : true,
-        rightSidebarTab: normalizePersistedRightSidebarTab(ui.rightSidebarTab),
+        rightSidebarTab: rightSidebarRoute.rightSidebarTab,
+        rightSidebarExplorerView: rightSidebarRoute.rightSidebarExplorerView,
         groupBy: (ui.groupBy as UISlice['groupBy'] | 'parent') === 'parent' ? 'repo' : ui.groupBy,
         sortBy,
         // Why: main-process getUI() already normalized this to a valid value
@@ -2012,17 +2269,23 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         // Older positive-form keys are intentionally ignored so old profiles
         // start from the new default: sleeping workspaces visible.
         showSleepingWorkspaces: !(ui.hideSleepingWorkspaces ?? DEFAULT_HIDE_SLEEPING_WORKSPACES),
+        workspaceHostScope: normalizeExecutionHostScope(ui.workspaceHostScope),
+        visibleWorkspaceHostIds: normalizeHydratedVisibleWorkspaceHostIds(ui),
+        workspaceHostOrder: normalizeExecutionHostOrder(ui.workspaceHostOrder),
         hideDefaultBranchWorkspace: ui.hideDefaultBranchWorkspace ?? false,
+        hideAutomationGeneratedWorkspaces: ui.hideAutomationGeneratedWorkspaces === true,
         showDotfilesByWorktree: sanitizeShowDotfilesByWorktree(ui.showDotfilesByWorktree),
         filterRepoIds: (ui.filterRepoIds ?? []).filter((repoId) => validRepoIds.has(repoId)),
         collapsedGroups: new Set(ui.collapsedGroups ?? []),
         uiZoomLevel: ui.uiZoomLevel ?? 0,
         editorFontZoomLevel: ui.editorFontZoomLevel ?? 0,
         worktreeCardProperties: normalizeWorktreeCardProperties(ui.worktreeCardProperties),
+        _worktreeCardModeDefaulted: ui._worktreeCardModeDefaulted === true,
         agentActivityDisplayMode: normalizeAgentActivityDisplayMode(ui.agentActivityDisplayMode),
         workspaceStatuses: normalizeWorkspaceStatuses(ui.workspaceStatuses),
         workspaceBoardOpacity: clampWorkspaceBoardOpacity(ui.workspaceBoardOpacity),
         workspaceBoardColumnWidth: clampWorkspaceBoardColumnWidth(ui.workspaceBoardColumnWidth),
+        syncTaskStatusFromWorkspaceBoard: ui.syncTaskStatusFromWorkspaceBoard === true,
         statusBarItems,
         statusBarVisible: ui.statusBarVisible ?? true,
         // Why: absent → true so existing users see the pet the first time
@@ -2074,6 +2337,10 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         setupGuideBrowserMilestoneLegacyComplete:
           ui.setupGuideBrowserMilestoneLegacyComplete === true,
         browserImportHintHidden: ui.browserImportHintHidden === true,
+        mobileEmulatorTabIntroDismissed: ui.mobileEmulatorTabIntroDismissed === true,
+        mobileEmulatorAgentSetupDismissed: ui.mobileEmulatorAgentSetupDismissed === true,
+        projectOrderManualDefaultNoticeDismissed:
+          ui.projectOrderManualDefaultNoticeDismissed === true,
         // Why: default false when undefined so existing users still see the CTA;
         // only an explicit dismissal persists true.
         usageEmptyStateDismissed: ui.usageEmptyStateDismissed === true,
@@ -2092,6 +2359,9 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
         ),
         persistedUIReady: true
       }
+      // Why: main rebroadcasts UI written by any client. Identical hydration must
+      // not create fresh references that App's debounced writer echoes to main.
+      return hydratedUIPartialMatchesState(s, hydrated) ? s : hydrated
     }),
 
   updateStatus: { state: 'idle' },

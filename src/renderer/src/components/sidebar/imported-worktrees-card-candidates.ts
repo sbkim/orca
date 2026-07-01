@@ -1,9 +1,5 @@
-import type {
-  DetectedWorktree,
-  DetectedWorktreeListResult,
-  Repo,
-  Worktree
-} from '../../../../shared/types'
+import type { DetectedWorktreeListResult, Repo, Worktree } from '../../../../shared/types'
+import { getHiddenExternalWorktrees } from '../../../../shared/external-worktree-inbox'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
 import {
   effectiveExternalWorktreeVisibility,
@@ -13,19 +9,10 @@ import type { ImportedWorktreesCardCandidate } from './worktree-list-groups'
 
 export function getHiddenImportedWorktrees(
   detected: DetectedWorktreeListResult | undefined
-): DetectedWorktree[] {
-  if (detected?.authoritative !== true) {
-    return []
-  }
-  return detected.worktrees.filter(
-    (worktree) =>
-      !worktree.visible &&
-      !worktree.selectedCheckout &&
-      worktree.ownership !== 'orca-managed' &&
-      // Why: ownership keeps bare entries hidden regardless, so "Show in
-      // worktree list" would be a dead-end affordance for them.
-      worktree.isBare !== true
-  )
+): ReturnType<typeof getHiddenExternalWorktrees> {
+  // Why: bare entries have no working tree, so "Show in worktree list" would be
+  // a dead-end affordance for them — keep them out of the hidden-imports card.
+  return getHiddenExternalWorktrees(detected).filter((worktree) => worktree.isBare !== true)
 }
 
 export function buildImportedWorktreesCardCandidates(args: {

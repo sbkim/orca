@@ -8,8 +8,10 @@ type ChecksPanelEmptyStateInput = {
   prRefreshStatus: PRRefreshStatus
   hostedReviewBlockedReason: HostedReviewCreationBlockedReason | undefined
   hasUpstream: boolean | undefined
+  hasCurrentBranch?: boolean
   reviewLabel?: 'pull request' | 'merge request'
   reviewShortLabel?: 'PR' | 'MR'
+  hasAmbiguousGitHubHostedReview?: boolean
 }
 
 type ChecksPanelEmptyStateCopy = {
@@ -17,6 +19,9 @@ type ChecksPanelEmptyStateCopy = {
   description: string
 }
 
+/**
+ * Chooses neutral empty-state copy when GitHub review status is still ambiguous.
+ */
 export function getChecksPanelEmptyStateCopy(
   input: ChecksPanelEmptyStateInput
 ): ChecksPanelEmptyStateCopy {
@@ -38,10 +43,31 @@ export function getChecksPanelEmptyStateCopy(
   }
 
   const blockedReason = input.hostedReviewBlockedReason
+  // Why: hosted-review metadata with missing PR cache data is ambiguous, so
+  // avoid showing "no PR" or publish guidance until GitHub status is refreshed.
+  if (
+    input.hasAmbiguousGitHubHostedReview === true &&
+    (input.prRefreshStatus === 'paused' ||
+      input.prRefreshStatus === 'skipped' ||
+      input.prRefreshStatus === undefined)
+  ) {
+    return {
+      title: translate(
+        'auto.components.right.sidebar.checks.panel.empty.state.3322603418',
+        'Pull request status unavailable'
+      ),
+      description: translate(
+        'auto.components.right.sidebar.checks.panel.empty.state.b597440265',
+        'Refresh GitHub status for this branch to load checks and review.'
+      )
+    }
+  }
+
   if (
     shouldShowChecksPanelPublishBranchAction({
       hostedReviewBlockedReason: blockedReason,
-      hasUpstream: input.hasUpstream
+      hasUpstream: input.hasUpstream,
+      hasCurrentBranch: input.hasCurrentBranch
     })
   ) {
     // Why: a local-only branch cannot have GitHub PR status yet; surfacing a
@@ -135,10 +161,17 @@ export function getChecksPanelEmptyStateCopy(
   }
 }
 
+/**
+ * Separates local-only branch guidance from hosted-review refresh uncertainty.
+ */
 export function shouldShowChecksPanelPublishBranchAction(input: {
   hostedReviewBlockedReason: HostedReviewCreationBlockedReason | undefined
   hasUpstream: boolean | undefined
+  hasCurrentBranch?: boolean
 }): boolean {
+  if (input.hasCurrentBranch === false) {
+    return false
+  }
   const blockedReason = input.hostedReviewBlockedReason
   return input.hasUpstream === false || blockedReason === 'no_upstream'
 }

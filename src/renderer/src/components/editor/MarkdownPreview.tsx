@@ -46,7 +46,9 @@ import {
   fileUrlToAbsolutePath,
   getMarkdownPreviewLinkTarget,
   isMarkdownPreviewOpenModifier,
-  resolveMarkdownPreviewHref
+  isMarkdownPreviewSystemBrowserModifier,
+  resolveMarkdownPreviewHref,
+  resolveMarkdownPreviewHttpOpenOptions
 } from './markdown-preview-links'
 import {
   createMarkdownDocumentIndex,
@@ -70,10 +72,11 @@ import { openHttpLink } from '@/lib/http-link-routing'
 import { getShortcutPlatform } from '@/lib/shortcut-platform'
 import { isLocalPathOpenBlocked, showLocalPathOpenBlockedToast } from '@/lib/local-path-open-guard'
 import { markdownPreviewUrlTransform } from './markdown-preview-url-transform'
+import { prewarmMarkdownPreviewLocalImages } from './markdown-preview-local-images'
 import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
 import { statRuntimePath } from '@/runtime/runtime-file-client'
 import { useMountedRef } from '@/hooks/useMountedRef'
-import { buildMarkdownTableOfContents } from './markdown-table-of-contents'
+import { selectMarkdownTableOfContents } from './markdown-toc-visibility-gate'
 import { MarkdownTableOfContentsPanel } from './MarkdownTableOfContentsPanel'
 import { isMarkdownComment } from '@/lib/diff-comment-compat'
 import { DiffCommentCard } from '../diff-comments/DiffCommentCard'
@@ -543,10 +546,22 @@ export default function MarkdownPreview({
 
   const renderedContent = usePreserveSectionDuringExternalEdit(content, bodyRef)
 
+  useEffect(() => {
+    const prewarm = prewarmMarkdownPreviewLocalImages(renderedContent, filePath, {
+      runtimeContext: imageRuntimeContext
+    })
+    return prewarm.cancel
+  }, [renderedContent, filePath, imageRuntimeContext])
+
   const frontMatter = useMemo(() => extractFrontMatter(renderedContent), [renderedContent])
+  // Why: building the table of contents runs a full-document remark parse on
+  // every content change, and the preview's content churns on streamed/external
+  // file writes. The result is only used while the panel is open (closed by
+  // default), so gate the parse on visibility; showTableOfContents in the deps
+  // rebuilds the outline the moment it opens.
   const tableOfContentsItems = useMemo(
-    () => buildMarkdownTableOfContents(renderedContent),
-    [renderedContent]
+    () => selectMarkdownTableOfContents(showTableOfContents, renderedContent),
+    [renderedContent, showTableOfContents]
   )
   const markdownDocumentIndex = useMemo(
     () => createMarkdownDocumentIndex(markdownDocuments),
@@ -1238,8 +1253,7 @@ export default function MarkdownPreview({
           // link to the system default handler, bypassing the classifier. For a
           // dangling in-worktree .md, pre-check existence so the user sees a
           // toast instead of the silent no-op from shell.openFileUri.
-          const modKey = isMac ? event.metaKey : event.ctrlKey
-          if (modKey && event.shiftKey) {
+          if (isMarkdownPreviewSystemBrowserModifier(event, isMac)) {
             const osTarget = getMarkdownPreviewLinkTarget(href, filePath)
             if (!osTarget) {
               return
@@ -1251,7 +1265,10 @@ export default function MarkdownPreview({
               return
             }
             if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-              openHttpLink(parsed.toString(), { forceSystemBrowser: true })
+              openHttpLink(
+                parsed.toString(),
+                resolveMarkdownPreviewHttpOpenOptions(event, isMac, sourceRoutingWorktreeId)
+              )
               return
             }
             if (parsed.protocol === 'file:') {
@@ -1303,7 +1320,14 @@ export default function MarkdownPreview({
           }
 
           if (target.protocol === 'http:' || target.protocol === 'https:') {
-            void window.api.shell.openUrl(target.toString())
+            // Why: route through openHttpLink (not raw shell.openUrl) so a plain
+            // click honors the "open links in Orca" setting; openHttpLink keeps
+            // remote runtimes on the system browser. (Cmd/Ctrl+Shift-click is
+            // handled above; this path only sees non-escape-hatch clicks.)
+            openHttpLink(
+              target.toString(),
+              resolveMarkdownPreviewHttpOpenOptions(event, isMac, sourceRoutingWorktreeId)
+            )
             return
           }
 

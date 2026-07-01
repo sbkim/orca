@@ -15,17 +15,13 @@ import {
   getContextualTourCleanupOutcome,
   measureContextualTourOverlayRenderState
 } from './contextual-tour-overlay-measurement'
-import { getContextualTourOverlayPanelPosition } from './contextual-tour-overlay-position'
 import {
   ContextualTourOverlaySurface,
   getContextualTourFocusableElements,
   handleContextualTourOverlayKeyDown,
   type ActiveTourRenderState
 } from './ContextualTourOverlaySurface'
-import {
-  REQUEST_ACTIVE_TERMINAL_PANE_SPLIT_EVENT,
-  type RequestActiveTerminalPaneSplitDetail
-} from '@/constants/terminal'
+import { requestActiveTerminalPaneSplit } from '@/components/tab-bar/request-active-terminal-pane-split'
 import { performContextualTourStepAction } from './contextual-tour-step-actions'
 import { openWorkspaceCreationComposerWithTourHandoff } from './workspace-creation-tour-handoff'
 
@@ -322,39 +318,18 @@ export function ContextualTourOverlay(): JSX.Element | null {
       openModal,
       canCreateWorkspace,
       openWorkspaceComposer: openWorkspaceCreationComposerWithTourHandoff,
-      dispatchTerminalPaneSplit: (detail) => {
-        window.dispatchEvent(
-          new CustomEvent<RequestActiveTerminalPaneSplitDetail>(
-            REQUEST_ACTIVE_TERMINAL_PANE_SPLIT_EVENT,
-            { detail }
-          )
-        )
-      },
+      dispatchTerminalPaneSplit: requestActiveTerminalPaneSplit,
       schedule: (callback) => {
         window.setTimeout(callback, 0)
       }
     })
   }
 
-  const viewport = {
-    width: typeof window === 'undefined' ? 1024 : window.innerWidth,
-    height: typeof window === 'undefined' ? 768 : window.innerHeight
-  }
-  const { panelPosition, panelPlacement } = getContextualTourOverlayPanelPosition({
-    targetRect: renderState.rect,
-    panelElement: panelRef.current,
-    panelHost: renderState.panelHost,
-    preferredPlacement: renderState.preferredPlacement,
-    viewport
-  })
-
   return (
     <ContextualTourOverlaySurface
       activeTourId={activeTourId}
       renderState={renderState}
       panelRef={panelRef}
-      panelPosition={panelPosition}
-      panelPlacement={panelPlacement}
       panelHost={renderState.panelHost}
       onSkip={(id) => {
         emitContextualTourOutcome('skipped')

@@ -26,6 +26,18 @@ const mocks = vi.hoisted(() => ({
       }
     ],
     activeRepoId: 'repo-a',
+    projects: [],
+    projectGroups: [],
+    projectHostSetups: [],
+    hosts: [],
+    runtimeEnvironments: [],
+    runtimeStatusByEnvironmentId: new Map(),
+    sshTargetLabels: new Map(),
+    workspaceHostScope: null,
+    folderWorkspacePathStatuses: {},
+    fetchFolderWorkspacePathStatus: vi.fn(),
+    getFolderWorkspacePathStatusCacheKey: vi.fn(() => ''),
+    getFreshFolderWorkspacePathStatus: vi.fn(() => null),
     settings: {
       defaultTuiAgent: 'claude',
       disabledTuiAgents: [],

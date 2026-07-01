@@ -5,6 +5,7 @@ import type {
 } from '../../../shared/types'
 import { legacyBaseRefSearchResult } from '../../../shared/base-ref-search-result'
 import { callRuntimeRpc, getActiveRuntimeTarget } from './runtime-rpc-client'
+import { isRuntimeRepoRefSearchQueryWithinLimit } from './runtime-repo-search-bounds'
 
 export type RuntimeRepoBaseRefDefault = {
   defaultBaseRef: string | null
@@ -49,6 +50,9 @@ export async function searchRuntimeRepoBaseRefs(
   query: string,
   limit: number
 ): Promise<string[]> {
+  if (!isRuntimeRepoRefSearchQueryWithinLimit(query)) {
+    return []
+  }
   const target = getActiveRuntimeTarget(settings)
   if (target.kind !== 'environment') {
     return window.api.repos.searchBaseRefs({ repoId, query, limit })
@@ -68,6 +72,9 @@ export async function searchRuntimeRepoBaseRefDetails(
   query: string,
   limit: number
 ): Promise<BaseRefSearchResult[]> {
+  if (!isRuntimeRepoRefSearchQueryWithinLimit(query)) {
+    return []
+  }
   const target = getActiveRuntimeTarget(settings)
   if (target.kind !== 'environment') {
     return window.api.repos.searchBaseRefDetails({ repoId, query, limit })

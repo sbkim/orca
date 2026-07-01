@@ -4,10 +4,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { FsHandler } from './fs-handler'
 import { RelayContext } from './context'
 import type { RelayDispatcher } from './dispatcher'
-import * as fs from 'fs/promises'
-import * as path from 'path'
-import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync } from 'fs'
-import { tmpdir } from 'os'
+import * as fs from 'node:fs/promises'
+import * as path from 'node:path'
+import { mkdtempSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 
 const { mockSubscribe } = vi.hoisted(() => ({
   mockSubscribe: vi.fn()
@@ -433,8 +433,7 @@ describe('FsHandler', () => {
 
     const result = (await dispatcher.callRequest('fs.realpath', { filePath: linkPath })) as string
     // On macOS, /var is a symlink to /private/var, so resolve both to compare
-    const { realpathSync } = await import('fs')
-    expect(result).toBe(realpathSync(realFile))
+    expect(result).toBe(await fs.realpath(realFile))
   })
 
   it('does not let stale pending watch remove newer replacement watch', async () => {

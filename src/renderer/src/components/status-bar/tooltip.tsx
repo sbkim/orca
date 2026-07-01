@@ -2,6 +2,17 @@ import type { ProviderRateLimits, RateLimitWindow } from '../../../../shared/rat
 import { AgentIcon } from '@/lib/agent-catalog'
 import { ClaudeIcon, GeminiIcon, OpenAIIcon, OpenCodeGoIcon } from './icons'
 import { translate } from '@/i18n/i18n'
+import {
+  getProviderDisplayName,
+  getProviderUsageErrorMessage,
+  getProviderUsageStatusLabel
+} from './usage-error-copy'
+
+export {
+  getProviderDisplayName,
+  getProviderUsageErrorMessage,
+  getProviderUsageStatusLabel
+} from './usage-error-copy'
 
 // ---------------------------------------------------------------------------
 // Formatting helpers
@@ -43,6 +54,28 @@ export function formatResetCountdown(ms: number): string {
   return duration === 'now' ? 'Resets now' : `Resets in ${duration}`
 }
 
+export function formatResetCreditExpiry(
+  expiresAt: number | null | undefined,
+  count: number
+): string | null {
+  if (!expiresAt) {
+    return null
+  }
+  const duration = formatDuration(expiresAt - Date.now())
+  if (duration === 'now') {
+    return count > 1
+      ? translate('auto.components.status.bar.tooltip.7ec6e030a0', 'Next expires now')
+      : translate('auto.components.status.bar.tooltip.d1e442a9e5', 'Expires now')
+  }
+  return count > 1
+    ? translate('auto.components.status.bar.tooltip.6cf9eaed10', 'Next expires in {{value0}}', {
+        value0: duration
+      })
+    : translate('auto.components.status.bar.tooltip.20ad66aed1', 'Expires in {{value0}}', {
+        value0: duration
+      })
+}
+
 // ---------------------------------------------------------------------------
 // Shared icon component
 // ---------------------------------------------------------------------------
@@ -65,27 +98,34 @@ export function ProviderIcon({ provider }: { provider: string }): React.JSX.Elem
 
 function ErrorMessage({
   message,
+  label,
   stale = false,
   inverted = false
 }: {
   message: string
+  label?: string
   /** When true, prior data is still visible — show a softer "refresh failed" label. */
   stale?: boolean
   inverted?: boolean
 }): React.JSX.Element {
   const labelClass = inverted ? 'text-background/80' : 'text-foreground/85'
   const detailClass = inverted ? 'text-background/55' : 'text-muted-foreground'
+  const genericRefreshLabel = translate(
+    'auto.components.status.bar.tooltip.e740f92596',
+    'Refresh failed'
+  )
+  const staleRefreshLabel = translate(
+    'auto.components.status.bar.tooltip.a9a318b7a3',
+    'Refresh failed — showing cached data'
+  )
+  const resolvedLabel =
+    stale && (!label || label === genericRefreshLabel)
+      ? staleRefreshLabel
+      : (label ?? genericRefreshLabel)
 
   return (
     <div className="space-y-0.5">
-      <div className={`text-[11px] font-medium ${labelClass}`}>
-        {stale
-          ? translate(
-              'auto.components.status.bar.tooltip.a9a318b7a3',
-              'Refresh failed — showing cached data'
-            )
-          : translate('auto.components.status.bar.tooltip.7567cd1c6b', 'Usage unavailable')}
-      </div>
+      <div className={`text-[11px] font-medium ${labelClass}`}>{resolvedLabel}</div>
       <div className={detailClass}>{message}</div>
     </div>
   )
@@ -151,11 +191,13 @@ export function barColor(leftPct: number): string {
 export function ProviderPanel({
   p,
   inverted = false,
-  className
+  className,
+  showResetCredits = true
 }: {
   p: ProviderRateLimits | null
   inverted?: boolean
   className?: string
+  showResetCredits?: boolean
 }): React.JSX.Element {
   const textClass = inverted ? 'text-background' : 'text-foreground'
   const mutedClass = inverted ? 'text-background/60' : 'text-muted-foreground'
@@ -171,18 +213,7 @@ export function ProviderPanel({
     )
   }
 
-  const name =
-    p.provider === 'claude'
-      ? 'Claude'
-      : p.provider === 'codex'
-        ? 'Codex'
-        : p.provider === 'gemini'
-          ? 'Gemini'
-          : p.provider === 'opencode-go'
-            ? 'OpenCode Go'
-            : p.provider === 'kimi'
-              ? 'Kimi'
-              : p.provider
+  const name = getProviderDisplayName(p.provider)
 
   if (p.status === 'unavailable') {
     return (
@@ -207,10 +238,8 @@ export function ProviderPanel({
         </div>
         <div className="mt-2">
           <ErrorMessage
-            message={
-              p.error ??
-              translate('auto.components.status.bar.tooltip.2c35eca8d4', 'Unable to fetch usage')
-            }
+            label={getProviderUsageStatusLabel(p)}
+            message={getProviderUsageErrorMessage(p)}
             inverted={inverted}
           />
         </div>
@@ -219,6 +248,14 @@ export function ProviderPanel({
   }
 
   const updatedAgo = p.updatedAt ? `Updated ${formatTimeAgo(p.updatedAt)}` : 'Not yet updated'
+  const resetCreditCount =
+    showResetCredits && p.provider === 'codex'
+      ? (p.rateLimitResetCredits?.availableCount ?? null)
+      : null
+  const resetCreditExpiry =
+    resetCreditCount != null
+      ? formatResetCreditExpiry(p.rateLimitResetCredits?.nextExpiresAt, resetCreditCount)
+      : null
 
   const PanelWindowSection = ({
     w,
@@ -261,6 +298,21 @@ export function ProviderPanel({
           {name}
         </div>
         <div className={faintClass}>{updatedAgo}</div>
+        {resetCreditCount !== null && resetCreditCount !== undefined ? (
+          <div className={mutedClass}>
+            {resetCreditCount === 1
+              ? translate(
+                  'auto.components.status.bar.tooltip.45198c7d95',
+                  '1 rate-limit reset available'
+                )
+              : translate(
+                  'auto.components.status.bar.tooltip.bce421cba3',
+                  '{{value0}} rate-limit resets available',
+                  { value0: resetCreditCount }
+                )}
+          </div>
+        ) : null}
+        {resetCreditExpiry ? <div className={faintClass}>{resetCreditExpiry}</div> : null}
       </div>
 
       <div className={`border-t ${dividerClass}`} />

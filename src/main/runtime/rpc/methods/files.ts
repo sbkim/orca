@@ -26,6 +26,18 @@ const FileOpen = WorktreeSelector.extend({
     .pipe(z.string().min(1, 'Missing relative path'))
 })
 
+const ResolveTerminalPath = WorktreeSelector.extend({
+  pathText: z
+    .unknown()
+    .transform((v) => (typeof v === 'string' ? v : ''))
+    .pipe(z.string().min(1, 'Missing path text')),
+  cwd: z
+    .unknown()
+    .transform((v) => (typeof v === 'string' && v.length > 0 ? v : null))
+    .nullable()
+    .optional()
+})
+
 const FileOpenDiff = FileOpen.extend({
   staged: z.boolean().optional()
 })
@@ -64,6 +76,15 @@ const FileWriteBase64 = FileOpen.extend({
 
 const FileWriteBase64Chunk = FileWriteBase64.extend({
   append: z.boolean().optional()
+})
+
+const FileReadChunk = FileOpen.extend({
+  offset: z.number().int().nonnegative(),
+  length: z
+    .number()
+    .int()
+    .positive()
+    .max(512 * 1024)
 })
 
 const FileRename = WorktreeSelector.extend({
@@ -152,10 +173,27 @@ export const FILE_METHODS: RpcAnyMethod[] = [
       runtime.readMobileFile(params.worktree, params.relativePath)
   }),
   defineMethod({
+    name: 'files.resolveTerminalPath',
+    params: ResolveTerminalPath,
+    handler: async (params, { runtime }) =>
+      runtime.resolveTerminalPath(params.worktree, params.pathText, params.cwd ?? null)
+  }),
+  defineMethod({
     name: 'files.readPreview',
     params: FileOpen,
     handler: async (params, { runtime }) =>
       runtime.readFileExplorerPreview(params.worktree, params.relativePath)
+  }),
+  defineMethod({
+    name: 'files.readChunk',
+    params: FileReadChunk,
+    handler: async (params, { runtime }) =>
+      runtime.readFileExplorerChunk(
+        params.worktree,
+        params.relativePath,
+        params.offset,
+        params.length
+      )
   }),
   defineMethod({
     name: 'files.readDir',

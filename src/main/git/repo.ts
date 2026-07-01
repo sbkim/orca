@@ -1,13 +1,32 @@
 /* oxlint-disable max-lines */
-import { execSync } from 'child_process'
-import { existsSync, statSync } from 'fs'
-import { basename } from 'path'
+import { execSync } from 'node:child_process'
+import { existsSync, statSync } from 'node:fs'
+import { basename } from 'node:path'
 import { gitExecFileSync, gitExecFileAsync } from './runner'
 import type { BaseRefSearchResult } from '../../shared/types'
-import { buildHostedRemoteFileUrl, parseHostedRemote } from './hosted-remote-url'
+import { parseGitRevListAheadBehindCounts } from '../../shared/git-rev-list-output'
+import { normalizeRuntimePathSeparators } from '../../shared/cross-platform-path'
+import { parseWslUncPath } from '../../shared/wsl-paths'
+import { toWindowsWslPath } from '../wsl'
+import {
+  buildHostedRemoteCommitUrl,
+  buildHostedRemoteFileUrl,
+  parseHostedRemote
+} from './hosted-remote-url'
 import { normalizeGitUsername } from './git-username'
 
 const GH_LOGIN_TIMEOUT_MS = 2500
+
+type LocalGitExecOptions = {
+  wslDistro?: string
+}
+
+function gitExecOptions(
+  cwd: string,
+  options: LocalGitExecOptions = {}
+): { cwd: string; wslDistro?: string } {
+  return options.wslDistro ? { cwd, wslDistro: options.wslDistro } : { cwd }
+}
 
 /**
  * Ordered probe list used to resolve a repo's default base ref when no
@@ -71,6 +90,36 @@ export function isGitRepo(path: string): boolean {
   } catch {
     return false
   }
+}
+
+export function getGitRepoRoot(path: string): string {
+  try {
+    if (!existsSync(path) || !statSync(path).isDirectory()) {
+      return path
+    }
+    const insideWorkTree = gitExecFileSync(['rev-parse', '--is-inside-work-tree'], {
+      cwd: path
+    }).trim()
+    if (insideWorkTree === 'true') {
+      const root = gitExecFileSync(['rev-parse', '--show-toplevel'], {
+        cwd: path
+      }).trim()
+      return normalizeGitRepoRootForInputPath(path, root)
+    }
+  } catch {
+    // Fall through to preserving the original path.
+  }
+  return path
+}
+
+export function normalizeGitRepoRootForInputPath(inputPath: string, rootPath: string): string {
+  const inputWsl = parseWslUncPath(inputPath)
+  if (inputWsl && rootPath.startsWith('/')) {
+    // Why: WSL git reports Linux-native roots; Orca must persist the UNC path so
+    // later local git calls keep routing through the WSL-aware runner.
+    return toWindowsWslPath(rootPath, inputWsl.distro)
+  }
+  return normalizeRuntimePathSeparators(rootPath)
 }
 
 /**
@@ -320,8 +369,11 @@ export function getDefaultBaseRef(path: string): string | null {
   return null
 }
 
-export async function getBaseRefDefault(path: string): Promise<string | null> {
-  return getDefaultBaseRefAsync(path)
+export async function getBaseRefDefault(
+  path: string,
+  options: LocalGitExecOptions = {}
+): Promise<string | null> {
+  return getDefaultBaseRefAsync(path, options)
 }
 
 /**
@@ -337,20 +389,19 @@ export async function getBaseRefDefault(path: string): Promise<string | null> {
 export function getRemoteDrift(
   repoPath: string,
   localRef: string,
-  remoteRef: string
+  remoteRef: string,
+  options: LocalGitExecOptions = {}
 ): { ahead: number; behind: number } | null {
   try {
     const stdout = gitExecFileSync(
       ['rev-list', '--left-right', '--count', `${localRef}...${remoteRef}`],
-      { cwd: repoPath }
+      gitExecOptions(repoPath, options)
     )
-    const [aheadStr, behindStr] = stdout.trim().split(/\s+/)
-    const ahead = Number(aheadStr)
-    const behind = Number(behindStr)
-    if (!Number.isFinite(ahead) || !Number.isFinite(behind)) {
+    const counts = parseGitRevListAheadBehindCounts(stdout)
+    if (counts.status !== 'ok') {
       return null
     }
-    return { ahead, behind }
+    return { ahead: counts.ahead, behind: counts.behind }
   } catch {
     return null
   }
@@ -368,12 +419,13 @@ export function getRecentDriftSubjects(
   repoPath: string,
   localRef: string,
   remoteRef: string,
-  limit: number
+  limit: number,
+  options: LocalGitExecOptions = {}
 ): string[] {
   try {
     const stdout = gitExecFileSync(
       ['log', '--format=%s', '-n', String(limit), `${localRef}..${remoteRef}`],
-      { cwd: repoPath }
+      gitExecOptions(repoPath, options)
     )
     return stdout.split('\n').filter((s) => s.trim().length > 0)
   } catch {
@@ -446,8 +498,13 @@ export async function resolveDefaultBaseRefViaExec(exec: GitExec): Promise<strin
   })
 }
 
-async function getDefaultBaseRefAsync(path: string): Promise<string | null> {
-  return resolveDefaultBaseRefViaExec((argv) => gitExecFileAsync(argv, { cwd: path }))
+async function getDefaultBaseRefAsync(
+  path: string,
+  options: LocalGitExecOptions = {}
+): Promise<string | null> {
+  return resolveDefaultBaseRefViaExec((argv) =>
+    gitExecFileAsync(argv, gitExecOptions(path, options))
+  )
 }
 
 /**
@@ -479,6 +536,12 @@ async function getDefaultBaseRefAsync(path: string): Promise<string | null> {
 const REF_SEARCH_CANDIDATE_MULTIPLIER = 4
 const REF_SEARCH_LEGACY_HEADROOM = 100
 
+type RefSearchPatternGroup = 'all' | 'segmented' | 'branchRoot'
+
+function getRefSearchTokens(normalizedQuery: string): string[] {
+  return normalizedQuery.split('/').filter((t) => t.length > 0)
+}
+
 function getRefSearchCandidateCount(limit: number, excludesRemoteHead: boolean): number {
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new Error('invalid_limit')
@@ -490,7 +553,11 @@ function getRefSearchCandidateCount(limit: number, excludesRemoteHead: boolean):
 export function buildSearchBaseRefsArgv(
   normalizedQuery: string,
   limit: number,
-  options: { excludeRemoteHead?: boolean } = {}
+  options: {
+    excludeRemoteHead?: boolean
+    remoteNames?: readonly string[]
+    patternGroup?: RefSearchPatternGroup
+  } = {}
 ): string[] {
   const excludeRemoteHead = options.excludeRemoteHead ?? true
   const candidateCount = getRefSearchCandidateCount(limit, excludeRemoteHead)
@@ -516,7 +583,7 @@ export function buildSearchBaseRefsArgv(
   // patterns. A single remaining token means the user hasn't committed
   // to a remote-plus-branch query yet — route through the widened
   // single-segment globs below instead of pinning to one segment.
-  const tokens = normalizedQuery.split('/').filter((t) => t.length > 0)
+  const tokens = getRefSearchTokens(normalizedQuery)
   if (tokens.length <= 1) {
     const q = tokens[0] ?? ''
     // Why `**`, not `*`: git for-each-ref globs are fnmatch-style where a
@@ -538,7 +605,82 @@ export function buildSearchBaseRefsArgv(
   // as `<remote>/<branch>`, so users naturally retype that format; this
   // branch is what makes re-typing a visible result actually find it.
   const segmented = tokens.map((token) => `*${token}*`).join('/')
-  return [...base, `refs/remotes/${segmented}`, `refs/heads/${segmented}`]
+  const substringQuery = tokens.join('/')
+  const remoteBranchRootPatterns =
+    options.remoteNames && options.remoteNames.length > 0
+      ? options.remoteNames.flatMap((remote) => [
+          `refs/remotes/${remote}/${substringQuery}*`,
+          `refs/remotes/${remote}/${substringQuery}*/**`
+        ])
+      : [`refs/remotes/*/${substringQuery}*`, `refs/remotes/*/${substringQuery}*/**`]
+  const segmentedPatterns = [`refs/remotes/${segmented}`, `refs/heads/${segmented}`]
+  const branchRootPatterns = [
+    // Why: branch names often contain slashes (`plan/docs`). Segment-wise
+    // display-format globs only align with `<remote>/<branch>`; these root
+    // patterns also match the local branch name beneath any configured remote.
+    `refs/heads/${substringQuery}*`,
+    `refs/heads/${substringQuery}*/**`,
+    ...remoteBranchRootPatterns
+  ]
+  const patterns =
+    options.patternGroup === 'segmented'
+      ? segmentedPatterns
+      : options.patternGroup === 'branchRoot'
+        ? branchRootPatterns
+        : [...segmentedPatterns, ...branchRootPatterns]
+  return [...base, ...patterns]
+}
+
+async function runSearchBaseRefsGit(
+  path: string,
+  normalizedQuery: string,
+  limit: number,
+  options: { remoteNames: readonly string[]; patternGroup?: RefSearchPatternGroup }
+): Promise<{ stdout: string }> {
+  try {
+    return await gitExecFileAsync(
+      buildSearchBaseRefsArgv(normalizedQuery, limit, {
+        remoteNames: options.remoteNames,
+        patternGroup: options.patternGroup
+      }),
+      { cwd: path }
+    )
+  } catch (err) {
+    if (!isForEachRefExcludeUnsupportedError(err)) {
+      throw err
+    }
+    return gitExecFileAsync(
+      buildSearchBaseRefsArgv(normalizedQuery, limit, {
+        excludeRemoteHead: false,
+        remoteNames: options.remoteNames,
+        patternGroup: options.patternGroup
+      }),
+      { cwd: path }
+    )
+  }
+}
+
+export function mergeBaseRefSearchResultGroups(
+  groups: readonly BaseRefSearchResult[][],
+  limit: number
+): BaseRefSearchResult[] {
+  const seen = new Set<string>()
+  const merged: BaseRefSearchResult[] = []
+  const maxLength = Math.max(0, ...groups.map((group) => group.length))
+  for (let index = 0; index < maxLength && merged.length < limit; index += 1) {
+    for (const group of groups) {
+      const entry = group[index]
+      if (!entry || seen.has(entry.refName)) {
+        continue
+      }
+      seen.add(entry.refName)
+      merged.push(entry)
+      if (merged.length >= limit) {
+        break
+      }
+    }
+  }
+  return merged
 }
 
 export function isForEachRefExcludeUnsupportedError(error: unknown): boolean {
@@ -558,8 +700,11 @@ export function isForEachRefExcludeUnsupportedError(error: unknown): boolean {
  * Order: remote configured on the current default branch → origin → the single
  * remote when the repo has exactly one → error.
  */
-export async function getDefaultRemote(path: string): Promise<string> {
-  const defaultRef = await getDefaultBaseRefAsync(path)
+export async function getDefaultRemote(
+  path: string,
+  options: LocalGitExecOptions = {}
+): Promise<string> {
+  const defaultRef = await getDefaultBaseRefAsync(path, options)
   // Why: getDefaultBaseRefAsync returns null when no default branch can be
   // detected (e.g. a brand-new repo with no commits on origin). Guard so we
   // don't crash on .includes(); fall through to the remote-list heuristics.
@@ -573,7 +718,7 @@ export async function getDefaultRemote(path: string): Promise<string> {
     try {
       const { stdout } = await gitExecFileAsync(
         ['config', '--get', `branch.${defaultBranch}.remote`],
-        { cwd: path }
+        gitExecOptions(path, options)
       )
       const value = stdout.trim()
       if (value) {
@@ -585,7 +730,7 @@ export async function getDefaultRemote(path: string): Promise<string> {
   }
 
   try {
-    const { stdout } = await gitExecFileAsync(['remote'], { cwd: path })
+    const { stdout } = await gitExecFileAsync(['remote'], gitExecOptions(path, options))
     const remotes = stdout
       .split('\n')
       .map((line) => line.trim())
@@ -627,23 +772,31 @@ export async function searchBaseRefDetails(
   try {
     // Why: argv (including the two-remote-glob rationale) lives in
     // buildSearchBaseRefsArgv so the SSH sibling cannot drift.
-    const remotesPromise = listRemoteNames(path)
-    let result: { stdout: string }
-    try {
-      result = await gitExecFileAsync(buildSearchBaseRefsArgv(normalizedQuery, limit), {
-        cwd: path
-      })
-    } catch (err) {
-      if (!isForEachRefExcludeUnsupportedError(err)) {
-        throw err
-      }
-      result = await gitExecFileAsync(
-        buildSearchBaseRefsArgv(normalizedQuery, limit, { excludeRemoteHead: false }),
-        { cwd: path }
+    const remotes = await listRemoteNames(path)
+    const tokens = getRefSearchTokens(normalizedQuery)
+    if (tokens.length > 1) {
+      // Why: ambiguous slash queries need both display-format matches
+      // (`upstream/feat`) and local branch-name matches (`plan/docs`).
+      // Parse and merge buckets before the final limit so neither side starves.
+      const results = await Promise.all([
+        runSearchBaseRefsGit(path, normalizedQuery, limit, {
+          remoteNames: remotes,
+          patternGroup: 'segmented'
+        }),
+        runSearchBaseRefsGit(path, normalizedQuery, limit, {
+          remoteNames: remotes,
+          patternGroup: 'branchRoot'
+        })
+      ])
+      return mergeBaseRefSearchResultGroups(
+        results.map((entry) => parseAndFilterSearchRefDetails(entry.stdout, limit, remotes)),
+        limit
       )
     }
-    const remotes = await remotesPromise
 
+    const result = await runSearchBaseRefsGit(path, normalizedQuery, limit, {
+      remoteNames: remotes
+    })
     return parseAndFilterSearchRefDetails(result.stdout, limit, remotes)
   } catch (err) {
     // Why: surface the failure for diagnostics; callers treat `[]` as "no
@@ -655,9 +808,9 @@ export async function searchBaseRefDetails(
   }
 }
 
-async function listRemoteNames(path: string): Promise<string[]> {
+async function listRemoteNames(path: string, options: LocalGitExecOptions = {}): Promise<string[]> {
   try {
-    const { stdout } = await gitExecFileAsync(['remote'], { cwd: path })
+    const { stdout } = await gitExecFileAsync(['remote'], gitExecOptions(path, options))
     return stdout
       .split('\n')
       .map((line) => line.trim())
@@ -749,9 +902,13 @@ export function normalizeRefSearchQuery(query: string): string {
   return query.trim().replace(/[*?[\]\\]/g, '')
 }
 
-async function hasGitRefAsync(path: string, ref: string): Promise<boolean> {
+async function hasGitRefAsync(
+  path: string,
+  ref: string,
+  options: LocalGitExecOptions = {}
+): Promise<boolean> {
   try {
-    await gitExecFileAsync(['rev-parse', '--verify', ref], { cwd: path })
+    await gitExecFileAsync(['rev-parse', '--verify', ref], gitExecOptions(path, options))
     return true
   } catch {
     return false
@@ -763,17 +920,18 @@ export type BranchConflictKind = 'local' | 'remote'
 export async function getBranchConflictKind(
   path: string,
   branchName: string,
-  allowedBaseRef?: string
+  allowedBaseRef?: string,
+  options: LocalGitExecOptions = {}
 ): Promise<BranchConflictKind | null> {
-  if (await hasGitRefAsync(path, `refs/heads/${branchName}`)) {
+  if (await hasGitRefAsync(path, `refs/heads/${branchName}`, options)) {
     return 'local'
   }
 
   try {
-    const remoteNames = (await listRemoteNames(path)).sort((a, b) => b.length - a.length)
+    const remoteNames = (await listRemoteNames(path, options)).sort((a, b) => b.length - a.length)
     const { stdout } = await gitExecFileAsync(
       ['for-each-ref', '--format=%(refname)', 'refs/remotes'],
-      { cwd: path }
+      gitExecOptions(path, options)
     )
     const hasRemoteConflict = stdout.split('\n').some((ref) => {
       const trimmed = ref.trim()
@@ -824,4 +982,16 @@ export function getRemoteFileUrl(
   const defaultBranch = defaultBaseRef.replace(/^origin\//, '')
 
   return buildHostedRemoteFileUrl(remoteUrl, relativePath, defaultBranch, line)
+}
+
+/**
+ * Build a hosted URL (e.g. GitHub, GitLab, Bitbucket) for a commit. Returns
+ * null when the origin remote isn't a recognized host.
+ */
+export function getRemoteCommitUrl(repoPath: string, sha: string): string | null {
+  const remoteUrl = getRemoteUrl(repoPath)
+  if (!remoteUrl) {
+    return null
+  }
+  return buildHostedRemoteCommitUrl(remoteUrl, sha)
 }

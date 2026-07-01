@@ -21,9 +21,12 @@ export type HostedReviewInfo = {
   mergeable: PRMergeableState
   reviewDecision?: PRReviewDecision | null
   autoMergeEnabled?: boolean
+  autoMergeAllowed?: boolean | null
   mergeQueueRequired?: boolean | null
   mergeStateStatus?: string | null
   headSha?: string
+  /** Target branch name for review-created worktree compare-base repair. */
+  baseRefName?: string
   conflictSummary?: PRConflictSummary
 }
 
@@ -37,6 +40,8 @@ export type HostedReviewForBranchArgs = {
   linkedBitbucketPR?: number | null
   linkedAzureDevOpsPR?: number | null
   linkedGiteaPR?: number | null
+  // The worktree's checked-out HEAD oid (GitHub merged-at-head visibility).
+  currentHeadOid?: string | null
 }
 
 export type HostedReviewSummary = {
@@ -57,6 +62,7 @@ export type CreateHostedReviewInput = {
 
 export type CreateHostedReviewArgs = CreateHostedReviewInput & {
   repoPath: string
+  repoId?: string
   connectionId?: string | null
 }
 
@@ -115,6 +121,7 @@ export type HostedReviewCreationEligibility = {
 
 export type HostedReviewCreationEligibilityArgs = {
   repoPath: string
+  repoId?: string
   worktreePath?: string
   connectionId?: string | null
   branch: string

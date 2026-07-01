@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- Why: SSH connection lifecycle, credential retries, reconnect policy, and transport fallback are intentionally co-located so state transitions stay auditable in one file. */
-import * as net from 'net'
+import * as net from 'node:net'
 import { Client as SshClient } from 'ssh2'
-import type { ChildProcess } from 'child_process'
+import type { ChildProcess } from 'node:child_process'
 import type { ClientChannel, ConnectConfig, SFTPWrapper } from 'ssh2'
 import type { SshTarget, SshConnectionState, SshConnectionStatus } from '../../shared/ssh-types'
 import {
@@ -20,6 +20,7 @@ import {
   isTransientError,
   isAuthError,
   isAgentFallbackError,
+  isSystemSshFallbackError,
   isPassphraseError,
   sleep,
   buildConnectConfig,
@@ -316,6 +317,20 @@ export class SshConnection {
         this.proxyProcess?.kill()
         this.proxyProcess = null
         throw err
+      }
+
+      if (isSystemSshFallbackError(err)) {
+        this.proxyProcess?.kill()
+        this.proxyProcess = null
+        try {
+          // Why: on macOS, per-app network policy can block Orca's direct
+          // TCP socket while the system OpenSSH binary is still allowed.
+          await this.doSystemSshProbe(connectGeneration)
+          return
+        } catch {
+          this.useSystemSshTransport = false
+          throw err
+        }
       }
 
       let authError = err

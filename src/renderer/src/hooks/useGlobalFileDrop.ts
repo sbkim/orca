@@ -5,6 +5,7 @@ import { isPathInsideWorktree, toWorktreeRelativePath } from '@/lib/terminal-lin
 import { useAppStore } from '@/store'
 import { getConnectionId } from '@/lib/connection-context'
 import { joinPath } from '@/lib/path'
+import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import {
   importExternalPathsToRuntime,
   isRemoteRuntimeFileOperation,
@@ -13,6 +14,24 @@ import {
 } from '@/runtime/runtime-file-client'
 import type { GlobalSettings } from '../../../shared/types'
 import { translate } from '@/i18n/i18n'
+import type { WorktreeRuntimeOwnerState } from '@/lib/worktree-runtime-owner'
+import {
+  NATIVE_FILE_DROP_MAX_PATHS,
+  type NativeFileDropRejectedPayload
+} from '../../../shared/native-file-drop'
+
+export function getEditorFileDropSettingsForWorktree(
+  store: WorktreeRuntimeOwnerState,
+  worktreeId: string
+): Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> {
+  const runtimeEnvironmentId = getRuntimeEnvironmentIdForWorktree(store, worktreeId)
+  // Why: OS drops target the selected worktree. Use that worktree's host owner
+  // so a focused runtime cannot hijack local/SSH editor drops.
+  return {
+    ...store.settings,
+    activeRuntimeEnvironmentId: runtimeEnvironmentId
+  }
+}
 
 export function shouldUploadRemoteEditorFileDrop(
   settings: Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined,
@@ -21,9 +40,28 @@ export function shouldUploadRemoteEditorFileDrop(
   return Boolean(settings?.activeRuntimeEnvironmentId?.trim() || connectionId?.trim())
 }
 
+export function getEditorFileDropOperationContext(
+  store: WorktreeRuntimeOwnerState,
+  worktreeId: string,
+  worktreePath: string | null | undefined,
+  connectionId: string | undefined
+): RuntimeFileOperationArgs {
+  return {
+    settings: getEditorFileDropSettingsForWorktree(store, worktreeId),
+    worktreeId,
+    worktreePath,
+    connectionId
+  }
+}
+
 export function useGlobalFileDrop(): void {
   useEffect(() => {
     return window.api.ui.onFileDrop((data) => {
+      if (data.target === 'rejected') {
+        showNativeFileDropRejection(data)
+        return
+      }
+
       if (data.target !== 'editor') {
         return
       }
@@ -37,8 +75,14 @@ export function useGlobalFileDrop(): void {
       const activeWorktree = store.getKnownWorktreeById(activeWorktreeId)
       const worktreePath = activeWorktree?.path
       const connectionId = getConnectionId(activeWorktreeId) ?? undefined
-      const dropSettings = store.settings
-      const runtimeEnvironmentId = dropSettings?.activeRuntimeEnvironmentId?.trim() || undefined
+      const fileContext = getEditorFileDropOperationContext(
+        store,
+        activeWorktreeId,
+        worktreePath,
+        connectionId
+      )
+      const dropSettings = fileContext.settings
+      const runtimeEnvironmentId = dropSettings?.activeRuntimeEnvironmentId ?? null
       if (shouldUploadRemoteEditorFileDrop(dropSettings, connectionId)) {
         if (!worktreePath) {
           toast.error(
@@ -55,12 +99,7 @@ export function useGlobalFileDrop(): void {
             // SSH editors must upload into the server worktree before opening.
             const destinationDir = joinPath(worktreePath, '.orca/drops')
             const { results } = await importExternalPathsToRuntime(
-              {
-                settings: dropSettings,
-                worktreeId: activeWorktreeId,
-                worktreePath,
-                connectionId
-              },
+              fileContext,
               data.paths,
               destinationDir,
               { ensureDestinationDir: true }
@@ -77,11 +116,11 @@ export function useGlobalFileDrop(): void {
                   filePath: result.destPath,
                   relativePath: maybeRelative ?? result.destPath,
                   worktreeId: activeWorktreeId,
-                  runtimeEnvironmentId,
+                  runtimeEnvironmentId: runtimeEnvironmentId ?? undefined,
                   language: detectLanguage(result.destPath),
                   mode: 'edit'
                 },
-                { suppressActiveRuntimeFallback: runtimeEnvironmentId === undefined }
+                { suppressActiveRuntimeFallback: runtimeEnvironmentId === null }
               )
             }
             if (results.some((result) => result.status !== 'imported')) {
@@ -110,12 +149,6 @@ export function useGlobalFileDrop(): void {
       for (const filePath of data.paths) {
         void (async () => {
           try {
-            const fileContext: RuntimeFileOperationArgs = {
-              settings: store.settings,
-              worktreeId: activeWorktreeId,
-              worktreePath,
-              connectionId
-            }
             const isRemoteRuntimePath = isRemoteRuntimeFileOperation(fileContext, filePath)
             // Why: remote paths don't need local auth — the relay/runtime is the security boundary.
             if (!connectionId && !isRemoteRuntimePath) {
@@ -153,4 +186,39 @@ export function useGlobalFileDrop(): void {
       }
     })
   }, [])
+}
+
+function showNativeFileDropRejection(data: NativeFileDropRejectedPayload): void {
+  const message = getNativeFileDropRejectionMessage(data)
+  toast.error(message.title, { description: message.description })
+}
+
+export function getNativeFileDropRejectionMessage(data: NativeFileDropRejectedPayload): {
+  description: string
+  title: string
+} {
+  if (data.reason === 'too-many-paths') {
+    return {
+      description: translate(
+        'auto.hooks.useGlobalFileDrop.nativeDropTooManyPathsDescription',
+        'Drop {{value0}} or fewer files at a time.',
+        { value0: NATIVE_FILE_DROP_MAX_PATHS }
+      ),
+      title: translate(
+        'auto.hooks.useGlobalFileDrop.nativeDropTooManyPaths',
+        'Drop contains too many files.'
+      )
+    }
+  }
+
+  return {
+    description: translate(
+      'auto.hooks.useGlobalFileDrop.nativeDropPathsTooLargeDescription',
+      'Drop fewer files or use a shorter path list.'
+    ),
+    title: translate(
+      'auto.hooks.useGlobalFileDrop.nativeDropPathsTooLarge',
+      'Drop path list is too large.'
+    )
+  }
 }

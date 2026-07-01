@@ -1,11 +1,11 @@
 /* eslint-disable max-lines -- Why: filesystem-watcher centralizes native
-(@parcel/watcher), WSL (inotifywait), and SSH remote watcher lifecycles in
+(@parcel/watcher), WSL-native snapshot, and SSH remote watcher lifecycles in
 one module so subscription/cleanup invariants stay auditable from a single
 file. Splitting by transport would scatter the shared debounce/coalesce
 helpers and the common batch-flush path across three files. */
 import { ipcMain, type WebContents } from 'electron'
-import * as path from 'path'
-import { stat } from 'fs/promises'
+import * as path from 'node:path'
+import { stat } from 'node:fs/promises'
 import type { Event as WatcherEvent } from '@parcel/watcher'
 import type { FsChangeEvent, FsChangedPayload } from '../../shared/types'
 import { isWslPath } from '../wsl'
@@ -506,8 +506,8 @@ async function doInstallLocalWatcher(
   }
 
   try {
-    // Why: WSL paths use inotifywait inside the Linux distro where
-    // inotify works natively; native Windows paths use @parcel/watcher.
+    // Why: WSL paths use one snapshot subprocess inside the Linux distro so
+    // `wsl --shutdown` can kill it; native Windows paths use @parcel/watcher.
     root = isWslPath(worktreePath)
       ? await createWslWatcher(rootKey, worktreePath, {
           ignoreDirs: WATCHER_IGNORE_DIRS,
@@ -588,7 +588,35 @@ function unsubscribe(worktreePath: string, senderId: number): void {
   }
 }
 
-// ── Remote watcher state ─────────────────────────────────────────────
+export async function closeLocalWatcherForWorktreePath(worktreePath: string): Promise<void> {
+  const rootKey = normalizeRootPath(worktreePath)
+  const pendingTeardown = pendingTeardowns.get(rootKey)
+  if (pendingTeardown) {
+    clearTimeout(pendingTeardown)
+    pendingTeardowns.delete(rootKey)
+  }
+
+  const inFlight = inFlightLocalInstalls.get(rootKey)
+  if (inFlight) {
+    // Why: Windows keeps watched directories locked; deletion must be able to
+    // cancel an in-flight subscription before Git tries to remove the tree.
+    inFlight.listeners.clear()
+    inFlight.cancelled = true
+  }
+  await pendingLocalInstallPromises.get(rootKey)?.catch(() => undefined)
+
+  const root = watchedRoots.get(rootKey)
+  if (!root) {
+    return
+  }
+  if (root.batch.timer) {
+    clearTimeout(root.batch.timer)
+  }
+  watchedRoots.delete(rootKey)
+  await trackLocalUnsubscribe(rootKey, root)
+}
+
+// Remote watcher state
 type RemoteWatcherState = {
   unwatch: () => void
   listeners: Map<number, WebContents>

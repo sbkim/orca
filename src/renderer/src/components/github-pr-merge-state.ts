@@ -5,6 +5,7 @@ import type {
   PRReviewDecision,
   PRState
 } from '../../../shared/types'
+import { canEnableGitHubPRAutoMerge } from '../../../shared/github-pr-auto-merge-availability'
 import { translate } from '@/i18n/i18n'
 
 export type GitHubPRMergeStateInput = {
@@ -15,6 +16,7 @@ export type GitHubPRMergeStateInput = {
   checksStatus?: CheckStatus
   checksSummary?: GitHubPRCheckSummary
   autoMergeEnabled?: boolean
+  autoMergeAllowed?: boolean | null
   mergeQueueRequired?: boolean | null
 }
 
@@ -45,8 +47,44 @@ function checksState(item: GitHubPRMergeStateInput): CheckStatus | 'none' | unde
   return item.checksStatus
 }
 
+function checksPassed(item: GitHubPRMergeStateInput): boolean {
+  return checksState(item) === 'success'
+}
+
 function hasFullMergeMetadata(item: GitHubPRMergeStateInput): boolean {
   return item.mergeable !== undefined || item.mergeStateStatus !== undefined
+}
+
+// Why: GitHub rejects enabling auto-merge on a conflicting PR, so offering it
+// there only yields an error toast. Repos can also disable auto-merge entirely,
+// so suppress the action when GitHub explicitly reports that setting is off.
+function canEnableAutoMerge(item: GitHubPRMergeStateInput): boolean {
+  return canEnableGitHubPRAutoMerge(item)
+}
+
+// Why: when GitHub already allows a direct merge, offering "Enable auto-merge"
+// only yields a "clean status" rejection. Keep the Disable action so users can
+// still turn off an existing auto-merge request; merge-queue "Merge when ready"
+// paths set directMergeAvailable=false and never reach here.
+function autoMergeActionWhenDirectMergeAvailable(
+  autoMergeAction: GitHubPRAutoMergeAction | null
+): GitHubPRAutoMergeAction | null {
+  return autoMergeAction?.kind === 'disable' ? autoMergeAction : null
+}
+
+function passedChecksMergePresentation(
+  autoMergeAction: GitHubPRAutoMergeAction | null
+): GitHubPRMergeStatePresentation {
+  return {
+    label: translate('auto.components.github.pr.merge.state.a5b66afb58', 'Checks passed'),
+    tone: SUCCESS_TONE,
+    tooltip: translate(
+      'auto.components.github.pr.merge.state.fbd4f57f0a',
+      'Checks passed. Merge eligibility will be checked again before merging.'
+    ),
+    directMergeAvailable: true,
+    autoMergeAction: autoMergeActionWhenDirectMergeAvailable(autoMergeAction)
+  }
 }
 
 export function presentGitHubPRMergeState(
@@ -79,7 +117,19 @@ export function presentGitHubPRMergeState(
                 'Add this pull request to the GitHub merge queue'
               )
             }
-          : null
+          : canEnableAutoMerge(item)
+            ? {
+                kind: 'enable' as const,
+                label: translate(
+                  'auto.components.github.pr.merge.state.4ab19a62ef',
+                  'Enable auto-merge'
+                ),
+                tooltip: translate(
+                  'auto.components.github.pr.merge.state.8f6cb3772f',
+                  'Merge this pull request automatically once requirements are met'
+                )
+              }
+            : null
 
   if (item.state === 'merged') {
     return {
@@ -154,6 +204,11 @@ export function presentGitHubPRMergeState(
     }
   }
   if (!hasFullMergeMetadata(item)) {
+    // Why: GitHub can omit merge metadata while checks are already green; let
+    // users attempt merge and rely on the main-process preflight for blockers.
+    if (checksPassed(item)) {
+      return passedChecksMergePresentation(autoMergeAction)
+    }
     return {
       label: translate('auto.components.github.pr.merge.state.bd4f27b50e', 'Merge'),
       tone: MUTED_TONE,
@@ -235,8 +290,13 @@ export function presentGitHubPRMergeState(
           ? 'GitHub says this PR can merge and checks passed'
           : 'GitHub says this PR can merge'),
       directMergeAvailable: true,
-      autoMergeAction
+      autoMergeAction: autoMergeActionWhenDirectMergeAvailable(autoMergeAction)
     }
+  }
+  // Why: GitHub may still report intermediate mergeability while checks are
+  // green; the merge command re-checks authoritative blockers before merging.
+  if (checksPassed(item)) {
+    return passedChecksMergePresentation(autoMergeAction)
   }
   return {
     label: translate('auto.components.github.pr.merge.state.f958920f3a', 'Checking'),

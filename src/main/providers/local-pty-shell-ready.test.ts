@@ -2,13 +2,17 @@
    bash, marker scanning, and env restoration cases in one suite so the
    generated wrapper contract is reviewed as a unit. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { spawnSync } from 'child_process'
-import { tmpdir } from 'os'
-import { join, dirname } from 'path'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'fs'
+import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join, dirname } from 'node:path'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import type * as pty from 'node-pty'
 import type * as LocalPtyShellReadyModule from './local-pty-shell-ready'
-import { writeStartupCommandWhenShellReady } from './local-pty-shell-ready'
+import {
+  createShellReadyScanState,
+  scanForShellReady,
+  writeStartupCommandWhenShellReady
+} from './local-pty-shell-ready'
 
 const { getUserDataPathMock } = vi.hoisted(() => ({
   getUserDataPathMock: vi.fn<() => string>()
@@ -93,9 +97,8 @@ describe('writeStartupCommandWhenShellReady', () => {
     writeStartupCommandWhenShellReady(ready, proc, 'claude', () => {})
 
     await ready
-    // flush path waits for a post-ready data chunk (prompt draw) then 30ms,
-    // or falls back after 50ms if no data arrives.
-    vi.advanceTimersByTime(50)
+    proc._emitData('\r\nuser@host % ')
+    vi.advanceTimersByTime(30)
     await Promise.resolve()
 
     expect(proc._writes).toEqual(['claude\n'])
@@ -108,7 +111,8 @@ describe('writeStartupCommandWhenShellReady', () => {
     writeStartupCommandWhenShellReady(ready, proc, 'claude', () => {})
 
     await ready
-    vi.advanceTimersByTime(50)
+    proc._emitData('\r\nPS> ')
+    vi.advanceTimersByTime(30)
     await Promise.resolve()
 
     expect(proc._writes).toEqual(['claude\r'])
@@ -121,10 +125,102 @@ describe('writeStartupCommandWhenShellReady', () => {
     writeStartupCommandWhenShellReady(ready, proc, 'claude\n', () => {})
 
     await ready
-    vi.advanceTimersByTime(50)
+    proc._emitData('\r\nPS> ')
+    vi.advanceTimersByTime(30)
     await Promise.resolve()
 
     expect(proc._writes).toEqual(['claude\n'])
+  })
+
+  it('keeps the no-prompt fallback conservative to avoid duplicate shell echo', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    const proc = createMockProc()
+    const ready = Promise.resolve()
+    writeStartupCommandWhenShellReady(ready, proc, 'codex', () => {})
+
+    await ready
+    vi.advanceTimersByTime(50)
+    await Promise.resolve()
+
+    expect(proc._writes).toEqual([])
+
+    vi.advanceTimersByTime(150)
+    await Promise.resolve()
+
+    expect(proc._writes).toEqual(['codex\n'])
+  })
+
+  it('uses the short settle delay when marker scan already observed post-marker bytes', async () => {
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    const proc = createMockProc()
+    const ready = Promise.resolve({ postMarkerBytesObserved: true })
+    writeStartupCommandWhenShellReady(ready, proc, 'codex', () => {})
+
+    await ready
+    vi.advanceTimersByTime(29)
+    await Promise.resolve()
+    expect(proc._writes).toEqual([])
+
+    vi.advanceTimersByTime(1)
+    await Promise.resolve()
+    expect(proc._writes).toEqual(['codex\n'])
+  })
+})
+
+describe('scanForShellReady', () => {
+  it('flushes marker-like output when the full marker is not BEL-terminated', () => {
+    const state = createShellReadyScanState()
+
+    expect(scanForShellReady(state, 'before \x1b]777;orca-shell-readyx')).toEqual({
+      output: 'before \x1b]777;orca-shell-readyx',
+      matched: false,
+      postMarkerBytesObserved: false
+    })
+    expect(scanForShellReady(state, ' after')).toEqual({
+      output: ' after',
+      matched: false,
+      postMarkerBytesObserved: false
+    })
+  })
+
+  it('reports post-marker bytes only when bytes follow the BEL terminator in the matching call', () => {
+    let state = createShellReadyScanState()
+    expect(scanForShellReady(state, 'before \x1b]777;orca-shell-ready\x07')).toEqual({
+      output: 'before ',
+      matched: true,
+      postMarkerBytesObserved: false
+    })
+
+    state = createShellReadyScanState()
+    expect(scanForShellReady(state, 'before \x1b]777;orca-shell-ready\x07% ')).toEqual({
+      output: 'before % ',
+      matched: true,
+      postMarkerBytesObserved: true
+    })
+
+    state = createShellReadyScanState()
+    expect(scanForShellReady(state, 'before \x1b]777;orca-shell-ready')).toEqual({
+      output: 'before ',
+      matched: false,
+      postMarkerBytesObserved: false
+    })
+    expect(scanForShellReady(state, '\x07')).toEqual({
+      output: '',
+      matched: true,
+      postMarkerBytesObserved: false
+    })
+
+    state = createShellReadyScanState()
+    expect(scanForShellReady(state, '\x1b]777;orca-shell-ready')).toEqual({
+      output: '',
+      matched: false,
+      postMarkerBytesObserved: false
+    })
+    expect(scanForShellReady(state, '\x07% ')).toEqual({
+      output: '% ',
+      matched: true,
+      postMarkerBytesObserved: true
+    })
   })
 })
 
@@ -312,7 +408,25 @@ describePosix('local PTY shell-ready launch config', () => {
     expectFinalZdotdirRestoreContext(zlogin)
   })
 
-  it('writes wrappers that restore agent config homes after user startup files', async () => {
+  it('owns zle-line-init for the shell-ready marker instead of an azhw hook', async () => {
+    const { getShellReadyLaunchConfig } = await importFreshLocalPtyShellReady()
+
+    getShellReadyLaunchConfig('/bin/zsh')
+
+    const zlogin = readFileSync(join(userDataPath, 'shell-ready', 'zsh', '.zlogin'), 'utf8')
+    expect(zlogin).toContain('zle -N zle-line-init __orca_prompt_mark')
+    expect(zlogin).toContain('__orca_prev_line_init_fn="${widgets[zle-line-init]#user:}"')
+    expect(zlogin).toContain('printf "\\033]777;orca-shell-ready\\007"')
+    // Why: add-zle-hook-widget aborts its hook chain when an earlier hook
+    // exits non-zero (e.g. oh-my-zsh vi-mode's raw zle-line-init), so the
+    // marker must not be registered through it.
+    expect(zlogin).not.toContain('add-zle-hook-widget line-init')
+    // Why: re-source guard — skip re-capturing when we are already the bound
+    // widget so the prior widget chain survives a second source.
+    expect(zlogin).toContain('== "user:__orca_prompt_mark"')
+  })
+
+  it('writes wrappers without restoring Pi/OMP homes after user startup files', async () => {
     const { getBashShellReadyRcfileContent, getShellReadyLaunchConfig } =
       await importFreshLocalPtyShellReady()
 
@@ -323,29 +437,30 @@ describePosix('local PTY shell-ready launch config', () => {
     const bashRc = getBashShellReadyRcfileContent()
     const restoreLine =
       '[[ -n "${ORCA_OPENCODE_CONFIG_DIR:-}" ]] && export OPENCODE_CONFIG_DIR="${ORCA_OPENCODE_CONFIG_DIR}"'
-    const piRestoreLine =
-      '[[ -n "${ORCA_PI_CODING_AGENT_DIR:-}" ]] && export PI_CODING_AGENT_DIR="${ORCA_PI_CODING_AGENT_DIR}"'
+    const mimoRestoreLine =
+      '[[ -n "${ORCA_MIMOCODE_HOME:-}" ]] && export MIMOCODE_HOME="${ORCA_MIMOCODE_HOME}"'
     const codexRestoreLine =
       '[[ -n "${ORCA_CODEX_HOME:-}" ]] && export CODEX_HOME="${ORCA_CODEX_HOME}"'
     const agentTeamsPathRestoreLine = '[[ -n "${ORCA_AGENT_TEAMS_SHIM_DIR:-}" ]] || return 0'
-    const ompRestoreLine =
-      'if [[ -z "${ORCA_PI_CODING_AGENT_DIR:-}" && -n "${ORCA_OMP_CODING_AGENT_DIR:-}" ]]; then'
     const ompWrapperLine = 'command omp --extension "${ORCA_OMP_STATUS_EXTENSION}" "$@"'
     expect(zshrc).toContain(restoreLine)
     expect(zlogin).toContain(restoreLine)
     expect(bashRc).toContain(restoreLine)
-    expect(zshrc).toContain(piRestoreLine)
-    expect(zlogin).toContain(piRestoreLine)
-    expect(bashRc).toContain(piRestoreLine)
+    expect(zshrc).toContain(mimoRestoreLine)
+    expect(zlogin).toContain(mimoRestoreLine)
+    expect(bashRc).toContain(mimoRestoreLine)
+    expect(zshrc).not.toContain('ORCA_PI_CODING_AGENT_DIR')
+    expect(zlogin).not.toContain('ORCA_PI_CODING_AGENT_DIR')
+    expect(bashRc).not.toContain('ORCA_PI_CODING_AGENT_DIR')
     expect(zshrc).toContain(codexRestoreLine)
     expect(zlogin).toContain(codexRestoreLine)
     expect(zshrc).toContain(agentTeamsPathRestoreLine)
     expect(zlogin).toContain(agentTeamsPathRestoreLine)
     expect(bashRc).toContain(agentTeamsPathRestoreLine)
     expect(bashRc).toContain(codexRestoreLine)
-    expect(zshrc).toContain(ompRestoreLine)
-    expect(zlogin).toContain(ompRestoreLine)
-    expect(bashRc).toContain(ompRestoreLine)
+    expect(zshrc).not.toContain('ORCA_OMP_CODING_AGENT_DIR')
+    expect(zlogin).not.toContain('ORCA_OMP_CODING_AGENT_DIR')
+    expect(bashRc).not.toContain('ORCA_OMP_CODING_AGENT_DIR')
     expect(zshrc).toContain(ompWrapperLine)
     expect(zlogin).toContain(ompWrapperLine)
     expect(bashRc).toContain(ompWrapperLine)

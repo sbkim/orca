@@ -128,6 +128,38 @@ describe('terminal path helpers', () => {
       })
     })
 
+    it('trims terminal padding after line-ending spaced paths', () => {
+      const links = extractTerminalFileLinks('/Users/alice/My Folder   ')
+      expect(links).toHaveLength(1)
+      expect(links[0]).toMatchObject({
+        pathText: '/Users/alice/My Folder',
+        displayText: '/Users/alice/My Folder'
+      })
+    })
+
+    it('does not treat mid-line command arguments as line-ending spaced paths', () => {
+      const links = extractTerminalFileLinks('run /usr/bin/env node, then continue')
+      expect(links.map((link) => link.pathText)).not.toContain('/usr/bin/env node')
+    })
+
+    it('keeps trailing separators on directory-like absolute paths', () => {
+      const links = extractTerminalFileLinks('/Users/alice/worktree/')
+      expect(links).toHaveLength(1)
+      expect(links[0]).toMatchObject({
+        pathText: '/Users/alice/worktree/',
+        displayText: '/Users/alice/worktree/'
+      })
+    })
+
+    it('does not linkify root-only or relative trailing separator tokens', () => {
+      expect(extractTerminalFileLinks('progress 1 / 3')).toEqual([])
+      expect(extractTerminalFileLinks('/')).toEqual([])
+      expect(extractTerminalFileLinks('./')).toEqual([])
+      expect(extractTerminalFileLinks('../')).toEqual([])
+      expect(extractTerminalFileLinks('~/')).toEqual([])
+      expect(extractTerminalFileLinks('C:\\')).toEqual([])
+    })
+
     it('detects an extensionless relative path ending in a spaced segment', () => {
       const links = extractTerminalFileLinks('./My Folder')
       expect(links).toHaveLength(1)

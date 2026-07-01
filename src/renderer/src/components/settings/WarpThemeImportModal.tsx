@@ -86,7 +86,7 @@ export function WarpThemeImportModal({
                 )
               : translate(
                   'auto.components.settings.WarpThemeImportModal.title',
-                  'Import themes from Warp'
+                  'Import from Warp'
                 )}
           </DialogTitle>
           <DialogDescription className="text-xs">
@@ -255,6 +255,14 @@ export function WarpThemeImportModal({
                   {translate(
                     'auto.components.settings.WarpThemeImportModal.builtin_themes_hint',
                     "Warp's preloaded themes are part of the Warp app and can't be read from disk. Orca already includes most of them, like Dracula, Gruvbox, Solarized, and Tokyo Night."
+                  )}
+                </p>
+              ) : null}
+              {!preview.error && mode !== 'yaml' ? (
+                <p>
+                  {translate(
+                    'auto.components.settings.WarpThemeImportModal.custom_theme_yaml_hint',
+                    "Custom and community themes need to exist as YAML files in a Warp themes folder before auto-import can find them. If you cloned Warp's public themes repo, use Choose Folder to import that checkout."
                   )}
                 </p>
               ) : null}

@@ -1,5 +1,14 @@
 /* eslint-disable max-lines */
-import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject
+} from 'react'
 import { toast } from 'sonner'
 import type { GlobalSettings, OrcaHooks } from '../../../../shared/types'
 import type { SpeechModelState } from '../../../../shared/speech-types'
@@ -14,8 +23,9 @@ import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-pref
 import { isMacUserAgent, isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
 import { applyDocumentTheme } from '@/lib/document-theme'
 import { useConfirmationDialog } from '@/components/confirmation-dialog'
-import { SCROLLBACK_PRESETS_MB, getFallbackTerminalFonts } from './SettingsConstants'
+import { SCROLLBACK_PRESETS_ROWS, getFallbackTerminalFonts } from './SettingsConstants'
 import { DEFAULT_APP_FONT_FAMILY, getDefaultVoiceSettings } from '../../../../shared/constants'
+import { getRepoExecutionHostId, LOCAL_EXECUTION_HOST_ID } from '../../../../shared/execution-host'
 import { GeneralPane } from './GeneralPane'
 import { BrowserPane } from './BrowserPane'
 import { AppearancePane } from './AppearancePane'
@@ -28,6 +38,7 @@ import { useWarpThemeImport } from './useWarpThemeImport'
 import { RepositoryPane } from './RepositoryPane'
 import { GitPane } from './GitPane'
 import { CommitMessageAiPane } from './CommitMessageAiPane'
+import { GitProviderApiBudgetPane } from './GitProviderApiBudgetPane'
 import { NotificationsPane } from './NotificationsPane'
 import { VoicePane } from './VoicePane'
 import { SshPane } from './SshPane'
@@ -49,9 +60,10 @@ import { AdvancedPane } from './AdvancedPane'
 import { SettingsSidebar } from './SettingsSidebar'
 import { SettingsSetupGuidePane } from './SettingsSetupGuidePane'
 import { ActiveSettingsSectionProvider, SettingsSection } from './SettingsSection'
-import { matchesSettingsSearch } from './settings-search'
+import { getSettingsSectionSearchEntries, rankSettingsSearchItems } from './settings-search'
 import { cn } from '@/lib/utils'
 import { isIntentionalAppRestartInProgress } from '@/lib/updater-beforeunload'
+import { registerWindowCloseGuard } from '../window-close-request-coordinator'
 import { checkRuntimeHooks } from '@/runtime/runtime-hooks-client'
 import {
   getWindowsTerminalCapabilityOwnerKey,
@@ -78,6 +90,7 @@ import {
   GLOBAL_AGENT_SKILL_SOURCE_KINDS,
   useInstalledAgentSkill
 } from '@/hooks/useInstalledAgentSkills'
+import { useActiveProjectSkillRuntime } from '@/hooks/useActiveProjectSkillRuntime'
 import {
   deriveNeededRepoIds,
   deriveNeededSectionIds,
@@ -85,35 +98,56 @@ import {
   getRuntimeTargetIdentity
 } from './settings-load-performance'
 import { translate } from '@/i18n/i18n'
+import { getProjectHostSetupProjectionFromState } from '../../store/selectors'
+
+const DevToolsPane = import.meta.env.DEV
+  ? lazy(() => import('./DevToolsPane').then((module) => ({ default: module.DevToolsPane })))
+  : null
 
 const SETTINGS_NAV_GROUPS = [
   {
     id: 'capabilities',
-    title: translate('auto.components.settings.Settings.23c6874fdf', 'AI Capabilities')
+    titleKey: 'auto.components.settings.Settings.23c6874fdf',
+    titleDefault: 'AI Capabilities'
   },
-  { id: 'setup', title: translate('auto.components.settings.Settings.9abb9be3bc', 'Set Up') },
+  { id: 'setup', titleKey: 'auto.components.settings.Settings.9abb9be3bc', titleDefault: 'Set Up' },
   {
     id: 'workflows',
-    title: translate('auto.components.settings.Settings.e1578cd4bc', 'Workflows')
+    titleKey: 'auto.components.settings.Settings.e1578cd4bc',
+    titleDefault: 'Workflows'
   },
   {
     id: 'interface',
-    title: translate('auto.components.settings.Settings.8bd117d669', 'Interface')
+    titleKey: 'auto.components.settings.Settings.8bd117d669',
+    titleDefault: 'Interface'
   },
   {
     id: 'remote',
-    title: translate('auto.components.settings.Settings.23931df7e8', 'Remote Access')
+    titleKey: 'auto.components.settings.Settings.23931df7e8',
+    titleDefault: 'Remote Hosts'
   },
   {
     id: 'security',
-    title: translate('auto.components.settings.Settings.084d8fac5b', 'Privacy & Security')
+    titleKey: 'auto.components.settings.Settings.084d8fac5b',
+    titleDefault: 'Privacy & Security'
   },
-  { id: 'advanced', title: translate('auto.components.settings.Settings.1c87f8d024', 'Advanced') },
+  {
+    id: 'advanced',
+    titleKey: 'auto.components.settings.Settings.1c87f8d024',
+    titleDefault: 'Advanced'
+  },
   {
     id: 'experimental',
-    title: translate('auto.components.settings.Settings.8b017f2506', 'Experimental')
+    titleKey: 'auto.components.settings.Settings.8b017f2506',
+    titleDefault: 'Experimental'
   }
 ] as const
+
+type SettingsNavGroupDefinition = (typeof SETTINGS_NAV_GROUPS)[number]
+
+const SETTINGS_NAV_GROUP_BY_ID = new Map<string, SettingsNavGroupDefinition>(
+  SETTINGS_NAV_GROUPS.map((group) => [group.id, group])
+)
 
 const SHORTCUTS_ESCAPE_CONFIRM_TOAST_ID = 'shortcuts-escape-confirm'
 const SHORTCUTS_ESCAPE_CONFIRM_WINDOW_MS = 2200
@@ -127,6 +161,27 @@ function getSettingsSectionId(pane: SettingsNavTarget, repoId: string | null): s
 
 function getFallbackVisibleSection(sections: SettingsNavSection[]): SettingsNavSection | undefined {
   return sections.at(0)
+}
+
+function getSettingsNavGroupDefinitionsForSearch(
+  sections: readonly SettingsNavSection[],
+  query: string
+): readonly SettingsNavGroupDefinition[] {
+  if (query.trim() === '') {
+    return SETTINGS_NAV_GROUPS
+  }
+  const seenGroupIds = new Set<string>()
+  return sections.flatMap((section) => {
+    if (section.id.startsWith('repo-') || seenGroupIds.has(section.group)) {
+      return []
+    }
+    const group = SETTINGS_NAV_GROUP_BY_ID.get(section.group)
+    if (!group) {
+      return []
+    }
+    seenGroupIds.add(section.group)
+    return [group]
+  })
 }
 
 function getSkillNavInstallStatus(skill: {
@@ -216,6 +271,9 @@ function Settings(): React.JSX.Element {
   const fetchKeybindings = useAppStore((s) => s.fetchKeybindings)
   const closeSettingsPage = useAppStore((s) => s.closeSettingsPage)
   const repos = useAppStore((s) => s.repos)
+  const projects = useAppStore((s) => s.projects)
+  const projectHostSetups = useAppStore((s) => s.projectHostSetups)
+  const updateProject = useAppStore((s) => s.updateProject)
   const updateRepo = useAppStore((s) => s.updateRepo)
   const removeProject = useAppStore((s) => s.removeProject)
   const settingsNavigationTarget = useAppStore((s) => s.settingsNavigationTarget)
@@ -234,11 +292,14 @@ function Settings(): React.JSX.Element {
   const isMac = isMacUserAgent()
   const isWebClient = isWebClientLocation()
   const showDesktopOnlySettings = !isWebClient
+  const activeSkillRuntime = useActiveProjectSkillRuntime()
   const orchestrationSkill = useInstalledAgentSkill(ORCHESTRATION_SKILL_NAME, {
+    discoveryTarget: activeSkillRuntime.discoveryTarget,
     sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
   })
   const computerUseSkill = useInstalledAgentSkill(COMPUTER_USE_SKILL_NAME, {
     enabled: showDesktopOnlySettings,
+    discoveryTarget: activeSkillRuntime.discoveryTarget,
     sourceKinds: GLOBAL_AGENT_SKILL_SOURCE_KINDS
   })
   const [voiceModelStatesLoading, setVoiceModelStatesLoading] = useState(showDesktopOnlySettings)
@@ -246,13 +307,17 @@ function Settings(): React.JSX.Element {
   // sidebar. We trim platform-only entries on other platforms so search never
   // reveals controls that the renderer will intentionally hide.
   const [scrollbackMode, setScrollbackMode] = useState<'preset' | 'custom'>('preset')
-  const [prevScrollbackBytes, setPrevScrollbackBytes] = useState(settings?.terminalScrollbackBytes)
+  const [prevScrollbackRows, setPrevScrollbackRows] = useState(settings?.terminalScrollbackRows)
   // Why: Appearance owns terminal visual controls, but the Ghostty import flow
   // still needs Settings-level state so the modal survives section remounts.
   const ghostty = useGhosttyImport(updateSettings, settings)
   const warpThemes = useWarpThemeImport(updateSettings, settings)
   const [fontSuggestions, setFontSuggestions] = useState<string[]>(
     Array.from(new Set([DEFAULT_APP_FONT_FAMILY, ...getFallbackTerminalFonts()]))
+  )
+  const terminalFontSuggestions = useMemo(
+    () => fontSuggestions.filter((font) => font !== DEFAULT_APP_FONT_FAMILY),
+    [fontSuggestions]
   )
   const [activeSectionId, setActiveSectionId] = useState('general')
   const [mountedSectionIds, setMountedSectionIds] = useState<Set<string>>(
@@ -282,6 +347,11 @@ function Settings(): React.JSX.Element {
 
   const hasUnsavedSourceControlAiPromptChanges =
     hasUnsavedCommitPromptChanges || hasUnsavedBranchPromptChanges
+  // Why: the window-close guard registers once for Settings' lifetime, so it
+  // reads the latest dirty state from a ref instead of a closure that would lag
+  // behind the draft state until the next effect commit.
+  const hasUnsavedSourceControlAiPromptChangesRef = useRef(hasUnsavedSourceControlAiPromptChanges)
+  hasUnsavedSourceControlAiPromptChangesRef.current = hasUnsavedSourceControlAiPromptChanges
 
   const writeSourceControlAiSettings = useCallback(
     (patch: SourceControlAiSettingsPatch): Promise<void> => {
@@ -324,11 +394,11 @@ function Settings(): React.JSX.Element {
     cancelPendingSettingsSubsectionScrollFrame(pendingSubsectionScrollFrameRef)
   }, [])
 
-  const confirmDiscardSourceControlAiPromptChanges = useCallback(async (): Promise<boolean> => {
-    if (!hasUnsavedSourceControlAiPromptChanges) {
-      return true
-    }
-    const shouldDiscard = await confirm({
+  // Pure "discard and leave?" prompt — no side effects. Why separate from the
+  // discard helper below: the window-close guard must ask without clearing the
+  // drafts, since a later guard/handler can still cancel the close.
+  const promptDiscardSourceControlAiPromptChanges = useCallback((): Promise<boolean> => {
+    return confirm({
       title: translate(
         'auto.components.settings.Settings.17bdee4ff1',
         'Discard unsaved Git AI Author changes?'
@@ -340,13 +410,20 @@ function Settings(): React.JSX.Element {
       confirmLabel: translate('auto.components.settings.Settings.65358016ea', 'Discard'),
       confirmVariant: 'destructive'
     })
+  }, [confirm])
+
+  const confirmDiscardSourceControlAiPromptChanges = useCallback(async (): Promise<boolean> => {
+    if (!hasUnsavedSourceControlAiPromptChanges) {
+      return true
+    }
+    const shouldDiscard = await promptDiscardSourceControlAiPromptChanges()
     if (shouldDiscard) {
       setSourceControlAiPromptDiscardSignal((signal) => signal + 1)
       setHasUnsavedCommitPromptChanges(false)
       setHasUnsavedBranchPromptChanges(false)
     }
     return shouldDiscard
-  }, [confirm, hasUnsavedSourceControlAiPromptChanges])
+  }, [promptDiscardSourceControlAiPromptChanges, hasUnsavedSourceControlAiPromptChanges])
 
   const closeSettingsPageWithPromptGuard = useCallback(async (): Promise<void> => {
     if (!(await confirmDiscardSourceControlAiPromptChanges())) {
@@ -447,19 +524,25 @@ function Settings(): React.JSX.Element {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [activeSectionId, closeSettingsPageWithPromptGuard])
 
+  // Why: route window close / quit through the same discard dialog as in-app
+  // navigation. A raw beforeunload preventDefault only silently vetoes the close
+  // (no UI), which on the no-workspace Settings page reads as an unquittable
+  // window. Register one stable guard for Settings' lifetime, reading the latest
+  // dirty state from a ref. Why the pure prompt (no discard side effect): a
+  // downstream guard/handler can still cancel the close (e.g. a dirty-editor save
+  // dialog), and clearing the drafts up front would lose them while the window
+  // stays open; on an actual close they fall away with the renderer anyway.
   useEffect(() => {
-    const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+    return registerWindowCloseGuard(() => {
       if (isIntentionalAppRestartInProgress()) {
-        return
+        return true
       }
-      if (!hasUnsavedSourceControlAiPromptChanges) {
-        return
+      if (!hasUnsavedSourceControlAiPromptChangesRef.current) {
+        return true
       }
-      event.preventDefault()
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [hasUnsavedSourceControlAiPromptChanges])
+      return promptDiscardSourceControlAiPromptChanges()
+    })
+  }, [promptDiscardSourceControlAiPromptChanges])
 
   useEffect(() => {
     const handleFindShortcut = (event: KeyboardEvent): void => {
@@ -508,14 +591,15 @@ function Settings(): React.JSX.Element {
     clearSettingsTarget()
   }, [clearSettingsTarget, settings, settingsNavigationTarget])
 
-  // Why: only recompute scrollback mode when the byte value actually changes,
+  // Why: only recompute scrollback mode when the row value actually changes,
   // not on every unrelated settings mutation.
-  if (settings?.terminalScrollbackBytes !== prevScrollbackBytes) {
-    setPrevScrollbackBytes(settings?.terminalScrollbackBytes)
+  if (settings?.terminalScrollbackRows !== prevScrollbackRows) {
+    setPrevScrollbackRows(settings?.terminalScrollbackRows)
     if (settings) {
-      const scrollbackMb = Math.max(1, Math.round(settings.terminalScrollbackBytes / 1_000_000))
       setScrollbackMode(
-        SCROLLBACK_PRESETS_MB.includes(scrollbackMb as (typeof SCROLLBACK_PRESETS_MB)[number])
+        SCROLLBACK_PRESETS_ROWS.includes(
+          settings.terminalScrollbackRows as (typeof SCROLLBACK_PRESETS_ROWS)[number]
+        )
           ? 'preset'
           : 'custom'
       )
@@ -584,25 +668,46 @@ function Settings(): React.JSX.Element {
     () => new Map(navSections.map((section) => [section.id, section] as const)),
     [navSections]
   )
-  const getSectionSearchEntries = (sectionId: string) =>
-    navSectionById.get(sectionId)?.searchEntries ?? []
+  const getSectionSearchEntries = (sectionId: string) => {
+    const section = navSectionById.get(sectionId)
+    return section ? getSettingsSectionSearchEntries(section) : []
+  }
 
-  const visibleNavSections = useMemo(
-    () =>
-      navSections.filter((section) =>
-        section.id === 'git' && hasUnsavedSourceControlAiPromptChanges
-          ? true
-          : matchesSettingsSearch(settingsSearchQuery, [
-              { title: section.title, description: section.description },
-              ...section.searchEntries
-            ])
-      ),
-    [hasUnsavedSourceControlAiPromptChanges, navSections, settingsSearchQuery]
-  )
+  const visibleNavSections = useMemo(() => {
+    const rankedSections = rankSettingsSearchItems(
+      settingsSearchQuery,
+      navSections,
+      getSettingsSectionSearchEntries
+    ).map(({ item }) => item)
+    if (
+      !hasUnsavedSourceControlAiPromptChanges ||
+      rankedSections.some((section) => section.id === 'git')
+    ) {
+      return rankedSections
+    }
+    const gitSection = navSectionById.get('git')
+    return gitSection ? [...rankedSections, gitSection] : rankedSections
+  }, [hasUnsavedSourceControlAiPromptChanges, navSectionById, navSections, settingsSearchQuery])
   const visibleSectionIds = useMemo(
     () => new Set(visibleNavSections.map((section) => section.id)),
     [visibleNavSections]
   )
+  const projectByRepoId = useMemo(() => {
+    const projection = getProjectHostSetupProjectionFromState({
+      repos,
+      projects,
+      projectHostSetups
+    })
+    const projectById = new Map(projection.projects.map((project) => [project.id, project]))
+    const nextProjectByRepoId = new Map<string, (typeof projection.projects)[number]>()
+    for (const setup of projection.setups) {
+      const project = projectById.get(setup.projectId)
+      if (project && setup.repoId.trim()) {
+        nextProjectByRepoId.set(setup.repoId, project)
+      }
+    }
+    return nextProjectByRepoId
+  }, [projectHostSetups, projects, repos])
   const neededSectionIds = useMemo(
     () =>
       deriveNeededSectionIds({
@@ -620,13 +725,17 @@ function Settings(): React.JSX.Element {
   )
   const runtimeTarget = useMemo(() => getActiveRuntimeTarget(settings), [settings])
   const hasActiveRuntimeEnvironment = Boolean(settings?.activeRuntimeEnvironmentId?.trim())
+  const needsRepoWindowsRuntimeCapabilities = [...neededSectionIds].some((sectionId) =>
+    sectionId.startsWith('repo-')
+  )
   const shouldLoadWindowsTerminalCapabilities =
     hasActiveRuntimeEnvironment ||
     ((isWindows || isWebClient) &&
       (neededSectionIds.has('terminal') ||
         neededSectionIds.has('general') ||
         neededSectionIds.has('accounts') ||
-        neededSectionIds.has('agents')))
+        neededSectionIds.has('agents') ||
+        needsRepoWindowsRuntimeCapabilities))
   // Why: General owns the Orca CLI controls, including WSL skill-location setup.
   const windowsTerminalCapabilities = useWindowsTerminalCapabilities(
     shouldLoadWindowsTerminalCapabilities,
@@ -896,10 +1005,17 @@ function Settings(): React.JSX.Element {
   }
 
   const generalNavSections = visibleNavSections.filter((section) => !section.id.startsWith('repo-'))
-  const generalNavGroups: SettingsNavGroup[] = SETTINGS_NAV_GROUPS.map((group) => ({
-    ...group,
-    sections: generalNavSections.filter((section) => section.group === group.id)
-  })).filter((group) => group.sections.length > 0 || group.id === 'setup')
+  const generalNavGroupDefinitions = getSettingsNavGroupDefinitionsForSearch(
+    visibleNavSections,
+    settingsSearchQuery
+  )
+  const generalNavGroups: SettingsNavGroup[] = generalNavGroupDefinitions
+    .map((group) => ({
+      id: group.id,
+      title: translate(group.titleKey, group.titleDefault),
+      sections: generalNavSections.filter((section) => section.group === group.id)
+    }))
+    .filter((group) => group.sections.length > 0 || group.id === 'setup')
   const repoNavSections = visibleNavSections
     .filter((section) => section.id.startsWith('repo-'))
     .map((section) => {
@@ -924,6 +1040,7 @@ function Settings(): React.JSX.Element {
       className="settings-view-shell flex min-h-0 flex-1 overflow-hidden bg-background"
     >
       <SettingsSidebar
+        settings={settings}
         activeSectionId={activeSectionId}
         generalGroups={generalNavGroups}
         repoSections={repoNavSections}
@@ -1086,6 +1203,7 @@ function Settings(): React.JSX.Element {
                       updateSettings={updateSettings}
                       wslSupportedPlatform={wslSupportedPlatform}
                       wslAvailable={windowsTerminalCapabilities.wslAvailable}
+                      wslDistros={windowsTerminalCapabilities.wslDistros}
                       wslCapabilitiesLoading={windowsTerminalCapabilities.isLoading}
                     />
                   ) : null}
@@ -1099,9 +1217,25 @@ function Settings(): React.JSX.Element {
                     'Connect GitHub, GitLab, Linear, and source-hosting services.'
                   )}
                   searchEntries={getSectionSearchEntries('integrations')}
+                  bodyClassName="rounded-none border-0 bg-transparent p-0 shadow-none"
                 >
                   {isSectionMounted('integrations') ? <IntegrationsPane /> : null}
                 </SettingsSection>
+
+                {showDesktopOnlySettings ? (
+                  <SettingsSection
+                    id="mobile"
+                    title={translate('auto.components.settings.Settings.c40dadaac8', 'Mobile')}
+                    badge="Beta"
+                    description={translate(
+                      'auto.components.settings.Settings.c6c01ac209',
+                      'Control terminals and agents from your phone.'
+                    )}
+                    searchEntries={getSectionSearchEntries('mobile')}
+                  >
+                    {isSectionMounted('mobile') ? <MobileSettingsPane /> : null}
+                  </SettingsSection>
+                ) : null}
 
                 <SettingsSection
                   id="git"
@@ -1136,6 +1270,7 @@ function Settings(): React.JSX.Element {
                         customPromptDiscardSignal={sourceControlAiPromptDiscardSignal}
                         settingsSearchQuery={settingsSearchQuery}
                       />
+                      <GitProviderApiBudgetPane settingsSearchQuery={settingsSearchQuery} />
                     </>
                   ) : null}
                 </SettingsSection>
@@ -1220,7 +1355,7 @@ function Settings(): React.JSX.Element {
                   </SettingsSection>
                 ) : null}
 
-                {showDesktopOnlySettings && isMac ? (
+                {showDesktopOnlySettings ? (
                   <SettingsSection
                     id="mobile-emulator"
                     title={translate(
@@ -1274,9 +1409,7 @@ function Settings(): React.JSX.Element {
                       updateSettings={updateSettings}
                       applyTheme={applyTheme}
                       fontSuggestions={fontSuggestions}
-                      terminalFontSuggestions={fontSuggestions.filter(
-                        (font) => font !== DEFAULT_APP_FONT_FAMILY
-                      )}
+                      terminalFontSuggestions={terminalFontSuggestions}
                       systemPrefersDark={systemPrefersDark}
                       ghostty={ghostty}
                       warpThemes={warpThemes}
@@ -1365,7 +1498,7 @@ function Settings(): React.JSX.Element {
                         )
                       : translate(
                           'auto.components.settings.Settings.b5ee17826b',
-                          'Switch between local desktop mode and paired remote Orca runtimes.'
+                          'Pair remote Orca runtimes for persistent sessions, richer remote state, and web or mobile handoff.'
                         )
                   }
                   searchEntries={getSectionSearchEntries('servers')}
@@ -1381,34 +1514,17 @@ function Settings(): React.JSX.Element {
                 </SettingsSection>
 
                 {showDesktopOnlySettings ? (
-                  <>
-                    <SettingsSection
-                      id="ssh"
-                      title={translate('auto.components.settings.Settings.9b02492d1f', 'SSH Hosts')}
-                      description={translate(
-                        'auto.components.settings.Settings.c2ee313198',
-                        'Remote SSH hosts for files, terminals, and git.'
-                      )}
-                      searchEntries={getSectionSearchEntries('ssh')}
-                    >
-                      {isSectionMounted('ssh') ? <SshPane /> : null}
-                    </SettingsSection>
-
-                    <SettingsSection
-                      id="mobile"
-                      title={translate('auto.components.settings.Settings.c40dadaac8', 'Mobile')}
-                      badge="Beta"
-                      description={translate(
-                        'auto.components.settings.Settings.c6c01ac209',
-                        'Control terminals and agents from your phone.'
-                      )}
-                      searchEntries={getSectionSearchEntries('mobile')}
-                    >
-                      {isSectionMounted('mobile') ? (
-                        <MobileSettingsPane settings={settings} updateSettings={updateSettings} />
-                      ) : null}
-                    </SettingsSection>
-                  </>
+                  <SettingsSection
+                    id="ssh"
+                    title={translate('auto.components.settings.Settings.9b02492d1f', 'SSH Hosts')}
+                    description={translate(
+                      'auto.components.settings.Settings.c2ee313198',
+                      'Use existing machines over SSH for files, terminals, Git, and workspaces.'
+                    )}
+                    searchEntries={getSectionSearchEntries('ssh')}
+                  >
+                    {isSectionMounted('ssh') ? <SshPane /> : null}
+                  </SettingsSection>
                 ) : null}
 
                 {showDesktopOnlySettings && isMac ? (
@@ -1461,6 +1577,24 @@ function Settings(): React.JSX.Element {
                   </SettingsSection>
                 ) : null}
 
+                {showDesktopOnlySettings && import.meta.env.DEV ? (
+                  <SettingsSection
+                    id="dev"
+                    title={translate('auto.components.settings.Settings.dev', 'Dev Tools')}
+                    description={translate(
+                      'auto.components.settings.Settings.devDescription',
+                      'Dev-only tools for exercising UI states.'
+                    )}
+                    searchEntries={getSectionSearchEntries('dev')}
+                  >
+                    {DevToolsPane && isSectionMounted('dev') ? (
+                      <Suspense fallback={null}>
+                        <DevToolsPane />
+                      </Suspense>
+                    ) : null}
+                  </SettingsSection>
+                ) : null}
+
                 <SettingsSection
                   id="experimental"
                   title={translate('auto.components.settings.Settings.8b017f2506', 'Experimental')}
@@ -1482,6 +1616,7 @@ function Settings(): React.JSX.Element {
                 {repos.map((repo) => {
                   const repoSectionId = `repo-${repo.id}`
                   const repoHooksState = repoHooksMap[repo.id]
+                  const project = projectByRepoId.get(repo.id) ?? null
 
                   return (
                     <SettingsSection
@@ -1504,6 +1639,15 @@ function Settings(): React.JSX.Element {
                           mayNeedUpdate={repoHooksState?.mayNeedUpdate ?? false}
                           updateRepo={updateRepo}
                           removeProject={removeProject}
+                          project={project}
+                          isLocalWindowsProject={
+                            getRepoExecutionHostId(repo) === LOCAL_EXECUTION_HOST_ID &&
+                            isWindowsTerminalHost
+                          }
+                          wslAvailable={windowsTerminalCapabilities.wslAvailable}
+                          wslDistros={windowsTerminalCapabilities.wslDistros}
+                          wslCapabilitiesLoading={windowsTerminalCapabilities.isLoading}
+                          updateProject={updateProject}
                         />
                       ) : null}
                     </SettingsSection>

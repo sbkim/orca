@@ -1,6 +1,7 @@
 import type { GlobalSettings } from '../../../shared/types'
 import type { RuntimeRpcFailure, RuntimeRpcResponse } from '../../../shared/runtime-rpc-envelope'
 import type { RuntimeStatus } from '../../../shared/runtime-types'
+import type { RuntimeCapability } from '../../../shared/protocol-version'
 import { withBrowserPaneUiRuntimeRpcSource } from '../../../shared/runtime-rpc-feature-interaction-source'
 import { assertRuntimeStatusCompatible } from './runtime-protocol-compat'
 
@@ -19,6 +20,13 @@ export class RuntimeRpcCallError extends Error {
     this.code = response.error.code
     this.response = response
   }
+}
+
+// Why: mobile-scope device tokens are denied non-allowlisted runtime methods
+// with code 'forbidden'. Callers use this to surface one scope-mismatch banner
+// instead of silently swallowing the failure into empty/retry-looping UI.
+export function isRuntimeScopeForbiddenError(error: unknown): boolean {
+  return error instanceof RuntimeRpcCallError && error.code === 'forbidden'
 }
 
 export function getActiveRuntimeTarget(
@@ -139,6 +147,35 @@ export function markRuntimeEnvironmentCompatible(environmentId: string): void {
     return
   }
   rememberRuntimeEnvironmentCompatibility(trimmed, Promise.resolve())
+}
+
+export async function getRuntimeEnvironmentStatus(
+  environmentId: string,
+  timeoutMs?: number
+): Promise<RuntimeStatus> {
+  const response = await window.api.runtimeEnvironments.call({
+    selector: environmentId,
+    method: 'status.get',
+    timeoutMs
+  })
+  const status = unwrapRuntimeRpcResult<RuntimeStatus>(
+    response as RuntimeRpcResponse<RuntimeStatus>
+  )
+  assertRuntimeStatusCompatible(status)
+  markRuntimeEnvironmentCompatible(environmentId)
+  return status
+}
+
+export async function assertRuntimeEnvironmentCapability(
+  environmentId: string,
+  capability: RuntimeCapability,
+  message: string,
+  timeoutMs?: number
+): Promise<void> {
+  const status = await getRuntimeEnvironmentStatus(environmentId, timeoutMs)
+  if (!status.capabilities?.includes(capability)) {
+    throw new Error(message)
+  }
 }
 
 export function clearRuntimeCompatibilityCacheForTests(): void {

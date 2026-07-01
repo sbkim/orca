@@ -2,13 +2,18 @@
    it owns app lifecycle, service wiring, window creation, and hook/daemon
    startup. Splitting by line count would fragment tightly coupled startup
    logic across files without a cleaner ownership seam. */
-import { existsSync } from 'fs'
-import { join } from 'path'
+import { existsSync, statSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
 import os from 'node:os'
-import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
 import { electronApp, is } from '@electron-toolkit/utils'
 import * as QRCode from 'qrcode'
-import { Store, initDataPath } from './persistence'
+import {
+  Store,
+  initDataPath,
+  getCanonicalUserDataPath,
+  migrateMobilePairingDataToCanonicalUserDataPath
+} from './persistence'
 import { applyAppIcon } from './app-icon'
 import { StatsCollector, initStatsPath } from './stats/collector'
 import { ClaudeUsageStore, initClaudeUsagePath } from './claude-usage/store'
@@ -17,6 +22,7 @@ import { OpenCodeUsageStore, initOpenCodeUsagePath } from './opencode-usage/stor
 import { killAllPty } from './ipc/pty'
 import { initDaemonPtyProvider, disconnectDaemon, shutdownDaemon } from './daemon/daemon-init'
 import { closeAllWatchers } from './ipc/filesystem-watcher'
+import { disposeWorktreeBaseDirectoryWatchers } from './ipc/worktree-base-directory-watcher'
 import { registerCoreHandlers } from './ipc/register-core-handlers'
 import { initObservability, shutdownObservability } from './observability'
 import { startSpan } from './observability/tracer'
@@ -56,11 +62,25 @@ import {
   patchPackagedProcessPath,
   shouldInstallManagedHooks
 } from './startup/configure-process'
+import { ensureVirtualDisplayForHeadlessServe } from './startup/ensure-virtual-display'
+import {
+  readActiveGpuFallbackMarker,
+  writeGpuFallbackMarker,
+  type GpuFallbackEnvironment,
+  type WindowsGpuFallbackEnvironment
+} from './startup/gpu-fallback-marker'
+import {
+  DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD,
+  DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
+  GpuCrashFallbackTracker,
+  isGpuFallbackCrashCandidate
+} from './crash-reporting/gpu-crash-fallback-decision'
 import {
   shouldSuppressDevEducation,
   suppressDevEducationForStore
 } from './startup/dev-education-suppression'
 import { maybeRedirectAppImageCliLaunch } from './startup/appimage-cli-redirect'
+import { maybeRedirectPackagedCliEntryLaunch } from './startup/packaged-cli-entry-redirect'
 import { startFirstWindowStartupServices } from './startup/first-window-startup-services'
 import { getDevInstanceIdentity } from './startup/dev-instance-identity'
 import { hydrateShellPath, mergePathSegments } from './startup/hydrate-shell-path'
@@ -70,13 +90,16 @@ import {
   logSingleInstanceLockFailure,
   shouldBypassSingleInstanceLock
 } from './startup/single-instance-lock'
+import { startEventLoopStallProbe } from './startup/event-loop-stall-probe'
 import { isStartupDiagnosticsEnabled, logStartupDiagnostic } from './startup/startup-diagnostics'
 import { ensureWindowsUserDataAclGrant } from './startup/windows-user-data-acl'
+import { shouldQuitWhenAllWindowsClosed } from './startup/window-all-closed-quit-policy'
 import { RateLimitService } from './rate-limits/service'
 import { getInitialClaudeRateLimitTarget } from './rate-limits/claude-rate-limit-target'
 import { getInitialCodexRateLimitTarget } from './rate-limits/codex-rate-limit-target'
 import { attachMainWindowServices } from './window/attach-main-window-services'
 import { createMainWindow, loadMainWindow } from './window/createMainWindow'
+import { createSystemTray, destroySystemTray } from './tray/system-tray'
 import { focusExistingMainWindow } from './window/focus-existing-window'
 import { CodexAccountService } from './codex-accounts/service'
 import { CodexRuntimeHomeService } from './codex-accounts/runtime-home-service'
@@ -91,7 +114,10 @@ import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service
 import { StarNagService } from './star-nag/service'
 import { agentHookServer } from './agent-hooks/server'
 import { maybeAutoRenameBranchOnFirstWork } from './agent-hooks/first-work-branch-rename'
+import { renameWorktreeFolderOnFirstWork } from './agent-hooks/first-work-folder-rename'
+import { moveWorktree } from './git/worktree'
 import { getRepoIdFromWorktreeId } from '../shared/worktree-id'
+import { parseWorkspaceKey } from '../shared/workspace-scope'
 import { setMigrationUnsupportedPtyListener } from './agent-hooks/migration-unsupported-pty-state'
 import {
   clearProviderPtyState,
@@ -104,9 +130,12 @@ import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { EmulatorBridge } from './emulator/emulator-bridge'
 import { serveSimStateWatcher } from './emulator/serve-sim-state-watcher'
 import { browserManager } from './browser/browser-manager'
+import { OffscreenBrowserBackend } from './browser/offscreen-browser-backend'
 import { initializeBrowserSessionsForApp } from './browser/browser-session-startup'
 import { setUnreadDockBadgeCount } from './dock/unread-badge'
 import { AutomationService } from './automations/service'
+import { createHeadlessAutomationOutputSnapshotBuffer } from './automations/headless-dispatch'
+import { buildHeadlessAutomationWorktreeCreateArgs } from './automations/headless-workspace-create'
 import { AgentAwakeService } from './agent-awake-service'
 import {
   getCrashBreadcrumbSnapshot,
@@ -136,8 +165,10 @@ import {
   type SyntheticAgentTitleProfile
 } from '../shared/synthetic-agent-title'
 import type { AgentStatusState } from '../shared/agent-status-types'
+import { resolveTuiAgentPermissionMode } from '../shared/tui-agent-permissions'
 import { KeybindingService } from './keybindings/keybinding-service'
 import { applyElectronProxySettings } from './network/proxy-settings'
+import { preserveAgentAuthBeforeRestart } from './agent-auth-restart-preservation'
 
 let mainWindow: BrowserWindow | null = null
 /** Whether a manual app.quit() (Cmd+Q, etc.) is in progress. Shared with the
@@ -156,6 +187,10 @@ let claudeRuntimeAuth: ClaudeRuntimeAuthService | null = null
 let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
+// Why: set during early startup; gates whether headless serve installs the
+// offscreen browser backend (and thus advertises browser pane support).
+let headlessBrowserDisplayAvailable = false
+
 let starNag: StarNagService | null = null
 let agentAwakeService: AgentAwakeService | null = null
 let crashReports: CrashReportStore | null = null
@@ -166,9 +201,29 @@ let automations: AutomationService | null = null
 let keybindings: KeybindingService | null = null
 let expectedRendererReload: { webContentsId: number; until: number } | null = null
 let firstWindowStartupServicesReady: Promise<void> = Promise.resolve()
+// Why: GPU child crashes clustered right after launch indicate a broken driver;
+// track them so Orca can move this build onto software rendering.
+const gpuLaunchTimeMs = Date.now()
+const gpuCrashFallbackTracker = new GpuCrashFallbackTracker({
+  windowMs: DEFAULT_GPU_CRASH_FALLBACK_WINDOW_MS,
+  threshold: DEFAULT_GPU_CRASH_FALLBACK_THRESHOLD
+})
+let gpuFallbackActiveThisLaunch = false
 let localPtyStartupReady: Promise<void> = Promise.resolve()
 const AGENT_STATE_CRASH_BREADCRUMB_MIN_INTERVAL_MS = 30_000
 const isServeMode = process.argv.includes('--serve')
+// Why: on Windows a CLI-shaped launch (Orca.exe <unpacked CLI entry>) that lost
+// ELECTRON_RUN_AS_NODE would otherwise boot the GUI, lose the single-instance
+// lock to a running window, and exit silently. Redirect it to node mode here,
+// before the lock gate below can bounce it.
+const packagedCliEntryRedirect = maybeRedirectPackagedCliEntryLaunch({
+  isPackaged: app.isPackaged,
+  resourcesPath: process.resourcesPath,
+  execPath: process.execPath
+})
+if (packagedCliEntryRedirect.redirected) {
+  app.exit(packagedCliEntryRedirect.status)
+}
 const appImageCliRedirect = maybeRedirectAppImageCliLaunch({
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath,
@@ -177,6 +232,12 @@ const appImageCliRedirect = maybeRedirectAppImageCliLaunch({
 if (appImageCliRedirect.redirected) {
   app.exit(appImageCliRedirect.status)
 }
+
+// Kill switch for the first-work on-disk folder rename. The renderer reconciles a
+// worktree id change via migrateWorktreeIdentity + a rename-aware worktrees:changed
+// handler, so an old->new id change is no longer mistaken for a deletion. Flip off
+// to disable the on-disk move (branch + display rename still happen) if needed.
+const ENABLE_FIRST_WORK_FOLDER_RENAME = false
 
 // Why: the store/runtime singletons live here in index.ts; injecting them keeps
 // the rename orchestrator free of module-level state and unit-testable.
@@ -206,7 +267,29 @@ function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
       getSettings: () => currentStore.getSettings(),
       getRepo: (repoId) => currentStore.getRepo(repoId),
       getAgentEnvResolvers: () => currentRuntime.getCommitMessageAgentEnvironmentResolvers(),
-      getCurrentDisplayName: (worktreeId) => currentStore.getWorktreeMeta(worktreeId)?.displayName,
+      getCurrentDisplayName: (worktreeId) => {
+        const scope = parseWorkspaceKey(worktreeId)
+        if (scope?.type === 'folder') {
+          return currentStore.getFolderWorkspace(scope.folderWorkspaceId)?.name
+        }
+        return currentStore.getWorktreeMeta(worktreeId)?.displayName
+      },
+      getFolderWorkspacePath: (worktreeId) => {
+        const scope = parseWorkspaceKey(worktreeId)
+        return scope?.type === 'folder'
+          ? currentStore.getFolderWorkspace(scope.folderWorkspaceId)?.folderPath
+          : undefined
+      },
+      isPendingFirstAgentMessageRename: (worktreeId) => {
+        const scope = parseWorkspaceKey(worktreeId)
+        if (scope?.type === 'folder') {
+          return (
+            currentStore.getFolderWorkspace(scope.folderWorkspaceId)
+              ?.pendingFirstAgentMessageRename === true
+          )
+        }
+        return currentStore.getWorktreeMeta(worktreeId)?.pendingFirstAgentMessageRename === true
+      },
       canRenameOrcaCreatedBranch: (worktreeId) => {
         const meta = currentStore.getWorktreeMeta(worktreeId)
         // Why: a user/imported branch can coincidentally be named after a creature.
@@ -214,6 +297,16 @@ function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
         return !!meta?.orcaCreationSource && meta.preserveBranchOnDelete !== true
       },
       setDisplayName: (worktreeId, displayName) => {
+        const scope = parseWorkspaceKey(worktreeId)
+        if (scope?.type === 'folder') {
+          currentStore.updateFolderWorkspace(scope.folderWorkspaceId, {
+            name: displayName,
+            pendingFirstAgentMessageRename: false,
+            firstAgentMessageRenameError: null
+          })
+          currentRuntime.notifyFolderWorkspaceChanged()
+          return
+        }
         currentStore.setWorktreeMeta(worktreeId, {
           displayName,
           pendingFirstAgentMessageRename: false,
@@ -222,9 +315,36 @@ function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
           firstAgentMessageRenameError: null
         })
       },
+      renameWorktreeFolder: ENABLE_FIRST_WORK_FOLDER_RENAME
+        ? (worktreeId, newLeaf) =>
+            renameWorktreeFolderOnFirstWork(worktreeId, newLeaf, {
+              getRepo: (repoId) => currentStore.getRepo(repoId),
+              getSettings: () => currentStore.getSettings(),
+              migrateWorktreeIdentity: (oldId, newId) =>
+                currentStore.migrateWorktreeIdentity(oldId, newId),
+              notifyWorktreeRenamed: (repoId, oldId, newId) =>
+                currentRuntime.notifyWorktreeFolderRenamed(repoId, oldId, newId),
+              pathExists: async (candidate) => existsSync(candidate),
+              moveWorktree
+            })
+        : undefined,
       setRenameError: (worktreeId, error) => {
         // Skip the write + renderer push when nothing changes — benign skips
         // clear the error on every settled worktree, most of which never had one.
+        const scope = parseWorkspaceKey(worktreeId)
+        if (scope?.type === 'folder') {
+          const current = currentStore.getFolderWorkspace(
+            scope.folderWorkspaceId
+          )?.firstAgentMessageRenameError
+          if ((current ?? null) === (error ?? null)) {
+            return
+          }
+          currentStore.updateFolderWorkspace(scope.folderWorkspaceId, {
+            firstAgentMessageRenameError: error
+          })
+          currentRuntime.notifyFolderWorkspaceChanged()
+          return
+        }
         const current = currentStore.getWorktreeMeta(worktreeId)?.firstAgentMessageRenameError
         if ((current ?? null) === (error ?? null)) {
           return
@@ -235,7 +355,13 @@ function maybeAutoRenameBranchOnFirstWorkFromHook(event: {
         currentRuntime.notifyBranchRenamed(getRepoIdFromWorktreeId(worktreeId))
       },
       resolveWorktreeIdForTab: (tabId) => currentStore.getWorktreeIdForTab(tabId),
-      onRenamed: (repoId) => currentRuntime.notifyBranchRenamed(repoId)
+      onRenamed: (repoIdOrWorktreeId) => {
+        if (parseWorkspaceKey(repoIdOrWorktreeId)?.type === 'folder') {
+          currentRuntime.notifyFolderWorkspaceChanged()
+          return
+        }
+        currentRuntime.notifyBranchRenamed(repoIdOrWorktreeId)
+      }
     }
   )
 }
@@ -279,6 +405,7 @@ if (startupDiagnosticsEnabled) {
     userData: app.getPath('userData'),
     e2eUserData: Boolean(process.env.ORCA_E2E_USER_DATA_DIR)
   })
+  startEventLoopStallProbe()
 }
 
 // Why: startup benchmarking needs in-process timestamps — harness-side stderr
@@ -406,30 +533,55 @@ if (hasSingleInstanceLock) {
     platform: process.platform
   })
   configureElectronNetworkCompatibility()
-  enableMainProcessGpuFeatures()
+  maybeApplyGpuFallbackForThisLaunch()
+  if (!gpuFallbackActiveThisLaunch) {
+    enableMainProcessGpuFeatures()
+  }
+  // Why: headless serve backs browser panes with offscreen BrowserWindows, which
+  // need an X display on Linux. Ensure one (Xvfb) before whenReady; the result
+  // gates whether the offscreen backend is installed so capability stays honest.
+  headlessBrowserDisplayAvailable = ensureVirtualDisplayForHeadlessServe({ isServeMode })
 }
 
 ipcMain.handle('app:awaitFirstWindowStartupServices', async () => {
   await firstWindowStartupServicesReady
 })
 
+ipcMain.handle(
+  'app:startupDiagnostic',
+  (_event, event: string, details?: Record<string, unknown>) => {
+    if (!startupDiagnosticsEnabled || !event.startsWith('renderer-')) {
+      return
+    }
+    logStartupMilestone(event, details && typeof details === 'object' ? details : {})
+  }
+)
+
 function startDesktopFirstWindowStartupServices(): Promise<void> {
+  logStartupMilestone('first-window-startup-services-start')
   const startupServices = startFirstWindowStartupServices({
     // Why: the persistent-terminal daemon is desktop-only. Headless `orca serve`
     // registers its PTY runtime separately and must not spawn the desktop daemon
     // or hook loopback listener.
-    startDaemonPtyProvider: (signal) => initDaemonPtyProvider(signal),
+    startDaemonPtyProvider: async (signal) => {
+      logStartupMilestone('startup-service-start', { service: 'daemon-pty-provider' })
+      await initDaemonPtyProvider(signal)
+      logStartupMilestone('startup-service-done', { service: 'daemon-pty-provider' })
+    },
     // Why: PTY spawn env reads ORCA_AGENT_HOOK_* from the live server state, so
     // the renderer awaits this barrier before restored terminals reconnect.
-    startAgentHookServer: () =>
-      agentHookServer.start({
+    startAgentHookServer: async () => {
+      logStartupMilestone('startup-service-start', { service: 'agent-hook-server' })
+      await agentHookServer.start({
         env: app.isPackaged ? 'production' : 'development',
         // Why: hooks source this endpoint file at invocation time, so old PTY
         // env still reaches the current Orca process after an app restart.
         // Dev uses a namespace because all worktrees share `orca-dev`.
         userDataPath: app.getPath('userData'),
         endpointNamespace: devAgentHookEndpointNamespace
-      }),
+      })
+      logStartupMilestone('startup-service-done', { service: 'agent-hook-server' })
+    },
     onDaemonError: (error) => {
       console.error('[daemon] Failed to start daemon PTY provider, falling back to local:', error)
     },
@@ -441,7 +593,30 @@ function startDesktopFirstWindowStartupServices(): Promise<void> {
   })
   firstWindowStartupServicesReady = startupServices.firstWindowReady
   localPtyStartupReady = startupServices.localPtyReady
+  void firstWindowStartupServicesReady.then(() => {
+    logStartupMilestone('first-window-startup-services-ready')
+  })
+  void localPtyStartupReady.then(() => {
+    logStartupMilestone('local-pty-startup-ready')
+  })
   return firstWindowStartupServicesReady
+}
+
+async function startServeAgentHookServer(): Promise<void> {
+  if (!isAgentStatusHooksEnabled(store?.getSettings())) {
+    return
+  }
+  try {
+    await agentHookServer.start({
+      env: app.isPackaged ? 'production' : 'development',
+      userDataPath: app.getPath('userData'),
+      endpointNamespace: devAgentHookEndpointNamespace
+    })
+  } catch (error) {
+    // Why: remote hook callbacks enrich agent status only. A headless runtime
+    // should still serve terminals if the loopback receiver cannot bind.
+    console.error('[agent-hooks] Failed to start serve hook server:', error)
+  }
 }
 
 function prepareCodexRuntimeHomeForLaunch(target?: CodexAccountSelectionTarget): string | null {
@@ -472,6 +647,23 @@ function prepareCodexRuntimeHomeForLaunch(target?: CodexAccountSelectionTarget):
     )
   }
   return runtimeHomePath
+}
+
+// Why: tray "Open Orca" / left-click restores the window the close handler may
+// have hidden to the tray; if the window was fully torn down, reopen it the
+// same way macOS dock re-activation does (guarded against update relaunch).
+function showMainWindowFromTray(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore()
+    }
+    mainWindow.show()
+    mainWindow.focus()
+    return
+  }
+  if (!isQuittingForUpdate()) {
+    openMainWindow()
+  }
 }
 
 function openMainWindow(): BrowserWindow {
@@ -567,6 +759,14 @@ function openMainWindow(): BrowserWindow {
         reason: details.reason,
         expectedTeardown: getExpectedTeardownScope(webContentsId)
       }),
+    onRendererRecoveryExhausted: ({ details, recentRecoveryCount }) => {
+      recordCrashBreadcrumb('renderer_recovery_circuit_breaker_open', {
+        reason: details.reason,
+        exitCode: details.exitCode ?? null,
+        recentRecoveryCount
+      })
+      void presentRendererRecoveryPrompt(recentRecoveryCount)
+    },
     deferLoad: true,
     title: devInstanceIdentity.name,
     getKeybindings: () => keybindings?.getOverrides(),
@@ -617,15 +817,17 @@ function openMainWindow(): BrowserWindow {
     automations,
     {
       prepareForCodexLaunch: prepareCodexRuntimeHomeForLaunch,
-      prepareForClaudeLaunch: () => claudeRuntimeAuth!.prepareForClaudeLaunch()
+      prepareForClaudeLaunch: (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target)
     },
     agentAwakeService ?? undefined,
     crashReports ?? undefined,
     keybindings,
     {
-      onBeforeRelaunch: () => {
+      getAdditionalAiVaultCodexHomePaths: () =>
+        codexRuntimeHome ? [codexRuntimeHome.getHostRuntimeHomePath()] : [],
+      onBeforeRelaunch: async () => {
         isQuitting = true
-        store?.flush()
+        await preserveAgentAuthBeforeRestart({ codexRuntimeHome, claudeRuntimeAuth, store })
       }
     }
   )
@@ -644,7 +846,9 @@ function openMainWindow(): BrowserWindow {
           markExpectedRendererReload(webContentsId)
         }
         recordCrashBreadcrumb('renderer_reload_requested', { ignoreCache })
-      }
+      },
+      onBeforeUpdateQuit: () =>
+        preserveAgentAuthBeforeRestart({ codexRuntimeHome, claudeRuntimeAuth, store })
     }
   )
   rateLimits.attach(window)
@@ -673,6 +877,23 @@ function openMainWindow(): BrowserWindow {
     stopAllSyntheticTitleSpinners()
   })
   mainWindow = window
+  // Why: Windows-only system tray. createSystemTray is idempotent and a no-op
+  // off win32, so calling it on each window open keeps exactly one live icon.
+  createSystemTray({
+    appIcon: store.getSettings().appIcon,
+    onOpen: showMainWindowFromTray,
+    onQuit: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        // Why: a real quit can still surface renderer save/discard prompts; the
+        // window must be visible if a hidden-to-tray session vetoes shutdown.
+        showMainWindowFromTray()
+      }
+      // Why: set the quit latch before app.quit() so the window 'close' handler
+      // proceeds to teardown instead of re-hiding the window to the tray.
+      isQuitting = true
+      app.quit()
+    }
+  })
   window.on('show', resumeSyntheticTitleSpinnerTimer)
   window.on('restore', resumeSyntheticTitleSpinnerTimer)
   window.on('hide', stopSyntheticTitleSpinnerTimer)
@@ -686,6 +907,7 @@ function openMainWindow(): BrowserWindow {
       payload,
       receivedAt,
       stateStartedAt,
+      launchToken,
       providerSession,
       isReplay
     }) => {
@@ -698,6 +920,7 @@ function openMainWindow(): BrowserWindow {
       mainWindow?.webContents.send('agentStatus:set', {
         ...payload,
         paneKey,
+        ...(launchToken ? { launchToken } : {}),
         ...(terminalHandle ? { terminalHandle } : {}),
         tabId,
         worktreeId,
@@ -711,7 +934,20 @@ function openMainWindow(): BrowserWindow {
       // Why: some native OSC titles miss terminal idle/permission frames.
       // Inject hook-derived frames so the renderer title tracker updates too.
       const profile = getSyntheticAgentTitleProfile(payload.agentType)
-      if (profile && shouldDriveSyntheticAgentTitleFromHook(payload.agentType, payload.state)) {
+      const suppressSyntheticCodexAutoApprovalTitle =
+        payload.agentType === 'codex' &&
+        (payload.state === 'waiting' || payload.state === 'blocked')
+          ? shouldSuppressCodexAutoApprovalSyntheticTitleFromHook({
+              agentType: payload.agentType,
+              state: payload.state,
+              launchConfig: runtime?.getAgentStatusLaunchConfigForPaneKey(paneKey, { launchToken })
+            })
+          : false
+      if (
+        profile &&
+        shouldDriveSyntheticAgentTitleFromHook(payload.agentType, payload.state) &&
+        !suppressSyntheticCodexAutoApprovalTitle
+      ) {
         driveSyntheticTitleFromHook(paneKey, payload.state, profile)
       }
     }
@@ -757,6 +993,110 @@ function sendOpenCrashReport(targetWindow?: BrowserWindow | null): void {
   webContents?.send('ui:openCrashReport')
 }
 
+// Why: when the renderer crash-loops, the breaker stops auto-reloading and the
+// window is left blank. The renderer is dead, so a main-process dialog is the
+// only surface that can offer a retry or a clean quit instead of a silent loop.
+async function presentRendererRecoveryPrompt(recentRecoveryCount: number): Promise<void> {
+  if (isQuitting) {
+    return
+  }
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  const options = {
+    type: 'error' as const,
+    buttons: ['Reload', 'Quit'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Orca keeps failing to load',
+    message: 'The app window crashed repeatedly and stopped reloading automatically.',
+    detail: `Orca tried to recover ${recentRecoveryCount} times in a row without success. This is often a graphics-driver or installation problem. Reload to try again, or quit and relaunch Orca.`
+  }
+  const { response } = window
+    ? await dialog.showMessageBox(window, options)
+    : await dialog.showMessageBox(options)
+  if (response === 0 && mainWindow && !mainWindow.isDestroyed()) {
+    recordCrashBreadcrumb('renderer_recovery_manual_retry')
+    loadMainWindow(mainWindow)
+  } else if (response === 1) {
+    isQuitting = true
+    app.quit()
+  }
+}
+
+function getGpuFallbackEnvironment(): GpuFallbackEnvironment {
+  return {
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron ?? '',
+    platform: process.platform
+  }
+}
+
+function getWindowsGpuFallbackEnvironment(): WindowsGpuFallbackEnvironment | null {
+  const environment = getGpuFallbackEnvironment()
+  if (environment.platform !== 'win32') {
+    return null
+  }
+  return { ...environment, platform: 'win32' }
+}
+
+// Why: the GPU-fallback marker must be read before app.whenReady() resolves so
+// app.disableHardwareAcceleration() can take effect. Windows desktop only -
+// headless serve already runs software rendering on the platforms that need it.
+function maybeApplyGpuFallbackForThisLaunch(): void {
+  if (isServeMode || process.platform !== 'win32') {
+    return
+  }
+  const marker = readActiveGpuFallbackMarker(app.getPath('userData'), getGpuFallbackEnvironment())
+  if (!marker) {
+    return
+  }
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('disable-gpu')
+  gpuFallbackActiveThisLaunch = true
+  recordCrashBreadcrumb('gpu_fallback_applied', {
+    crashesInWindow: marker.crashesInWindow
+  })
+}
+
+// Why: a burst of crash-shaped Windows GPU child failures right after launch
+// means hardware acceleration is unusable on this machine. Persist a build-
+// scoped marker and relaunch into software rendering instead of looping crashes.
+function handleGpuChildCrash(reason: string, exitCode: number | null): void {
+  // Software rendering already active or shutting down: nothing more to do.
+  if (gpuFallbackActiveThisLaunch || isQuitting || isServeMode) {
+    return
+  }
+  const result = gpuCrashFallbackTracker.recordGpuCrash(Date.now() - gpuLaunchTimeMs)
+  if (!result.shouldEngageFallback) {
+    return
+  }
+  recordCrashBreadcrumb('gpu_fallback_engaged', {
+    reason,
+    exitCode,
+    crashesInWindow: result.crashesInWindow
+  })
+  const engagedAt = Date.now()
+  const environment = getWindowsGpuFallbackEnvironment()
+  if (!environment) {
+    return
+  }
+  try {
+    writeGpuFallbackMarker(
+      app.getPath('userData'),
+      {
+        engagedAt,
+        crashesInWindow: result.crashesInWindow
+      },
+      environment
+    )
+  } catch (error) {
+    console.warn('[gpu-fallback] failed to persist marker:', error)
+    return
+  }
+  isQuitting = true
+  app.relaunch()
+  app.exit(0)
+}
+
 function recordProcessGoneCrash(
   source: 'renderer' | 'child',
   processType: string,
@@ -790,7 +1130,7 @@ function recordProcessGoneCrash(
     )
     return
   }
-  const key = getProcessGoneDedupeKey(processType, reason, exitCode)
+  const key = getProcessGoneDedupeKey(source, processType, reason, exitCode)
   if (!processGoneDedupe.shouldRecord(key)) {
     return
   }
@@ -843,9 +1183,16 @@ function shutdownWatchersOnce(): Promise<void> {
   if (!watcherShutdownPromise) {
     // Why: @parcel/watcher tears down native async work during unsubscribe.
     // Electron must wait for that cleanup before Node's environment exits.
-    watcherShutdownPromise = closeAllWatchers()
-      .catch((error) => {
-        console.error('[filesystem-watcher] shutdown failed:', error)
+    watcherShutdownPromise = Promise.allSettled([
+      closeAllWatchers(),
+      disposeWorktreeBaseDirectoryWatchers()
+    ])
+      .then((results) => {
+        for (const result of results) {
+          if (result.status === 'rejected') {
+            console.error('[filesystem-watcher] shutdown failed:', result.reason)
+          }
+        }
       })
       .then(() => {
         watcherShutdownDone = true
@@ -880,6 +1227,8 @@ type ServeOptions = {
   pairingAddress: string | null
   noPairing: boolean
   mobilePairing: boolean
+  recipeJson: boolean
+  projectRoot: string | null
 }
 
 function getServeOptions(argv = process.argv): ServeOptions {
@@ -905,7 +1254,9 @@ function getServeOptions(argv = process.argv): ServeOptions {
     ...(wsPort !== undefined ? { wsPort } : {}),
     pairingAddress: valueAfter('--serve-pairing-address'),
     noPairing: argv.includes('--serve-no-pairing'),
-    mobilePairing: argv.includes('--serve-mobile-pairing')
+    mobilePairing: argv.includes('--serve-mobile-pairing'),
+    recipeJson: argv.includes('--serve-recipe-json'),
+    projectRoot: valueAfter('--serve-project-root')
   }
 }
 
@@ -930,6 +1281,18 @@ async function printServeReady(options: ServeOptions): Promise<void> {
   if (!runtime || !runtimeRpc) {
     throw new Error('Runtime server must be initialized before printing serve readiness')
   }
+  if (options.recipeJson) {
+    if (!options.projectRoot) {
+      throw new Error('--serve-recipe-json requires --serve-project-root')
+    }
+    if (!isAbsolute(options.projectRoot)) {
+      throw new Error(`--serve-project-root must be absolute: ${options.projectRoot}`)
+    }
+    const projectRootStats = statSync(options.projectRoot)
+    if (!projectRootStats.isDirectory()) {
+      throw new Error(`--serve-project-root must be a directory: ${options.projectRoot}`)
+    }
+  }
   const endpoint = runtimeRpc.getWebSocketEndpoint()
   const pairing = options.noPairing
     ? ({ available: false } as const)
@@ -942,6 +1305,19 @@ async function printServeReady(options: ServeOptions): Promise<void> {
     pairing.available && options.mobilePairing
       ? await renderTerminalPairingQr(pairing.pairingUrl)
       : null
+  if (options.recipeJson) {
+    if (!pairing.available) {
+      throw new Error('Recipe JSON output requires runtime pairing to be available')
+    }
+    console.log(
+      JSON.stringify({
+        schemaVersion: 1,
+        pairingCode: pairing.pairingUrl,
+        projectRoot: options.projectRoot
+      })
+    )
+    return
+  }
   if (options.json) {
     console.log(
       JSON.stringify({
@@ -1131,6 +1507,32 @@ function driveSyntheticTitleFromHook(
   })
 }
 
+function shouldSuppressCodexAutoApprovalSyntheticTitleFromHook(args: {
+  agentType: string | null | undefined
+  state: AgentStatusState
+  launchConfig:
+    | {
+        agentArgs?: string | null
+        agentEnv?: Record<string, string> | null
+      }
+    | null
+    | undefined
+}): boolean {
+  if (args.agentType !== 'codex' || (args.state !== 'waiting' && args.state !== 'blocked')) {
+    return false
+  }
+  if (!args.launchConfig) {
+    return false
+  }
+  return (
+    resolveTuiAgentPermissionMode({
+      agent: 'codex',
+      agentArgs: args.launchConfig.agentArgs,
+      agentEnv: args.launchConfig.agentEnv
+    }) === 'yolo'
+  )
+}
+
 app.whenReady().then(async () => {
   logStartupMilestone('app-ready')
   electronApp.setAppUserModelId(devInstanceIdentity.appUserModelId)
@@ -1200,7 +1602,14 @@ app.whenReady().then(async () => {
   rateLimits.setClaudeAuthPreparationResolver((target) =>
     claudeRuntimeAuth!.prepareForRateLimitFetch(target)
   )
-  rateLimits.setSettingsResolver(() => store!.getSettings())
+  rateLimits.setOpenCodeGoConfigResolver(() => {
+    const settings = store!.getSettings()
+    return {
+      sessionCookie: settings.opencodeSessionCookie,
+      workspaceIdOverride: settings.opencodeWorkspaceId
+    }
+  })
+  rateLimits.setGeminiCliOAuthEnabledResolver(() => store!.getSettings().geminiCliOAuthEnabled)
   keybindings = new KeybindingService({
     homePath: app.getPath('home'),
     getLegacyOverrides: () => store!.getSettings().keybindings
@@ -1246,10 +1655,107 @@ app.whenReady().then(async () => {
     onPtyStopped: clearProviderPtyState,
     onTerminalAgentStatus: (event) => {
       agentHookServer.ingestTerminalStatus(event)
-    }
+    },
+    // Why: hook-reported agent status is the same source the desktop sidebar
+    // reads. worktree.ps pulls it at query time so mobile shows the same agents.
+    getAgentStatusSnapshot: () => agentHookServer.getStatusSnapshot(),
+    buildAgentHookPtyEnv: () =>
+      isAgentStatusHooksEnabled(store?.getSettings()) ? agentHookServer.buildPtyEnv() : {}
   })
   runtime = runtimeService
-  automations = new AutomationService(store, { claudeUsage, codexUsage })
+  automations = new AutomationService(store, {
+    claudeUsage,
+    codexUsage,
+    // Why: desktop clients may mirror remote-host automations, but only a
+    // server process should execute schedules owned by `remote_host_service`.
+    allowRemoteHostScheduling: isServeMode,
+    headlessDispatcher: isServeMode
+      ? async ({ automation, run, target }) => {
+          const terminalSnapshotLimit = 2_000
+          let terminalHandle: string
+          let terminalSessionId: string | null = null
+          let terminalPaneKey: string | null = null
+          let terminalPtyId: string | null = null
+          let workspaceId: string
+          let workspaceDisplayName: string | null = null
+
+          if (automation.workspaceMode === 'new_per_run') {
+            const created = await runtimeService.createManagedWorktree({
+              ...buildHeadlessAutomationWorktreeCreateArgs({
+                automation,
+                run,
+                repo: target.repo
+              })
+            })
+            terminalHandle = created.startupTerminal?.handle ?? ''
+            terminalSessionId = created.startupTerminal?.tabId ?? null
+            terminalPaneKey = created.startupTerminal?.paneKey ?? null
+            terminalPtyId = created.startupTerminal?.ptyId ?? null
+            workspaceId = created.worktree.id
+            workspaceDisplayName = created.worktree.displayName ?? null
+            if (!terminalHandle) {
+              throw new Error(
+                created.warning ||
+                  'Automation workspace was created, but no agent terminal started.'
+              )
+            }
+          } else {
+            if (!automation.workspaceId) {
+              throw new Error('The target workspace is no longer available.')
+            }
+            const terminal = await runtimeService.launchAgentTerminal(
+              `id:${automation.workspaceId}`,
+              {
+                agent: automation.agentId,
+                prompt: automation.prompt,
+                title: run.title
+              }
+            )
+            terminalHandle = terminal.handle
+            terminalSessionId = terminal.tabId ?? null
+            terminalPaneKey = terminal.paneKey ?? null
+            terminalPtyId = terminal.ptyId ?? null
+            workspaceId = terminal.worktreeId
+            const worktree = await runtimeService.showManagedWorktree(`id:${workspaceId}`)
+            workspaceDisplayName = worktree.displayName ?? null
+          }
+
+          const completion = (async () => {
+            const wait = await runtimeService.waitForTerminal(terminalHandle, {
+              condition: 'tui-idle'
+            })
+            const read = await runtimeService.readTerminal(terminalHandle, {
+              limit: terminalSnapshotLimit
+            })
+            const snapshotBuffer = createHeadlessAutomationOutputSnapshotBuffer()
+            snapshotBuffer.append(read.tail.join('\n'))
+            if (wait.satisfied) {
+              return {
+                status: 'completed' as const,
+                outputSnapshot: snapshotBuffer.snapshot(),
+                error: null
+              }
+            }
+            return {
+              status: 'dispatch_failed' as const,
+              outputSnapshot: snapshotBuffer.snapshot(),
+              error: wait.blockedReason
+                ? `Automation agent is blocked: ${wait.blockedReason}.`
+                : 'Automation agent did not report completion.'
+            }
+          })()
+
+          return {
+            workspaceId,
+            workspaceDisplayName,
+            terminalSessionId,
+            terminalPaneKey,
+            terminalPtyId,
+            completion
+          }
+        }
+      : undefined
+  })
   runtimeService.setAutomationService(automations)
   runtimeService.setAccountServices({ claudeAccounts, codexAccounts, rateLimits })
   runtimeService.setCommitMessageAgentEnvironmentResolvers({
@@ -1257,7 +1763,7 @@ app.whenReady().then(async () => {
     // even for the system-default path, so every Orca-launched Codex process
     // must resolve CODEX_HOME through the runtime-home service.
     prepareForCodexLaunch: prepareCodexRuntimeHomeForLaunch,
-    prepareForClaudeLaunch: () => claudeRuntimeAuth!.prepareForClaudeLaunch()
+    prepareForClaudeLaunch: (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target)
   })
   starNag = new StarNagService(store, stats)
   starNag.start()
@@ -1296,6 +1802,15 @@ app.whenReady().then(async () => {
       serviceName: details.serviceName,
       type: details.type
     })
+    if (
+      isGpuFallbackCrashCandidate({
+        platform: process.platform,
+        processType: details.type,
+        reason: details.reason
+      })
+    ) {
+      handleGpuChildCrash(details.reason, details.exitCode ?? null)
+    }
   })
 
   logStartupMilestone('services-initialized')
@@ -1400,9 +1915,17 @@ app.whenReady().then(async () => {
     app.exit(1)
     return
   }
+  // Why: existing installs may have already written mobile pairing credentials
+  // under the late app.getPath('userData') directory. Copy any missing files
+  // forward before the runtime switches exclusively to the canonical path.
+  migrateMobilePairingDataToCanonicalUserDataPath(app.getPath('userData'))
   runtimeRpc = new OrcaRuntimeRpcServer({
     runtime,
-    userDataPath: app.getPath('userData'),
+    // Why: mobile pairing (DeviceRegistry + E2EE keypair + runtime metadata)
+    // must share the stable path captured before app.setName(), not a late
+    // app.getPath('userData') that resolves elsewhere and drops paired devices
+    // across restarts/updates. See persistence.ts:getCanonicalUserDataPath.
+    userDataPath: getCanonicalUserDataPath(),
     enableWebSocket: true,
     ...(isE2E ? { wsPort: 0 } : {}),
     ...(devWsPort !== undefined ? { wsPort: devWsPort } : {}),
@@ -1416,6 +1939,7 @@ app.whenReady().then(async () => {
   }
 
   if (serveOptions) {
+    await startServeAgentHookServer()
     registerHeadlessPtyRuntime(
       runtime,
       prepareCodexRuntimeHomeForLaunch,
@@ -1423,6 +1947,13 @@ app.whenReady().then(async () => {
       (target) => claudeRuntimeAuth!.prepareForClaudeLaunch(target),
       store
     )
+    // Why: headless servers have no renderer to mount <webview> browser panes.
+    // Back them with main-process offscreen WebContents instead, so this host can
+    // own browser pages and advertise browser.headless.v1 — but only when a
+    // display is actually available (set up above), so the capability stays honest.
+    if (headlessBrowserDisplayAvailable) {
+      runtime.setOffscreenBrowserBackend(new OffscreenBrowserBackend(browserManager))
+    }
     // Why: headless servers have no renderer graph publisher. Publish an
     // explicit empty graph so status clients see a ready server while
     // renderer-only operations still fail at their own window boundary.
@@ -1492,6 +2023,9 @@ app.on('before-quit', () => {
 // async work and let Electron exit.
 let daemonDisconnectDone = false
 app.on('will-quit', (e) => {
+  // Why: before-quit can still be aborted by renderer beforeunload; wait until
+  // the committed quit path before removing the Windows notification icon.
+  destroySystemTray()
   // Why: stats.flush() must run before killAllPty() so it can read the
   // live agent state and emit synthetic agent_stop events for agents that
   // are still running. killAllPty() does not call runtime.onPtyExit(),
@@ -1505,6 +2039,9 @@ app.on('will-quit', (e) => {
   // Why: agent-browser daemon processes would otherwise linger after Orca quits,
   // holding ports and leaving stale session state on disk.
   runtime?.getAgentBrowserBridge()?.destroyAllSessions()
+  // Why: headless offscreen browser windows are main-process owned; tear them
+  // down explicitly on quit alongside the other browser/session shutdowns.
+  runtime?.getOffscreenBrowserBackend()?.destroyAll?.()
   const emulatorShutdown = runtime?.getEmulatorBridge()?.destroyAllSessions() ?? Promise.resolve()
   serveSimStateWatcher.stop()
   killAllPty()
@@ -1535,7 +2072,9 @@ app.on('will-quit', (e) => {
           .then(() => awaitRuntimeFileWatcherUnsubscribes())
           .then(() => {
             if (ownedRuntimeId) {
-              clearRuntimeMetadataIfOwned(app.getPath('userData'), ownedPid, ownedRuntimeId)
+              // Why: must match the path the runtime server wrote metadata to
+              // (getCanonicalUserDataPath), not late app.getPath('userData').
+              clearRuntimeMetadataIfOwned(getCanonicalUserDataPath(), ownedPid, ownedRuntimeId)
             }
           })
           .catch((error) => {
@@ -1569,12 +2108,23 @@ app.on('will-quit', (e) => {
 })
 
 app.on('window-all-closed', () => {
+  // Why: headless `orca serve` has no desktop window, and offscreen browser
+  // windows are disposable implementation details. Closing/crashing the last
+  // one must not take down terminal/runtime RPC for the VM workspace — the
+  // policy fn returns false for serve mode so the app stays alive.
+  //
   // Why: on macOS, closing all windows normally keeps the app alive (dock
   // stays active). But when a quit is in progress (Cmd+Q), the window close
   // handler defers to the renderer for buffer capture, which cancels the
   // original quit sequence. Re-trigger quit here so the app actually exits
   // instead of requiring a second Cmd+Q.
-  if (process.platform !== 'darwin' || isQuitting) {
+  if (
+    shouldQuitWhenAllWindowsClosed({
+      platform: process.platform,
+      isQuitting,
+      isServeMode
+    })
+  ) {
     app.quit()
   }
 })

@@ -1,14 +1,15 @@
 /* eslint-disable max-lines -- Why: daemon server RPC, auth, stream batching, and shutdown behavior share one socket/client harness; splitting would duplicate setup. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { connect, type Server, type Socket } from 'net'
-import { tmpdir } from 'os'
-import { join } from 'path'
-import { mkdtempSync, rmSync, readFileSync } from 'fs'
+import { connect, type Server, type Socket } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { DaemonServer } from './daemon-server'
 import { DaemonClient } from './client'
 import { encodeNdjson } from './ndjson'
 import { PROTOCOL_VERSION, type DaemonRequest } from './types'
 import type { SubprocessHandle } from './session'
+import { getDaemonSocketPath } from './daemon-spawner'
 
 function createTestDir(): string {
   return mkdtempSync(join(tmpdir(), 'daemon-server-test-'))
@@ -66,7 +67,7 @@ describe('DaemonServer', () => {
 
   beforeEach(() => {
     dir = createTestDir()
-    socketPath = join(dir, 'test.sock')
+    socketPath = getDaemonSocketPath(dir)
     tokenPath = join(dir, 'test.token')
   })
 
@@ -198,19 +199,18 @@ describe('DaemonServer', () => {
       expect(result).toEqual({ pong: true })
     })
 
-    it('handles ptySpawnHealth through the daemon process', async () => {
-      const ptySpawnHealthCheck = vi.fn(async () => {})
-      server = new DaemonServer({
-        socketPath,
-        tokenPath,
-        ptySpawnHealthCheck,
-        spawnSubprocess: () => createMockSubprocess()
-      })
-      await server.start()
+    it('replies with an error to unknown request types and keeps serving', async () => {
+      await startServer()
       const c = await connectClient()
 
-      await expect(c.request('ptySpawnHealth', undefined)).resolves.toEqual({ healthy: true })
-      expect(ptySpawnHealthCheck).toHaveBeenCalledOnce()
+      // Why: downgraded clients can send request types this daemon does not
+      // know. Reject gracefully instead of crashing the session server.
+      await expect(c.request('definitelyUnknownRequest', undefined)).rejects.toThrow(
+        'Unknown request type: definitelyUnknownRequest'
+      )
+      await expect(c.request<{ pong: boolean }>('ping', undefined)).resolves.toEqual({
+        pong: true
+      })
     })
 
     it('handles systemResolverHealth', async () => {
