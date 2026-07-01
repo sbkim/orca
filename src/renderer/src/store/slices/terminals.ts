@@ -2039,13 +2039,21 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       let nextRuntimePaneTitlesByTabId = s.runtimePaneTitlesByTabId
       let nextAcceptedPaneTabTitlesByTabId = s.acceptedPaneTabTitlesByTabId
       const numericPaneId = Number(opts.leafId)
-      if (
+      const runtimeByPane = s.runtimePaneTitlesByTabId[opts.tabId]
+      const acceptedByPane = s.acceptedPaneTabTitlesByTabId[opts.tabId]
+      // Why: empty OSC titles are valid state; cleanup must check key presence
+      // rather than truthiness or stale empty-title entries can survive hibernation.
+      const hasRuntimeTitle =
         Number.isInteger(numericPaneId) &&
-        (s.runtimePaneTitlesByTabId[opts.tabId]?.[numericPaneId] ||
-          s.acceptedPaneTabTitlesByTabId[opts.tabId]?.[numericPaneId])
-      ) {
-        if (s.runtimePaneTitlesByTabId[opts.tabId]?.[numericPaneId]) {
-          const nextByPane = { ...s.runtimePaneTitlesByTabId[opts.tabId] }
+        runtimeByPane !== undefined &&
+        numericPaneId in runtimeByPane
+      const hasAcceptedTitle =
+        Number.isInteger(numericPaneId) &&
+        acceptedByPane !== undefined &&
+        numericPaneId in acceptedByPane
+      if (hasRuntimeTitle || hasAcceptedTitle) {
+        if (runtimeByPane && hasRuntimeTitle) {
+          const nextByPane = { ...runtimeByPane }
           delete nextByPane[numericPaneId]
           nextRuntimePaneTitlesByTabId = { ...s.runtimePaneTitlesByTabId }
           if (Object.keys(nextByPane).length > 0) {
@@ -2054,8 +2062,8 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
             delete nextRuntimePaneTitlesByTabId[opts.tabId]
           }
         }
-        if (s.acceptedPaneTabTitlesByTabId[opts.tabId]?.[numericPaneId]) {
-          const nextByPane = { ...s.acceptedPaneTabTitlesByTabId[opts.tabId] }
+        if (acceptedByPane && hasAcceptedTitle) {
+          const nextByPane = { ...acceptedByPane }
           delete nextByPane[numericPaneId]
           nextAcceptedPaneTabTitlesByTabId = { ...s.acceptedPaneTabTitlesByTabId }
           if (Object.keys(nextByPane).length > 0) {

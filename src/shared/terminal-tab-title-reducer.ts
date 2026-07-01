@@ -23,6 +23,8 @@ export function acceptTerminalTabTitleUpdate(
     return null
   }
 
+  // Why: OSC 0/1 are the visible-tab authority; OSC 2 is only a fallback
+  // until this pane has emitted an authoritative tab title.
   if (update.target === 'both' || update.target === 'icon') {
     state.hasObservedAuthoritativeTabTitle = true
     return {
