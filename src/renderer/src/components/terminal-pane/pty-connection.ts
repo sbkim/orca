@@ -953,7 +953,8 @@ export function connectPanePty(
       agentType: paneStartup.launchAgent ?? paneStartup.initialAgentStatus?.agent,
       ...(launchToken ? { launchToken } : {}),
       tabId: deps.tabId,
-      leafId: pane.leafId
+      leafId: pane.leafId,
+      ...(paneStartup.providerSession ? { providerSession: paneStartup.providerSession } : {})
     })
   } else if (paneStartup) {
     useAppStore.getState().clearAgentLaunchConfig(cacheKey)
