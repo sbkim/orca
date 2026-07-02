@@ -95,6 +95,8 @@ export function resolveRuntimePaneTitleLeafResolution(
     }
   }
 
+  // Why: without a layout root, only a single reported pane title can be
+  // attributed; any pane title still suppresses stale tab-title fallback.
   if (!tabLayout?.root && hasOnePaneTitle && !hasMultiplePaneTitles) {
     return { title: firstTitle, hasAnyPaneTitle: true }
   }
