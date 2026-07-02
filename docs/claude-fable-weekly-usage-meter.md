@@ -14,8 +14,9 @@ Relevant code:
 
 Research:
 
-- Official Claude Code statusline docs: `rate_limits.five_hour.used_percentage` and `rate_limits.seven_day.used_percentage`, plus matching `resets_at`, are the 5-hour and 7-day rate-limit fields.
-- `harveyxiacn/cc-usage-monitor` uses Claude Code's statusline `rate_limits` data and shows both `5h` and `7d` windows, matching Orca's existing `session` and `weekly` model.
+- Official Claude Code statusline docs: [`rate_limits.five_hour.used_percentage` and `rate_limits.seven_day.used_percentage`](https://code.claude.com/docs/en/statusline#available-data), plus matching `resets_at`, are the 5-hour and 7-day rate-limit fields.
+- `harveyxiacn/cc-usage-monitor` uses Claude Code's statusline `rate_limits` data and shows both [`5h` and `7d` windows](https://github.com/harveyxiacn/cc-usage-monitor), matching Orca's existing `session` and `weekly` model.
+- `leeguooooo/claude-code-usage-bar` independently exposes the same [`5h` and `7d` rate-limit usage](https://github.com/leeguooooo/claude-code-usage-bar) in a Claude Code statusLine integration.
 
 ## Goal
 
