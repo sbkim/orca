@@ -4463,7 +4463,7 @@ describe('Store', () => {
 
       // Before the debounce fires, file should not exist yet (or be stale)
       vi.advanceTimersByTime(100)
-      // The 300ms debounce hasn't elapsed yet
+      // The 1s debounce hasn't elapsed yet
 
       vi.advanceTimersByTime(1000)
       // The timer fired; wait for the async disk write to complete

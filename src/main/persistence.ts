@@ -3458,7 +3458,13 @@ export class Store {
       }
       await rename(tmpFile, dataFile)
       renamed = true
-      this.lastWrittenStateHash = stateHash
+      // Why the gen re-check: a sync flush can interleave during the rename
+      // await, write fresher state, and record its own hash. Recording this
+      // stale hash over it would make later saves skip against content that
+      // is not what the file holds.
+      if (this.writeGeneration === gen) {
+        this.lastWrittenStateHash = stateHash
+      }
     } finally {
       if (!renamed) {
         await rm(tmpFile).catch(() => {})
@@ -3477,11 +3483,14 @@ export class Store {
 
   // Why: synchronous variant kept only for flush() at shutdown, where the
   // process may exit before an async write completes.
-  private writeToDiskSync(): void {
+  private writeToDiskSync(opts: { force?: boolean } = {}): void {
     const stateHash = this.computeStateHash()
     // Why: skipping is safe under flushOrThrow's durability contract — a
     // matching hash means this exact state is already the file's content.
-    if (stateHash === this.lastWrittenStateHash) {
+    // Except when an async write was in flight at flush entry (force): its
+    // rename may already be dispatched past the generation check, and only
+    // an unconditional sync write afterwards reliably out-orders it.
+    if (!opts.force && stateHash === this.lastWrittenStateHash) {
       return
     }
     const dataFile = getDataFile()
@@ -3523,11 +3532,12 @@ export class Store {
       this.writeTimer = null
     }
     this.firstPendingSaveAt = null
+    const asyncWriteWasInFlight = this.pendingWrite !== null
     // Why: bump writeGeneration so any in-flight async writeToDiskAsync skips
     // its rename, preventing a stale snapshot from overwriting this sync write.
     this.writeGeneration++
     this.pendingWrite = null
-    this.writeToDiskSync()
+    this.writeToDiskSync({ force: asyncWriteWasInFlight })
   }
 
   // ── Repos ──────────────────────────────────────────────────────────
