@@ -617,11 +617,13 @@ function findInstalledMacSigningIdentity(keychainFile) {
   return null
 }
 
-Object.defineProperty(module.exports, '__test', {
-  enumerable: false,
-  value: {
-    macNotarytoolCredentialArgs,
-    notarizeMacServeSimCameraDylibsWithHost,
-    withMacNotarizationHost
-  }
-})
+if (process.env.VITEST || process.env.VITEST_WORKER_ID) {
+  Object.defineProperty(module.exports, '__test', {
+    enumerable: false,
+    value: {
+      macNotarytoolCredentialArgs,
+      notarizeMacServeSimCameraDylibsWithHost,
+      withMacNotarizationHost
+    }
+  })
+}
