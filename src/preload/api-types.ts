@@ -751,6 +751,8 @@ export type OpenCodeUsageApi = {
 
 export type AiVaultApi = {
   listSessions: (args?: AiVaultListArgs) => Promise<AiVaultListResult>
+  /** Fires when any app window regains OS focus; returns an unsubscribe. */
+  onWindowFocused: (callback: () => void) => () => void
 }
 
 export type NativeChatReadSessionResult = { messages: NativeChatMessage[] } | { error: string }

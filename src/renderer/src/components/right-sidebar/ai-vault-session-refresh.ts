@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AiVaultListResult, AiVaultSession } from '../../../../shared/ai-vault-types'
+import { useAppStore } from '@/store'
 
 const SESSION_LIMIT = 500
 
@@ -116,38 +117,103 @@ export function useAiVaultSessionRefresh(scopePaths: readonly string[]): {
     // and recurses on itself, so its identity must stay stable.
   }, [])
 
+  // Forced rescans triggered by events (refocus, agent-session starts) run
+  // immediately when the throttle allows, otherwise once as soon as it frees
+  // up — dropping the event would leave a just-started session invisible
+  // until some unrelated later trigger.
+  const forcedRescanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const requestForcedRescan = useCallback(() => {
+    const waitMs = lastForcedRescanAt + FORCED_RESCAN_MIN_INTERVAL_MS - Date.now()
+    if (waitMs <= 0) {
+      lastForcedRescanAt = Date.now()
+      void refresh({ background: true, force: true })
+      return
+    }
+    if (forcedRescanTimerRef.current !== null) {
+      return
+    }
+    forcedRescanTimerRef.current = setTimeout(() => {
+      forcedRescanTimerRef.current = null
+      lastForcedRescanAt = Date.now()
+      void refresh({ background: true, force: true })
+    }, waitMs)
+  }, [refresh])
+
   useEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
       refreshIdRef.current += 1
       refreshInFlightRef.current = false
+      if (forcedRescanTimerRef.current !== null) {
+        clearTimeout(forcedRescanTimerRef.current)
+        forcedRescanTimerRef.current = null
+      }
     }
   }, [])
 
   // Re-scan on mount and whenever the active scope changes, since the scanner
   // tailors its in-scope results to scopePaths. Force (throttled) so
-  // re-entering the panel shows sessions newer than the 15s cache.
+  // re-entering the panel shows sessions newer than the 15s cache; when the
+  // throttle denies it, paint from cache now and catch up once it frees.
   useEffect(() => {
-    void refresh({ force: consumeForcedRescanBudget() })
-  }, [refresh, scopePathsKey])
+    const force = consumeForcedRescanBudget()
+    void refresh({ force })
+    if (!force) {
+      requestForcedRescan()
+    }
+  }, [refresh, requestForcedRescan, scopePathsKey])
 
   // Sessions started while the app was backgrounded should appear when the
-  // user returns, so refocus also bypasses the scan cache (throttled).
+  // user returns, so refocus also bypasses the scan cache (throttled). OS
+  // refocus arrives via the main process — renderer DOM focus events don't
+  // fire on macOS app activation; visibilitychange covers minimize-restore.
   useEffect(() => {
     const onRefocus = (): void => {
       if (document.visibilityState !== 'visible') {
         return
       }
-      void refresh({ background: true, force: consumeForcedRescanBudget() })
+      requestForcedRescan()
     }
-    window.addEventListener('focus', onRefocus)
+    const unsubscribeWindowFocus = window.api.aiVault.onWindowFocused?.(onRefocus)
     document.addEventListener('visibilitychange', onRefocus)
     return () => {
-      window.removeEventListener('focus', onRefocus)
+      unsubscribeWindowFocus?.()
       document.removeEventListener('visibilitychange', onRefocus)
     }
-  }, [refresh])
+  }, [requestForcedRescan])
+
+  // Sessions started inside Orca never blur the window, so refocus alone
+  // can't surface them. Agent hooks already report provider sessions; re-scan
+  // only when a session id we haven't seen appears — state transitions are
+  // deliberately ignored, they fire constantly while agents work.
+  const agentSessionIdsKey = useAppStore((s) => {
+    const ids: string[] = []
+    for (const entry of Object.values(s.agentStatusByPaneKey)) {
+      if (entry.providerSession?.id) {
+        ids.push(entry.providerSession.id)
+      }
+    }
+    return ids.sort().join('\n')
+  })
+  const seenAgentSessionIdsRef = useRef<Set<string> | null>(null)
+  useEffect(() => {
+    const ids = agentSessionIdsKey === '' ? [] : agentSessionIdsKey.split('\n')
+    // The mount refresh already covers sessions live at mount time.
+    if (seenAgentSessionIdsRef.current === null) {
+      seenAgentSessionIdsRef.current = new Set(ids)
+      return
+    }
+    const seen = seenAgentSessionIdsRef.current
+    const freshIds = ids.filter((id) => !seen.has(id))
+    if (freshIds.length === 0) {
+      return
+    }
+    for (const id of freshIds) {
+      seen.add(id)
+    }
+    requestForcedRescan()
+  }, [agentSessionIdsKey, requestForcedRescan])
 
   return { error, loading, refresh, scanResult, sessions }
 }

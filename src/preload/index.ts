@@ -3612,7 +3612,12 @@ const api = {
 
   aiVault: {
     listSessions: (args?: AiVaultListArgs): Promise<unknown> =>
-      ipcRenderer.invoke('aiVault:listSessions', args)
+      ipcRenderer.invoke('aiVault:listSessions', args),
+    onWindowFocused: (callback: () => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent) => callback()
+      ipcRenderer.on('aiVault:windowFocused', listener)
+      return () => ipcRenderer.removeListener('aiVault:windowFocused', listener)
+    }
   },
 
   nativeChat: {
