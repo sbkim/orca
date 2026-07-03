@@ -426,6 +426,26 @@ disappears, merge revive into orca-performance and proceed to flow
 control (#6); if it persists, resume attribution renderer-side (probe
 pty-connection dataCallback additions per chunk).
 
+### 2026-07-03 — A/B gate passed; term-speed-2 MERGED to orca-performance
+
+Load-controlled alternating A/B (fresh app per run, n=2/side, agent-tui +
+DSR-load): perf 6.7/5.2 MB/s, dsr p50 19.9/21.3, p99 107.8/218.1; revive
+6.1/3.6 MB/s, dsr p50 21.4/20.3, **p99 63.4/26.1**. Verdict: latency p50
+tied, p99 better on revive, throughput within overlapping noise (revive2's
+3.6 followed two runtime-busy create failures). The earlier "35%
+regression" is confirmed noise. Note: both branches ~5-7 MB/s today vs
+11.5 yesterday — dev benches carry ~2x day-to-day machine variance;
+absolute dev numbers are only comparable within one A/B session.
+
+Merged revive/term-speed-2 → orca-performance; typecheck clean, 288
+post-merge spot tests green. orca-performance now = main-ish base + #7153
++ three perf fixes + full term-speed-2 chain (kill-switched, default ON)
++ scanner pre-filters. Extended user testing now covers everything.
+Remaining from the revival agent's risk list: gate×drain e2e specs
+(terminal-hidden-*, parked-memory, sleep-wake) still not run — queue them.
+Next: producer flow control (#6) per design §5; prod packaged-build bench
+for the real headline numbers.
+
 ## Success criteria (baseline-relative; finalize after task 1)
 
 - DSR-under-load p90 in Orca within striking distance of iTerm2 on the same
