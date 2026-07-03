@@ -1967,6 +1967,23 @@ export class OrcaRuntimeService {
   // Why: OSC 9999 status can span PTY chunks. Keeping parser state in the
   // runtime lets hidden/model-owned terminals observe agent state without a
   // mounted xterm view.
+  // Why a throttle: the blocked-reason check builds and scans two full wait
+  // texts (<=256KB each, lowercased) — measured at ~85% of onPtyData's cost
+  // under a TUI flood (findings log 2026-07-03). PTY chunk boundaries are
+  // arbitrary, so running the identical computation over coalesced chunks at
+  // a bounded cadence (plus a trailing-edge timer so burst-final state is
+  // always evaluated) preserves semantics while removing it from the hot path.
+  private waitBlockedCheckStateByPtyId = new Map<
+    string,
+    {
+      lastAt: number
+      lastWaitText: string
+      appended: string
+      keywordCarry: string
+      timer: ReturnType<typeof setTimeout> | null
+    }
+  >()
+
   private agentStatusOscProcessorsByPtyId = new Map<
     string,
     ReturnType<typeof createAgentStatusOscProcessor>
@@ -5088,26 +5105,12 @@ export class OrcaRuntimeService {
       pty.lastOutputAt = at
       const normalized = normalizeTerminalChunk(data, pty.tailPendingAnsi)
       pty.tailPendingAnsi = normalized.pendingAnsi
-      const previousWaitText = buildTerminalWaitText(
-        pty.tailBuffer,
-        pty.tailPartialLine,
-        pty.preview
-      )
       const nextTail = appendNormalizedToTailBuffer(
         pty.tailBuffer,
         pty.tailPartialLine,
         normalized.text,
         pty.tailRedrawCursor
       )
-      if (
-        nextTailHasNewerBlockedReason(
-          previousWaitText,
-          buildTerminalWaitText(nextTail.lines, nextTail.partialLine, pty.preview),
-          normalized.text
-        )
-      ) {
-        pty.waitBlockedAt = at
-      }
       ptyTailAfter = nextTail
       pty.tailBuffer = nextTail.lines
       pty.tailPartialLine = nextTail.partialLine
@@ -5115,6 +5118,7 @@ export class OrcaRuntimeService {
       pty.tailTruncated = pty.tailTruncated || nextTail.truncated
       pty.tailLinesTotal += nextTail.newCompleteLines
       pty.preview = buildPreview(pty.tailBuffer, pty.tailPartialLine)
+      this.scheduleWaitBlockedCheck(ptyId, normalized.text, at)
       if (oscTitle !== null) {
         const prevStatus = pty.lastAgentStatus
         const prevTitle = pty.lastOscTitle
@@ -5246,6 +5250,71 @@ export class OrcaRuntimeService {
       }
     }
     return outputSequence
+  }
+
+  private scheduleWaitBlockedCheck(ptyId: string, appendedText: string, at: number): void {
+    let state = this.waitBlockedCheckStateByPtyId.get(ptyId)
+    if (!state) {
+      state = { lastAt: 0, lastWaitText: '', appended: '', keywordCarry: '', timer: null }
+      this.waitBlockedCheckStateByPtyId.set(ptyId, state)
+    }
+    const appendedLower = appendedText.toLowerCase()
+    const keywordHit = WAIT_BLOCKED_KEYWORD_PATTERN.test(`${state.keywordCarry}${appendedLower}`)
+    state.keywordCarry = appendedLower.slice(-WAIT_BLOCKED_KEYWORD_CARRY_CHARS)
+    // Why the cap keeps the tail: the accumulated text only anchors boundary-
+    // spanning prompt detection; anything past the tail cap has scrolled out
+    // of the retained tail the check reads anyway.
+    state.appended =
+      state.appended.length + appendedText.length > MAX_TAIL_CHARS
+        ? `${state.appended}${appendedText}`.slice(-MAX_TAIL_CHARS)
+        : `${state.appended}${appendedText}`
+    const elapsed = at - state.lastAt
+    if (keywordHit || elapsed >= WAIT_BLOCKED_CHECK_MIN_INTERVAL_MS || elapsed < 0) {
+      this.runWaitBlockedCheck(ptyId, state, at)
+      return
+    }
+    if (!state.timer) {
+      // Why trailing edge: the final chunks of a burst must still be
+      // evaluated or a prompt arriving right after a flood would go
+      // unstamped until the next output.
+      state.timer = setTimeout(() => {
+        state.timer = null
+        this.runWaitBlockedCheck(ptyId, state, Date.now())
+      }, WAIT_BLOCKED_CHECK_MIN_INTERVAL_MS - elapsed)
+    }
+  }
+
+  private runWaitBlockedCheck(
+    ptyId: string,
+    state: {
+      lastAt: number
+      lastWaitText: string
+      appended: string
+      keywordCarry: string
+      timer: ReturnType<typeof setTimeout> | null
+    },
+    at: number
+  ): void {
+    const pty = this.ptysById.get(ptyId)
+    if (!pty) {
+      state.appended = ''
+      return
+    }
+    const nextWaitText = buildTerminalWaitText(pty.tailBuffer, pty.tailPartialLine, pty.preview)
+    if (nextTailHasNewerBlockedReason(state.lastWaitText, nextWaitText, state.appended)) {
+      pty.waitBlockedAt = at
+    }
+    state.lastAt = at
+    state.lastWaitText = nextWaitText
+    state.appended = ''
+  }
+
+  private clearWaitBlockedCheckState(ptyId: string): void {
+    const state = this.waitBlockedCheckStateByPtyId.get(ptyId)
+    if (state?.timer) {
+      clearTimeout(state.timer)
+    }
+    this.waitBlockedCheckStateByPtyId.delete(ptyId)
   }
 
   private processAgentStatusOscForPty(ptyId: string, data: string): ProcessedAgentStatusChunk {
@@ -6661,6 +6730,7 @@ export class OrcaRuntimeService {
     this.resizeListeners.delete(ptyId)
     this.lastRendererSizes.delete(ptyId)
     this.recentPtyOutputById.delete(ptyId)
+    this.clearWaitBlockedCheckState(ptyId)
     this.ptyOutputSequenceById.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
     this.oscTitleScanTailByPtyId.delete(ptyId)
@@ -17670,6 +17740,7 @@ export class OrcaRuntimeService {
     serveSimStateWatcher.unbindPty(ptyId)
     this.ptysById.delete(ptyId)
     this.recentPtyOutputById.delete(ptyId)
+    this.clearWaitBlockedCheckState(ptyId)
     this.ptyOutputSequenceById.delete(ptyId)
     this.agentStatusOscProcessorsByPtyId.delete(ptyId)
     this.oscTitleScanTailByPtyId.delete(ptyId)
@@ -22040,6 +22111,14 @@ export class OrcaRuntimeService {
   }
 }
 
+const WAIT_BLOCKED_CHECK_MIN_INTERVAL_MS = 50
+// Why: chunks that can complete an actionable prompt bypass the throttle so
+// blocked stamps stay per-chunk-immediate; the pattern heads mirror
+// findTerminalWaitBlockedSignal. Scanned over the new chunk plus a short
+// carry only — never the accumulated window.
+const WAIT_BLOCKED_KEYWORD_PATTERN =
+  /press enter|press t to trust|do you trust|trust this|trusted workspace|update available|choose working directory|codex just got an upgrade|hooks need review/
+const WAIT_BLOCKED_KEYWORD_CARRY_CHARS = 31
 const MAX_TAIL_LINES = 2000
 const MAX_TAIL_CHARS = 256 * 1024
 const MAX_TAIL_PARTIAL_CHARS = 4000
