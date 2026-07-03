@@ -118,6 +118,7 @@ import { getTerminalPasteSshRemotePlatform } from './terminal-paste-ssh-platform
 import { resolveTerminalPasteRuntime } from './terminal-paste-runtime'
 import { isKnownTuiAgentTerminalStartupCommand } from './terminal-startup-command-classifier'
 import { createCommandCodeOutputStatusDetector } from './command-code-output-status'
+import { createCodexErrorOutputStatusDetector } from './codex-error-output-status'
 import type { PtyDataMeta } from './pty-dispatcher'
 import { getEagerPtyBufferHandle } from './pty-dispatcher'
 import { createTerminalGitHubPRLinkDetector } from '@/lib/terminal-github-pr-link-detector'
@@ -163,7 +164,10 @@ import {
   beginAgentStartupDeliveryAttempt,
   releaseAgentStartupDeliveryAttempt
 } from '@/lib/agent-startup-delayed-delivery'
-import { isExpectedAgentProcess } from '../../../../shared/agent-process-recognition'
+import {
+  isExpectedAgentProcess,
+  type RecognizedAgentProcess
+} from '../../../../shared/agent-process-recognition'
 
 const pendingSpawnByPaneKey = new Map<string, Promise<string | null>>()
 const SSH_SESSION_EXPIRED_ERROR = 'SSH_SESSION_EXPIRED'
@@ -1473,6 +1477,43 @@ export function connectPanePty(
     delete pane.container.dataset.ptyId
   }
 
+  const completeWorkingStatusFromProcessExit = (
+    agent: RecognizedAgentProcess
+  ): AgentCompletionStatusSnapshot | null => {
+    const currentState = useAppStore.getState()
+    const currentEntry = currentState.agentStatusByPaneKey[cacheKey]
+    if (!currentEntry || currentEntry.state !== 'working') {
+      return null
+    }
+    const ownerAgent = getAuthoritativePaneAgent() ?? agent.agent
+    const agentType = resolveCompatibleAgentTypeForOwner(
+      currentEntry.agentType ?? agent.agent,
+      ownerAgent
+    )
+    const processAgentType = resolveCompatibleAgentTypeForOwner(agent.agent, ownerAgent)
+    if (!agentType || agentType !== processAgentType) {
+      return null
+    }
+    const statusPayload = {
+      state: 'done' as const,
+      prompt: currentEntry.prompt,
+      agentType,
+      ...(currentEntry.lastAssistantMessage
+        ? { lastAssistantMessage: currentEntry.lastAssistantMessage }
+        : {})
+    }
+    const currentTitle =
+      currentState.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id] ?? currentEntry.terminalTitle
+    const statusTitle = resolveAgentStatusTerminalTitle(statusPayload, currentTitle)
+    // Why: the foreground-process backstop can prove the TUI disappeared even
+    // when the agent missed its final hook; keep the explicit row in sync.
+    currentState.setAgentStatus(cacheKey, statusPayload, statusTitle)
+    const storedStatus = useAppStore.getState().agentStatusByPaneKey[cacheKey]
+    return typeof storedStatus?.stateStartedAt === 'number'
+      ? { ...statusPayload, stateStartedAt: storedStatus.stateStartedAt }
+      : statusPayload
+  }
+
   const agentCompletionCoordinator = createAgentCompletionCoordinator({
     paneKey: cacheKey,
     getPtyId: () => transport.getPtyId(),
@@ -1489,6 +1530,7 @@ export function connectPanePty(
       }),
     shouldPollProcessCadence: () =>
       isAgentTaskCompleteTrackingEnabled() && deps.isVisibleRef.current,
+    onProcessExitCompletion: completeWorkingStatusFromProcessExit,
     isLive: () => {
       if (disposed) {
         return false
@@ -1771,6 +1813,34 @@ export function connectPanePty(
     startupCommand: paneStartup?.command,
     onWorking: seedCommandCodeOutputWorkingStatus,
     onDone: scheduleCommandCodeOutputDoneStatus
+  })
+  const completeCodexOutputStreamErrorStatus = (message: string): void => {
+    const currentState = useAppStore.getState()
+    const currentEntry = currentState.agentStatusByPaneKey[cacheKey]
+    if (!currentEntry || currentEntry.state !== 'working') {
+      return
+    }
+    const agentType = resolveCompatibleAgentTypeForOwner(
+      currentEntry.agentType ?? 'codex',
+      getAuthoritativePaneAgent()
+    )
+    if (agentType !== 'codex') {
+      return
+    }
+    const statusPayload = {
+      state: 'done' as const,
+      prompt: currentEntry.prompt,
+      agentType,
+      lastAssistantMessage: message
+    }
+    const currentTitle = currentState.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
+    const statusTitle = resolveAgentStatusTerminalTitle(statusPayload, currentTitle)
+    // Why: Codex failed turns can finalize the TUI without emitting the managed
+    // Stop hook Orca normally uses to clear an explicit working row.
+    currentState.setAgentStatus(cacheKey, statusPayload, statusTitle)
+  }
+  const codexErrorOutputStatusDetector = createCodexErrorOutputStatusDetector({
+    onStreamError: completeCodexOutputStreamErrorStatus
   })
   const observeTerminalGitHubPRLink = createTerminalGitHubPRLinkDetector()
   const reportPanePtyVisibility = (ptyId: string | null | undefined, visible: boolean): void => {
@@ -4406,6 +4476,7 @@ export function connectPanePty(
       for (const link of observeTerminalGitHubPRLink(data)) {
         useAppStore.getState().observeTerminalGitHubPullRequestLink(deps.worktreeId, link)
       }
+      codexErrorOutputStatusDetector.observe(data)
       commandCodeOutputStatusDetector.observe(data)
       commandLifecycle.handlePtyData(data)
       // Why: split-pane layouts have multiple visible-but-inactive panes whose

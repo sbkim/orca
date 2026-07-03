@@ -254,6 +254,7 @@ export function createAgentCompletionCoordinator(
       quietedHookDone?: boolean
       agentStatus?: AgentCompletionStatusSnapshot
       completionIdentity?: LastCompletionIdentity | null
+      processExitAgent?: RecognizedAgentProcess
     } = {}
   ): void {
     if (source !== 'hook' && pendingHookDoneTimer !== null) {
@@ -281,11 +282,16 @@ export function createAgentCompletionCoordinator(
     if (optionsOverride.completionIdentity) {
       lastCompletionIdentityByPaneKey.set(options.paneKey, optionsOverride.completionIdentity)
     }
-    if (optionsOverride.quietedHookDone === true) {
+    const agentStatus =
+      optionsOverride.agentStatus ??
+      (source === 'process-exit' && optionsOverride.processExitAgent
+        ? (options.onProcessExitCompletion?.(optionsOverride.processExitAgent) ?? undefined)
+        : undefined)
+    if (optionsOverride.quietedHookDone === true || agentStatus) {
       options.dispatchCompletion(title, {
         source,
-        quietedHookDone: true,
-        ...(optionsOverride.agentStatus ? { agentStatus: optionsOverride.agentStatus } : {})
+        quietedHookDone: optionsOverride.quietedHookDone === true,
+        ...(agentStatus ? { agentStatus } : {})
       })
     } else {
       options.dispatchCompletion(title)
@@ -418,7 +424,8 @@ export function createAgentCompletionCoordinator(
             source: 'process-exit',
             identity: `${lastForegroundAgent.agent}:${lastForegroundAgent.processName}`,
             agentIdentity: lastForegroundAgent.agent
-          }
+          },
+          processExitAgent: lastForegroundAgent
         })
       }
       processSession += 1
@@ -466,7 +473,8 @@ export function createAgentCompletionCoordinator(
           source: 'process-exit',
           identity: `${exited.agent}:${exited.processName}`,
           agentIdentity: exited.agent
-        }
+        },
+        processExitAgent: exited
       })
       lastForegroundAgent = null
       clearAgentRunEvidence()

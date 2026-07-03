@@ -203,6 +203,47 @@ describe('agent completion coordinator', () => {
     expect(dispatchCompletion).toHaveBeenCalledWith('codex')
   })
 
+  it('passes synthesized status detail when the process-exit backstop completes a row', async () => {
+    let foregroundProcess: string | null = 'codex'
+    const dispatchCompletion = vi.fn()
+    const onProcessExitCompletion = vi.fn(() => ({
+      state: 'done' as const,
+      prompt: 'Fix the spinner',
+      agentType: 'codex' as const,
+      lastAssistantMessage: 'Codex exited before sending Stop.'
+    }))
+    const coordinator = createAgentCompletionCoordinator({
+      paneKey: 'tab-1:leaf-1',
+      getPtyId: () => 'pty-1',
+      getSettings: () => null,
+      inspectProcess: vi.fn(async () => processResult(foregroundProcess)),
+      dispatchCompletion,
+      onProcessExitCompletion,
+      isLive: () => true,
+      shouldPollProcessCadence: () => false
+    })
+
+    coordinator.observeTitle('Codex working')
+    await vi.advanceTimersByTimeAsync(3_000)
+    foregroundProcess = null
+    await vi.advanceTimersByTimeAsync(6_000)
+
+    expect(onProcessExitCompletion).toHaveBeenCalledWith({
+      agent: 'codex',
+      processName: 'codex'
+    })
+    expect(dispatchCompletion).toHaveBeenCalledWith('codex', {
+      source: 'process-exit',
+      quietedHookDone: false,
+      agentStatus: {
+        state: 'done',
+        prompt: 'Fix the spinner',
+        agentType: 'codex',
+        lastAssistantMessage: 'Codex exited before sending Stop.'
+      }
+    })
+  })
+
   it('clears process evidence after agent exit so later non-agent spinner titles do not notify', async () => {
     let foregroundProcess: string | null = 'codex'
     const dispatchCompletion = vi.fn()

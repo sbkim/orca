@@ -1,4 +1,5 @@
 import type { ParsedAgentStatusPayload } from '../../../../shared/agent-status-types'
+import type { RecognizedAgentProcess } from '../../../../shared/agent-process-recognition'
 import type { GlobalSettings } from '../../../../shared/types'
 import type { RuntimeTerminalProcessInspection } from '@/runtime/runtime-terminal-inspection'
 
@@ -30,6 +31,9 @@ export type AgentCompletionCoordinatorOptions = {
   isLive: () => boolean
   shouldPollProcessCadence?: () => boolean
   shouldSuppressHookCompletion?: (payload: AgentCompletionStatusSnapshot) => boolean
+  onProcessExitCompletion?: (
+    agent: RecognizedAgentProcess
+  ) => AgentCompletionStatusSnapshot | null | undefined
 }
 
 export type AgentCompletionCoordinator = {

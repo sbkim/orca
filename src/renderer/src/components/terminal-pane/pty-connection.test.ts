@@ -673,6 +673,7 @@ describe('connectPanePty', () => {
       markAgentCompletionPaneUnread: vi.fn()
     } as StoreState
     ;(globalThis as unknown as { window: unknown }).window = {
+      dispatchEvent: vi.fn(),
       api: {
         ssh: {
           connect: vi.fn().mockResolvedValue({ status: 'connected' }),
@@ -1446,6 +1447,94 @@ describe('connectPanePty', () => {
       },
       undefined
     )
+  })
+
+  it('marks a Codex stream-disconnect output as done instead of leaving the row working', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+    const transport = createMockTransport()
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedDataCallback.current = callbacks.onData ?? null
+      return 'pty-codex'
+    })
+    transportFactoryQueue.push(transport)
+
+    const pane = createPane(1)
+    const manager = createManager(1)
+    const deps = createDeps()
+    const paneKey = makePaneKey('tab-1', LEAF_1)
+    mockStoreState.agentStatusByPaneKey[paneKey] = {
+      paneKey,
+      state: 'working',
+      prompt: 'Fix the spinner',
+      agentType: 'codex',
+      updatedAt: Date.now(),
+      stateStartedAt: Date.now(),
+      stateHistory: []
+    }
+
+    connectPanePty(pane as never, manager as never, deps as never)
+    await flushAsyncTicks()
+    expect(capturedDataCallback.current).not.toBeNull()
+
+    capturedDataCallback.current?.(
+      '■ stream disconnected before completion: error sending request for url (http://openclaw:2455/backend-api/codex/responses)\r\n'
+    )
+
+    expect(mockStoreState.agentStatusByPaneKey[paneKey]).toMatchObject({
+      state: 'done',
+      prompt: 'Fix the spinner',
+      agentType: 'codex',
+      lastAssistantMessage: expect.stringContaining('stream disconnected before completion')
+    })
+    expect(mockStoreState.setAgentStatus).toHaveBeenLastCalledWith(
+      paneKey,
+      expect.objectContaining({
+        state: 'done',
+        prompt: 'Fix the spinner',
+        agentType: 'codex',
+        lastAssistantMessage: expect.stringContaining('stream disconnected before completion')
+      }),
+      'Codex ready'
+    )
+  })
+
+  it('does not complete a non-Codex row from Codex stream-disconnect text', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+    const transport = createMockTransport()
+    transport.connect.mockImplementation(async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+      capturedDataCallback.current = callbacks.onData ?? null
+      return 'pty-claude'
+    })
+    transportFactoryQueue.push(transport)
+
+    const pane = createPane(1)
+    const paneKey = makePaneKey('tab-1', LEAF_1)
+    mockStoreState.agentStatusByPaneKey[paneKey] = {
+      paneKey,
+      state: 'working',
+      prompt: 'Keep working',
+      agentType: 'claude',
+      updatedAt: Date.now(),
+      stateStartedAt: Date.now(),
+      stateHistory: []
+    }
+
+    connectPanePty(pane as never, createManager(1) as never, createDeps() as never)
+    await flushAsyncTicks()
+    expect(capturedDataCallback.current).not.toBeNull()
+
+    capturedDataCallback.current?.(
+      'stream disconnected before completion: error sending request for url (http://openclaw:2455/backend-api/codex/responses)\r\n'
+    )
+
+    expect(mockStoreState.setAgentStatus).not.toHaveBeenCalled()
+    expect(mockStoreState.agentStatusByPaneKey[paneKey]).toMatchObject({
+      state: 'working',
+      prompt: 'Keep working',
+      agentType: 'claude'
+    })
   })
 
   it('delivers terminal-paste startup commands through xterm before submitting', async () => {
