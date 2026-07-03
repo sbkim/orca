@@ -259,15 +259,12 @@ export function WorktreeCardDetailsHover({
         side="right"
         align="start"
         sideOffset={8}
-        className={cn(
-          'w-80 max-h-[28rem] overflow-y-auto p-3 text-xs scrollbar-sleek',
-          workspaceTitleEditing && 'cursor-text'
-        )}
+        className="w-80 max-h-[28rem] overflow-y-auto p-3 text-xs scrollbar-sleek"
         {...{ [WORKTREE_NATIVE_CONTEXT_MENU_ATTR]: '' }}
         onClick={(event) => event.stopPropagation()}
         onDoubleClick={(event) => event.stopPropagation()}
       >
-        <SelectedTextCopyMenu className={cn('space-y-3', workspaceTitleEditing && 'cursor-text')}>
+        <SelectedTextCopyMenu className="space-y-3">
           {showIdentityHeader && (
             <WorktreeCardHoverIdentityHeader
               branchName={branchName}

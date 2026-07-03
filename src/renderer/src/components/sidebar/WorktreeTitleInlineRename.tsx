@@ -27,6 +27,10 @@ export function isWorktreeTitleTruncated(
   return element.scrollWidth > element.clientWidth
 }
 
+// Why: the bordered field sits 6px (px-1.5) wider than the title text on each
+// side; the body-portaled editor reproduces that overhang around its anchor box.
+const FIELD_EDITOR_OVERHANG_PX = 6
+
 type WorktreeTitleInlineRenameProps = {
   displayName: string
   disabled?: boolean
@@ -214,23 +218,11 @@ export function WorktreeTitleInlineRename({
     setEditing(true)
   }, [beginEditing, disabled, editing, displayName, onBeginEditingConsumed])
 
+  // Why: keep clicks/drags inside the editor from reaching the card (select,
+  // drag-to-reorder, open); the editor never wants those card behaviors.
   const stopCardEvent = useCallback((event: React.SyntheticEvent) => {
     event.stopPropagation()
   }, [])
-
-  const handleInputMouseDown = useCallback(
-    (event: React.MouseEvent<HTMLInputElement>) => {
-      stopCardEvent(event)
-    },
-    [stopCardEvent]
-  )
-
-  const handleInputDoubleClick = useCallback(
-    (event: React.MouseEvent<HTMLInputElement>) => {
-      stopCardEvent(event)
-    },
-    [stopCardEvent]
-  )
 
   const startRename = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
@@ -317,8 +309,8 @@ export function WorktreeTitleInlineRename({
         onChange={(event) => setValue(event.target.value)}
         onBlur={() => void commitRename()}
         onClick={stopCardEvent}
-        onDoubleClick={handleInputDoubleClick}
-        onMouseDown={handleInputMouseDown}
+        onDoubleClick={stopCardEvent}
+        onMouseDown={stopCardEvent}
         onPointerDown={stopCardEvent}
         onKeyDown={handleKeyDown}
         className={cn(
@@ -366,9 +358,9 @@ export function WorktreeTitleInlineRename({
                 <span
                   className="absolute z-[60] block leading-snug"
                   style={{
-                    left: fieldEditorRect.left - 6,
+                    left: fieldEditorRect.left - FIELD_EDITOR_OVERHANG_PX,
                     top: fieldEditorRect.top,
-                    width: fieldEditorRect.width + 12
+                    width: fieldEditorRect.width + FIELD_EDITOR_OVERHANG_PX * 2
                   }}
                   data-worktree-title-rename-portal=""
                 >

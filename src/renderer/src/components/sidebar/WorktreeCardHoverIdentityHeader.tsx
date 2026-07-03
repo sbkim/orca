@@ -19,24 +19,15 @@ export function WorktreeCardHoverIdentityHeader({
   onRenameWorkspaceTitle,
   onWorkspaceTitleEditingChange
 }: WorktreeCardHoverIdentityHeaderProps): React.JSX.Element | null {
-  const [workspaceTitleEditing, setWorkspaceTitleEditing] = React.useState(false)
   const hasEditableWorkspaceTitle = Boolean(
     workspaceTitle &&
     workspaceTitle !== branchName &&
     onRenameWorkspaceTitle &&
     !workspaceTitleRenameDisabled
   )
-  // Why: the native cursor does not always refresh when the field mounts under
-  // a stationary pointer, so editable read/edit states share the I-beam cursor.
-  const identityCursorClassName =
-    workspaceTitleEditing || hasEditableWorkspaceTitle ? 'cursor-text' : 'cursor-default'
-  const handleWorkspaceTitleEditingChange = React.useCallback(
-    (editing: boolean): void => {
-      setWorkspaceTitleEditing(editing)
-      onWorkspaceTitleEditingChange?.(editing)
-    },
-    [onWorkspaceTitleEditingChange]
-  )
+  // Why: an editable title shows the I-beam in both read and edit states so the
+  // cursor never jumps when the rename field opens under a stationary pointer.
+  const identityCursorClassName = hasEditableWorkspaceTitle ? 'cursor-text' : 'cursor-default'
   const branchIdentity = branchName ? (
     <div
       className={cn(
@@ -63,11 +54,7 @@ export function WorktreeCardHoverIdentityHeader({
             identityCursorClassName,
             identityOrder === 'branch-first' && 'mt-1'
           )}
-          editingClassName={cn(
-            '-mx-1.5 w-[calc(100%+0.75rem)] cursor-text text-[13px] leading-snug',
-            identityOrder === 'branch-first' && 'mt-1'
-          )}
-          onEditingChange={handleWorkspaceTitleEditingChange}
+          onEditingChange={onWorkspaceTitleEditingChange}
           onRename={onRenameWorkspaceTitle}
         />
       ) : (
