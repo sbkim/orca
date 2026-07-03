@@ -1,11 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { translate } from '@/i18n/i18n'
-import { WorktreeTitleFieldRename } from './WorktreeTitleFieldRename'
 
 export type WorktreeTitleRenameCommit = { kind: 'cancel' } | { kind: 'save'; displayName: string }
 
@@ -26,6 +25,50 @@ export function isWorktreeTitleTruncated(
   return element.scrollWidth > element.clientWidth
 }
 
+const FIELD_RENAME_CURSOR_LOCK_ATTR = 'data-worktree-title-rename-cursor-lock'
+const FIELD_RENAME_CURSOR_LOCK_STYLE_ID = 'worktree-title-rename-cursor-lock-style'
+const useCursorLockEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect
+
+let fieldRenameCursorLockCount = 0
+
+function acquireFieldRenameCursorLock(): () => void {
+  if (typeof document === 'undefined') {
+    return () => {}
+  }
+
+  fieldRenameCursorLockCount += 1
+  document.documentElement.setAttribute(FIELD_RENAME_CURSOR_LOCK_ATTR, '')
+
+  if (!document.getElementById(FIELD_RENAME_CURSOR_LOCK_STYLE_ID)) {
+    const style = document.createElement('style')
+    style.id = FIELD_RENAME_CURSOR_LOCK_STYLE_ID
+    // Why: Chromium can leave the native cursor stale after a stationary pointer
+    // swaps from wrapped text to an input. Lock cursor only while field editing.
+    style.textContent = `
+html[${FIELD_RENAME_CURSOR_LOCK_ATTR}],
+html[${FIELD_RENAME_CURSOR_LOCK_ATTR}] body,
+html[${FIELD_RENAME_CURSOR_LOCK_ATTR}] body * {
+  cursor: text !important;
+}
+`
+    document.head.append(style)
+  }
+
+  let released = false
+  return () => {
+    if (released) {
+      return
+    }
+    released = true
+    fieldRenameCursorLockCount = Math.max(0, fieldRenameCursorLockCount - 1)
+    if (fieldRenameCursorLockCount > 0) {
+      return
+    }
+    document.documentElement.removeAttribute(FIELD_RENAME_CURSOR_LOCK_ATTR)
+    document.getElementById(FIELD_RENAME_CURSOR_LOCK_STYLE_ID)?.remove()
+  }
+}
+
 type WorktreeTitleInlineRenameProps = {
   displayName: string
   disabled?: boolean
@@ -44,8 +87,8 @@ type WorktreeTitleInlineRenameProps = {
   // onBeginEditingConsumed so the request fires exactly once.
   beginEditing?: boolean
   onBeginEditingConsumed?: () => void
-  // Why: fully selected rename text makes native inputs flip the OS cursor between
-  // I-beam and arrow while moving over the hovercard field editor.
+  // Why: parent-triggered rename can place the caret without selecting, while
+  // double-click rename keeps the native one-keystroke replacement behavior.
   selectOnFocus?: boolean
 }
 
@@ -136,8 +179,18 @@ export function WorktreeTitleInlineRename({
   // Why: the sidebar row needs a text-only editor to avoid layout jumps; the
   // hovercard can use a compact field that reads more like native rename UI.
   const editingInputClassName =
-    'h-[1lh] rounded-none border-0 !border-transparent !bg-transparent p-0 !shadow-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:outline-none dark:!bg-transparent'
-  const suppressMouseSelection = editingPresentation === 'field' && !selectOnFocus
+    editingPresentation === 'field'
+      ? 'h-6 rounded-sm border border-input bg-input/40 px-1.5 py-0 shadow-xs selection:bg-[Highlight] selection:text-[HighlightText] focus-visible:border-ring focus-visible:ring-[1px] focus-visible:ring-ring/50 dark:bg-input/30'
+      : 'h-[1lh] rounded-none border-0 !border-transparent !bg-transparent p-0 !shadow-none focus-visible:border-transparent focus-visible:ring-0 focus-visible:outline-none dark:!bg-transparent'
+  const savingInputClassName = editingPresentation === 'field' ? 'pr-6' : 'pr-4'
+  const savingSpinnerClassName = editingPresentation === 'field' ? 'right-1.5' : 'right-0'
+
+  useCursorLockEffect(() => {
+    if (!editing || editingPresentation !== 'field') {
+      return
+    }
+    return acquireFieldRenameCursorLock()
+  }, [editing, editingPresentation])
 
   const setEditingMode = useCallback(
     (nextEditing: boolean) => {
@@ -171,8 +224,8 @@ export function WorktreeTitleInlineRename({
       if (!input || !editing) {
         return
       }
-      // Why: defer focus until after the opening double-click finishes so the
-      // browser doesn't leave a word/line selection that flips the OS cursor.
+      // Why: defer focus until after the opening double-click finishes so
+      // intentional select-all wins over the browser's initiating click target.
       renameFocusFrameRef.current = requestAnimationFrame(() => {
         renameFocusFrameRef.current = null
         input.focus()
@@ -207,48 +260,18 @@ export function WorktreeTitleInlineRename({
     event.stopPropagation()
   }, [])
 
-  const stopInputDragEvent = useCallback((event: React.DragEvent<HTMLInputElement>) => {
-    // Why: selected rename text can become a drag target, which flips the cursor
-    // away from the I-beam while the title editor is active.
-    event.preventDefault()
-    event.stopPropagation()
-  }, [])
-
   const handleInputMouseDown = useCallback(
     (event: React.MouseEvent<HTMLInputElement>) => {
-      if (suppressMouseSelection && event.detail > 1) {
-        // Why: native inputs select words/lines on multi-click, which makes macOS
-        // alternate arrow and I-beam cursors over the hovercard field editor.
-        event.preventDefault()
-      }
       stopCardEvent(event)
     },
-    [stopCardEvent, suppressMouseSelection]
+    [stopCardEvent]
   )
 
   const handleInputDoubleClick = useCallback(
     (event: React.MouseEvent<HTMLInputElement>) => {
-      if (suppressMouseSelection) {
-        event.preventDefault()
-      }
       stopCardEvent(event)
     },
-    [stopCardEvent, suppressMouseSelection]
-  )
-
-  const handleInputSelect = useCallback(
-    (event: React.SyntheticEvent<HTMLInputElement>) => {
-      if (!suppressMouseSelection) {
-        return
-      }
-      const input = event.currentTarget
-      if (input.selectionStart === input.selectionEnd) {
-        return
-      }
-      const caret = input.value.length
-      input.setSelectionRange(caret, caret)
-    },
-    [suppressMouseSelection]
+    [stopCardEvent]
   )
 
   const startRename = useCallback(
@@ -320,36 +343,6 @@ export function WorktreeTitleInlineRename({
     [cancelRename, commitRename]
   )
 
-  if (editingPresentation === 'field') {
-    return (
-      <WorktreeTitleFieldRename
-        titleElementKey={titleElementKey}
-        displayName={displayName}
-        value={value}
-        disabled={disabled}
-        editing={editing}
-        saving={saving}
-        showUnreadEmphasis={showUnreadEmphasis}
-        className={className}
-        editingClassName={editingClassName}
-        inputClassName={inputClassName}
-        wrapTitle={wrapTitle}
-        suppressMouseSelection={suppressMouseSelection}
-        rootRef={handleRootRef}
-        inputRef={handleInputRef}
-        onStartRename={startRename}
-        onStopCardEvent={stopCardEvent}
-        onInputDoubleClick={handleInputDoubleClick}
-        onInputDragStart={stopInputDragEvent}
-        onInputMouseDown={handleInputMouseDown}
-        onInputSelect={handleInputSelect}
-        onInputKeyDown={handleKeyDown}
-        onValueChange={setValue}
-        onCommitRename={() => void commitRename()}
-      />
-    )
-  }
-
   if (editing) {
     return (
       <span
@@ -374,7 +367,6 @@ export function WorktreeTitleInlineRename({
           value={value}
           style={{ font: 'inherit' }}
           disabled={saving}
-          draggable={false}
           spellCheck={false}
           aria-label={translate(
             'auto.components.sidebar.WorktreeTitleInlineRename.bff3bdd00c',
@@ -385,16 +377,14 @@ export function WorktreeTitleInlineRename({
           onBlur={() => void commitRename()}
           onClick={stopCardEvent}
           onDoubleClick={handleInputDoubleClick}
-          onDragStart={stopInputDragEvent}
           onMouseDown={handleInputMouseDown}
           onPointerDown={stopCardEvent}
-          onSelect={handleInputSelect}
           onKeyDown={handleKeyDown}
           className={cn(
             'col-start-1 row-start-1 min-w-0 cursor-text truncate text-foreground outline-none',
-            suppressMouseSelection ? 'select-none' : 'select-text',
+            'select-text',
             editingInputClassName,
-            saving && 'pr-4',
+            saving && savingInputClassName,
             inputClassName
           )}
         />
@@ -402,7 +392,7 @@ export function WorktreeTitleInlineRename({
           <LoaderCircle
             className={cn(
               'pointer-events-none absolute top-1/2 size-3 -translate-y-1/2 animate-spin text-muted-foreground',
-              'right-0'
+              savingSpinnerClassName
             )}
           />
         ) : null}

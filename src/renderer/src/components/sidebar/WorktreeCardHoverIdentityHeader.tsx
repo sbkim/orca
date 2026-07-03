@@ -57,7 +57,6 @@ export function WorktreeCardHoverIdentityHeader({
           displayName={workspaceTitle}
           disabled={workspaceTitleRenameDisabled}
           editingPresentation="field"
-          selectOnFocus={false}
           wrapTitle
           className={cn(
             'text-[13px] font-semibold leading-snug text-foreground',
@@ -65,9 +64,7 @@ export function WorktreeCardHoverIdentityHeader({
             identityOrder === 'branch-first' && 'mt-1'
           )}
           editingClassName={cn(
-            // Why: keep field padding on the wrapper so native input padding doesn't
-            // expose arrow-cursor dead zones between glyphs and the field edge.
-            '-mx-1.5 w-[calc(100%+0.75rem)] cursor-text px-1.5 text-[13px] leading-snug',
+            '-mx-1.5 w-[calc(100%+0.75rem)] cursor-text text-[13px] leading-snug',
             identityOrder === 'branch-first' && 'mt-1'
           )}
           onEditingChange={handleWorkspaceTitleEditingChange}

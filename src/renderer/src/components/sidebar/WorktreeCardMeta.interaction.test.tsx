@@ -220,10 +220,10 @@ describe('WorktreeCardDetailsHover interactions', () => {
     expect(identityHeader?.className).toContain('cursor-text')
     expect(input).not.toBeNull()
     expect(input?.className).toContain('cursor-text')
-    expect(input?.className).toContain('select-none')
-    expect(input?.className).not.toContain('select-text')
+    expect(input?.className).toContain('select-text')
+    expect(input?.className).not.toContain('select-none')
     expect(sizingTitle?.className).toContain('pointer-events-none')
-    expect(input?.getAttribute('draggable')).toBe('false')
+    expect(input?.getAttribute('draggable')).toBeNull()
     expect(input?.className).toContain('bg-input/40')
     expect(input?.className).toContain('rounded-sm')
     expect(input?.className).toContain('selection:bg-[Highlight]')
@@ -235,7 +235,15 @@ describe('WorktreeCardDetailsHover interactions', () => {
       input?.dispatchEvent(dragStart)
     })
 
-    expect(dragStart.defaultPrevented).toBe(true)
+    expect(dragStart.defaultPrevented).toBe(false)
+
+    const doubleClick = new MouseEvent('dblclick', { bubbles: true, cancelable: true })
+
+    act(() => {
+      input?.dispatchEvent(doubleClick)
+    })
+
+    expect(doubleClick.defaultPrevented).toBe(false)
 
     act(() => {
       interactionMocks.onHoverOpenChange?.(false)
