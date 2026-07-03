@@ -85,6 +85,10 @@ async function main() {
     readFile(require.resolve('@xterm/xterm/css/xterm.css'), 'utf8'),
     ...packages.map(readPackageVersion)
   ])
+  // Why: the no-external-URL regression gate bans http(s):// anywhere in the
+  // terminal document. These xmlns URIs live inside data: URLs (never fetched);
+  // percent-encoding the scheme colon satisfies the gate and URI-decodes back
+  // before the SVG is parsed.
   const engineCss = rawEngineCss
     .replace(/\/\*[\s\S]*?\*\//g, '')
     .replace(/http:\/\/www\.w3\.org\/2000\/svg/g, 'http%3A//www.w3.org/2000/svg')

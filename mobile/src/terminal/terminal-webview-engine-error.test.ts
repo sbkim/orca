@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TerminalWebView } from './TerminalWebView'
 
 vi.mock('react-native', () => ({
+  AppState: { currentState: 'active' },
   Pressable: 'Pressable',
   StyleSheet: {
     absoluteFillObject: {
@@ -103,5 +104,64 @@ describe('TerminalWebView engine errors', () => {
 
     expect(onEngineError).toHaveBeenCalledWith('terminal message failed - malformed chunk')
     expect(renderedText(renderer)).not.toContain('Terminal failed to load')
+  })
+
+  it('keeps the first fatal diagnostics when later fatal reports cascade', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { renderer } = createTerminalWebViewRenderer()
+
+    postWebViewMessage(renderer, {
+      fatal: true,
+      message: 'terminal engine missing - root cause',
+      type: 'error'
+    })
+    postWebViewMessage(renderer, {
+      fatal: true,
+      message: 'Terminal did not initialize - watchdog cascade',
+      type: 'error'
+    })
+
+    expect(renderedText(renderer)).toContain('terminal engine missing - root cause')
+    expect(renderedText(renderer)).not.toContain('watchdog cascade')
+  })
+
+  // Why: if the document dies before the glue can post anything (or the RN
+  // bridge never comes up), no message and no native error handler fires —
+  // the watchdog must convert that silence into the visible fatal overlay.
+  it('paints the fatal overlay when web-ready never arrives', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { onEngineError, renderer } = createTerminalWebViewRenderer()
+
+      act(() => {
+        vi.advanceTimersByTime(15000)
+      })
+
+      expect(onEngineError).toHaveBeenCalledWith(
+        'Terminal did not initialize - no ready signal from the terminal view'
+      )
+      expect(renderedText(renderer)).toContain('Terminal failed to load')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not fire the watchdog once web-ready has arrived', () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { onEngineError, renderer } = createTerminalWebViewRenderer()
+
+      postWebViewMessage(renderer, { type: 'web-ready' })
+      act(() => {
+        vi.advanceTimersByTime(60000)
+      })
+
+      expect(onEngineError).not.toHaveBeenCalled()
+      expect(renderedText(renderer)).not.toContain('Terminal failed to load')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

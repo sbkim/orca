@@ -29,7 +29,10 @@ export function useTerminalWebViewEngineErrorState(onEngineError?: (message: str
       // eslint-disable-next-line no-console
       console.warn('[terminal-webview] engine error', message)
       if (fatal) {
-        setEngineError(message)
+        // Why: the first fatal report is the root cause; later cascades (e.g. the
+        // web-ready watchdog firing after a process-crash report) must not
+        // overwrite its more specific diagnostics. clearEngineError resets.
+        setEngineError((previous) => previous ?? message)
       }
     },
     [onEngineError]
