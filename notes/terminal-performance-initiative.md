@@ -561,6 +561,17 @@ Next: cut RC, confirm in prod, re-baseline vs Terminal.app (expect
 ~8-15x from 300x at baseline; goal line 10x = 4.5ms now plausibly in
 reach).
 
+### 2026-07-03 — Chain e2e debt PAID: all 6 hidden-pane specs green
+
+terminal-hidden-view-parking (parks + restores rich TUI on reveal; bell/
+title side effects live while parked), terminal-sleep-wake-restore
+(output restored + input accepted after wake), terminal-parked-memory
+(renderer memory released on park; views retained when kill-switched
+off): 6/6 passed, electron-headless, 1.1m. The gate x drain interplay —
+the revival's top flagged risk — now has e2e coverage on the exact
+branch the RC ships from. Remaining garble-hardening: differential
+hide/reveal fuzz harness (next build), reveal-time seq diagnostics.
+
 ## Success criteria (baseline-relative; finalize after task 1)
 
 - DSR-under-load p90 in Orca within striking distance of iTerm2 on the same
