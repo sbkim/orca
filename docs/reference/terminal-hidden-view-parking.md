@@ -54,7 +54,8 @@ While a tab is parked, a pane-less watcher
 (`parked-terminal-byte-watcher.ts`) keeps the pane's side effects alive. Its
 consumption mode is decided once at watcher start:
 
-- **Main side-effect authority on (default):** the watcher is purely
+- **Main side-effect authority on (arrives with PR #7214; forced off in this
+  build):** the watcher is purely
   fact-driven — it registers exactly one `pty:sideEffect` fact consumer and
   parses no bytes. Titles, agent working/idle/exited transitions, BEL
   attention, and PR links arrive as main-tracker facts and drive the same
@@ -63,7 +64,8 @@ consumption mode is decided once at watcher start:
   entirely; the DECSET 2031 color-scheme subscribe arrives as main's
   `2031-subscribe` fact and the watcher replies out-of-band via
   `transport.sendInput`.
-- **Kill switch off:** the watcher subscribes to raw bytes through the
+- **Kill switch off (this build's only mode — see the status note above):**
+  the watcher subscribes to raw bytes through the
   dispatcher sidecar mechanism (the same mechanism background agent launches
   use) and runs the transport-level byte parsers with no xterm — OSC 0/1/2
   titles (all-titles ordering, live-path normalization), the title-transition
@@ -105,14 +107,16 @@ disposed before the pane handlers re-register.
 5. Memory: parked tabs hold no xterm buffers; renderer memory scales with
    visible panes.
 
-## Relation to later phases (all shipped)
+## Relation to later phases (ship with PR #7214, not this build)
 
-Side-effect authority in main (Phase 3) replaced the watcher's byte parsing
+Side-effect authority in main (Phase 3) replaces the watcher's byte parsing
 with the `pty:sideEffect` fact consumer; the hidden-delivery gate (Phase 4)
 stops hidden byte delivery in main, moving the parked 2031 reply from the
 byte sidecar to the `2031-subscribe` fact; the model query responder
-(Phase 5) answers queries in hidden-dropped chunks. The watcher's byte-parser
-mode survives only behind the kill switches. Parking still excludes
+(Phase 5) answers queries in hidden-dropped chunks. None of that main-process
+machinery exists in this build — the watcher's byte-parser mode is the only
+mode until #7214 lands, and it remains the fallback behind the kill switches
+afterwards. Parking still excludes
 remote-runtime and SSH PTYs (no local snapshot to restore from); the watcher
 would return as a byte parser only if remote-runtime tabs — whose bytes never
 transit local main — ever became parkable.
