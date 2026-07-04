@@ -203,11 +203,13 @@ export async function fetchNewerReleaseTagsWithReadiness(
     return { tags: [], state: 'unavailable' }
   }
 
+  // Why: perf builds are explicit opt-in; regular prerelease checks should
+  // stay on the main RC/stable series even though perf tags are semver-newer.
   const candidates =
     options.releaseFilter === 'perf'
       ? tags.filter(({ tag }) => isPerfPrereleaseTag(tag))
       : includePrerelease
-        ? tags
+        ? tags.filter(({ tag }) => !isPerfPrereleaseTag(tag))
         : tags.filter(({ version }) => !isPrereleaseVersion(version))
   const newestNewerIndex = candidates.findIndex(
     ({ version }) => compareVersions(version, currentVersion) > 0

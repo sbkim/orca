@@ -187,6 +187,29 @@ describe('fetchNewerReleaseTag', () => {
     expect(await fetchNewerReleaseTag('1.3.19-rc.6')).toBe('v1.3.20-rc.1')
   })
 
+  it('ignores perf-tagged prereleases for regular RC checks', async () => {
+    respondWithAtom(['v1.4.121-rc.6.perf', 'v1.4.121-rc.6', 'v1.4.121-rc.5'])
+
+    const { fetchNewerReleaseTag } = await import('./updater-prerelease-feed')
+
+    expect(await fetchNewerReleaseTag('1.4.121-rc.5', { includePrerelease: true })).toBe(
+      'v1.4.121-rc.6'
+    )
+  })
+
+  it('reports no RC update when only perf-tagged prereleases are newer', async () => {
+    respondWithAtom(['v1.4.121-rc.6.perf', 'v1.4.121-rc.5'])
+
+    const { fetchNewerReleaseTagsWithReadiness } = await import('./updater-prerelease-feed')
+
+    await expect(
+      fetchNewerReleaseTagsWithReadiness('1.4.121-rc.5', 1, { includePrerelease: true })
+    ).resolves.toEqual({
+      tags: [],
+      state: 'no-newer'
+    })
+  })
+
   it('picks the semver-newest perf-tagged prerelease', async () => {
     respondWithAtom([
       'v1.4.121-rc.6.perf',
