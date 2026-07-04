@@ -356,4 +356,75 @@ describe('headless emulator snapshot fidelity fuzz', () => {
       restored.terminal.dispose()
     }
   })
+
+  // ── Bug B: SGR bold lost on a dim→bold-only cell transition ──────────────
+  // @xterm/addon-serialize 0.15.0-beta.287: serializing a dim cell followed by
+  // a bold-only cell emits `\x1b[1;22m` for the transition — SGR 1 sets bold,
+  // SGR 22 (normalIntensity) then clears BOTH bold and dim, so the restored
+  // cell loses its bold. Found by fuzz seeds 435, 770, 1321. Garbles the bold
+  // status/spinner line agent TUIs draw after a dim body line, on every reveal.
+  // See notes/garble-fuzz-divergences.md (Bug B). Unskip when upstream fixes
+  // the pen diff (clear dim with an explicit re-apply of bold, not SGR 22).
+  it.skip('preserves bold when serializing a dim cell followed by a bold-only cell', async () => {
+    const emulator = new HeadlessEmulator({ cols: 20, rows: 4 })
+    const control = createRendererParityTerminal({ cols: 20, rows: 4 })
+    const restored = createRendererParityTerminal({ cols: 20, rows: 4 })
+    try {
+      // 'A' dim, 'B' bold-only. Live: A=dim, B=bold. Serializer emits 1;22 for
+      // the B transition, which zeroes bold on restore.
+      const bytes = ['\x1b[2mA\x1b[22m\x1b[1mB\x1b[0m']
+      for (const chunk of bytes) {
+        await emulator.write(chunk)
+      }
+      await writeChunksToTerminal(control.terminal, bytes)
+      const snapshot = emulator.getSnapshot({ scrollbackRows: 5000 })
+      await writeChunksToTerminal(restored.terminal, [
+        SNAPSHOT_REPLAY_PREAMBLE_NORMAL,
+        snapshot.rehydrateSequences + snapshot.snapshotAnsi,
+        POST_REPLAY_LIVE_SNAPSHOT_RESET_PARITY
+      ])
+      // Fails today: 'B' restores with bold cleared (style flags 000000 vs 100000).
+      expect(visibleRowStyles(restored.terminal)).toEqual(visibleRowStyles(control.terminal))
+    } finally {
+      emulator.dispose()
+      control.terminal.dispose()
+      restored.terminal.dispose()
+    }
+  })
+
+  // ── Bug C: cursor restored one column short when the last row fills the margin ──
+  // @xterm/addon-serialize 0.15.0-beta.287: after emitting a content row filled
+  // to exactly `cols`, xterm is left wrap-pending (cursor on the last column,
+  // logically one past). The serializer's relative cursor-restore computes the
+  // horizontal delta one short, so the cursor lands at x-1. Found by fuzz seeds
+  // 454, 1696. Garbles the caret/spinner position on reveal of a TUI whose
+  // bottom line reached the right edge; later input can echo into the wrong
+  // cell. See notes/garble-fuzz-divergences.md (Bug C). Unskip when upstream
+  // fixes the wrap-pending relative cursor math.
+  it.skip('restores the cursor exactly when the last content row fills the right margin', async () => {
+    const emulator = new HeadlessEmulator({ cols: 10, rows: 4 })
+    const control = createRendererParityTerminal({ cols: 10, rows: 4 })
+    const restored = createRendererParityTerminal({ cols: 10, rows: 4 })
+    try {
+      // Fill row 0 to exactly 10 cols (wrap-pending), then CUP the cursor to a
+      // known lower-row column. Live cursor is (x=4, y=2).
+      const bytes = ['0123456789\x1b[3;5H']
+      for (const chunk of bytes) {
+        await emulator.write(chunk)
+      }
+      await writeChunksToTerminal(control.terminal, bytes)
+      const snapshot = emulator.getSnapshot({ scrollbackRows: 5000 })
+      await writeChunksToTerminal(restored.terminal, [
+        SNAPSHOT_REPLAY_PREAMBLE_NORMAL,
+        snapshot.rehydrateSequences + snapshot.snapshotAnsi,
+        POST_REPLAY_LIVE_SNAPSHOT_RESET_PARITY
+      ])
+      // Fails today: restored cursor is one column short (x=3 vs x=4).
+      expect(cursorPosition(restored.terminal)).toEqual(cursorPosition(control.terminal))
+    } finally {
+      emulator.dispose()
+      control.terminal.dispose()
+      restored.terminal.dispose()
+    }
+  })
 })
