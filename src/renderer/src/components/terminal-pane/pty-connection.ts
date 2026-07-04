@@ -14,6 +14,7 @@ import { getWorktreeMapFromState } from '@/store/selectors'
 import { parseWorkspaceKey } from '../../../../shared/workspace-scope'
 import { createTerminalZeroDimensionsMessage } from '../../../../shared/terminal-zero-dimensions-diagnostic'
 import { parseTerminalOscColorQuery } from '../../../../shared/terminal-osc-color-reply'
+import { serializeWithAbsoluteCursor } from '../../../../shared/terminal-serialize-absolute-cursor'
 import type { PtyBufferSnapshot, PtyConnectResult } from './pty-transport'
 import { createIpcPtyTransport } from './pty-transport'
 import { createRemoteRuntimePtyTransport } from './remote-runtime-pty-transport'
@@ -3244,10 +3245,15 @@ export function connectPanePty(
             // into the seed when the user is mid-TUI; the read-fallback path
             // omits it because it wants the user's currently-visible content.
             const alt = pane.terminal.buffer.active.type === 'alternate'
+            // Why serializeWithAbsoluteCursor: SerializeAddon's relative
+            // cursor restore lands one column short when replay of a
+            // margin-filling final row leaves the target wrap-pending.
             const data =
               opts?.altScreenForcesZeroRows && alt
-                ? pane.serializeAddon.serialize({ scrollback: 0 })
-                : pane.serializeAddon.serialize({ scrollback: opts?.scrollbackRows })
+                ? serializeWithAbsoluteCursor(pane.serializeAddon, pane.terminal, { scrollback: 0 })
+                : serializeWithAbsoluteCursor(pane.serializeAddon, pane.terminal, {
+                    scrollback: opts?.scrollbackRows
+                  })
             return {
               data,
               cols: pane.terminal.cols,

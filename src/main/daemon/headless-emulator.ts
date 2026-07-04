@@ -3,8 +3,10 @@ import { Terminal } from '@xterm/headless'
 import { SerializeAddon } from '@xterm/addon-serialize'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { activateOrcaTerminalUnicodeProvider } from '../../shared/terminal-unicode-provider'
+import { serializeWithAbsoluteCursor } from '../../shared/terminal-serialize-absolute-cursor'
 import type { TerminalViewAttributes } from '../../shared/terminal-view-attributes'
 import { collectHeadlessOscLinkRanges } from './headless-osc-link-ranges'
+import { buildRehydrateSequences } from './terminal-mode-rehydrate-sequences'
 import { TerminalMouseModeMirror } from './terminal-mouse-mode-mirror'
 import { TerminalOscCwdTitleScanner } from './terminal-osc-cwd-title-scanner'
 import {
@@ -289,8 +291,13 @@ export class HeadlessEmulator {
 
   getSnapshot(opts: { scrollbackRows?: number } = {}): TerminalSnapshot {
     const modes = this.getModes()
+    // Why serializeWithAbsoluteCursor: SerializeAddon's relative cursor
+    // restore lands one column short after a margin-filling final row leaves
+    // replay wrap-pending; the trailing CUP survives the alt-marker slice.
     const snapshotAnsi = this.normalizeSnapshotAnsiForModes(
-      this.serializer.serialize({ scrollback: opts.scrollbackRows }),
+      serializeWithAbsoluteCursor(this.serializer, this.terminal, {
+        scrollback: opts.scrollbackRows
+      }),
       modes
     )
     return {
@@ -301,7 +308,7 @@ export class HeadlessEmulator {
         opts.scrollbackRows,
         this.restoredOscLinks
       ),
-      rehydrateSequences: this.buildRehydrateSequences(modes),
+      rehydrateSequences: buildRehydrateSequences(modes),
       cwd: this.oscText.cwd,
       modes,
       cols: this.terminal.cols,
@@ -385,49 +392,5 @@ export class HeadlessEmulator {
     const flags = (this.terminal as TerminalWithSynchronousWrite)._core?.coreService?.kittyKeyboard
       ?.flags
     return typeof flags === 'number' ? flags : 0
-  }
-
-  private buildRehydrateSequences(modes: TerminalModes): string {
-    // Why no kitty flags here: rehydrateSequences feeds renderer xterms, and
-    // POST_REPLAY_REATTACH_RESET's deliberate kitty reset (stale CSI-u Ctrl+C
-    // hazard) must stay authoritative. modes.kittyKeyboardFlags exists for
-    // emulator re-seed parity only; a re-seeded emulator answers ?0u and
-    // protocol-conformant programs re-push.
-    const seqs: string[] = []
-    if (modes.alternateScreen) {
-      seqs.push('\x1b[?1049h')
-    }
-    if (modes.bracketedPaste) {
-      seqs.push('\x1b[?2004h')
-    }
-    if (modes.applicationCursor) {
-      seqs.push('\x1b[?1h')
-    }
-    // Why: mobile alt-screen scroll gestures need xterm's mouse mode restored
-    // from cold snapshots; OpenCode/OpenTUI enables scrollable panes this way.
-    switch (modes.mouseTracking ? (modes.mouseTrackingMode ?? 'vt200') : 'none') {
-      case 'x10':
-        seqs.push('\x1b[?9h')
-        break
-      case 'vt200':
-        seqs.push('\x1b[?1000h')
-        break
-      case 'drag':
-        seqs.push('\x1b[?1002h')
-        break
-      case 'any':
-        seqs.push('\x1b[?1003h')
-        break
-      case 'none':
-        break
-    }
-    // Why: xterm tracks the mouse protocol and SGR encoding as independent
-    // modes, so snapshots must preserve the encoding even when reporting is off.
-    if (modes.sgrMousePixelsMode) {
-      seqs.push('\x1b[?1016h')
-    } else if (modes.sgrMouseMode) {
-      seqs.push('\x1b[?1006h')
-    }
-    return seqs.join('')
   }
 }
