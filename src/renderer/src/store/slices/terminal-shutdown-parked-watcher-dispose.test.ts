@@ -64,3 +64,74 @@ describe('shutdownWorktreeTerminals parked watcher disposal', () => {
     expect(parkedWatchersByTabId.get('tab-parked')?.disposersByPtyId.size).toBe(0)
   })
 })
+
+describe('shutdownCompletedAgentPaneForHibernation parked watcher disposal', () => {
+  function seedHibernatablePane(store: ReturnType<typeof createTestStore>): void {
+    const tab = makeTab({ id: 'tab-hib', worktreeId: 'wt-hib' })
+    store.setState({
+      tabsByWorktree: { 'wt-hib': [tab] },
+      ptyIdsByTabId: { 'tab-hib': ['wt-hib@@session-1'] },
+      terminalLayoutsByTabId: {
+        'tab-hib': {
+          root: { type: 'leaf', leafId: '41111111-1111-4111-8111-111111111111' },
+          activeLeafId: '41111111-1111-4111-8111-111111111111',
+          expandedLeafId: null,
+          ptyIdsByLeafId: { '41111111-1111-4111-8111-111111111111': 'wt-hib@@session-1' }
+        }
+      }
+    } as Partial<AppState>)
+    store
+      .getState()
+      .setAgentStatus(
+        'tab-hib:41111111-1111-4111-8111-111111111111',
+        {
+          state: 'done',
+          prompt: 'finished task',
+          agentType: 'codex',
+          lastAssistantMessage: 'done'
+        },
+        'Codex',
+        { updatedAt: 2000, stateStartedAt: 1000 },
+        { tabId: 'tab-hib', worktreeId: 'wt-hib' },
+        { providerSession: { key: 'session_id', id: 'hib-session' } }
+      )
+  }
+
+  it('disposes the parked watcher once the hibernation kill succeeds', async () => {
+    const store = createTestStore()
+    seedHibernatablePane(store)
+    const dispose = seedParkedWatcher('wt-hib', 'tab-hib', 'wt-hib@@session-1')
+
+    await store.getState().shutdownCompletedAgentPaneForHibernation('wt-hib', {
+      paneKey: 'tab-hib:41111111-1111-4111-8111-111111111111',
+      tabId: 'tab-hib',
+      leafId: '41111111-1111-4111-8111-111111111111',
+      ptyId: 'wt-hib@@session-1'
+    })
+
+    expect(dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the watcher alive when the hibernation kill fails', async () => {
+    const store = createTestStore()
+    seedHibernatablePane(store)
+    const dispose = seedParkedWatcher('wt-hib', 'tab-hib', 'wt-hib@@session-1')
+    const windowWithApi = (globalThis as { window?: { api: { pty: { kill: unknown } } } }).window
+    windowWithApi!.api.pty.kill = vi.fn(async () => {
+      throw new Error('kill_failed')
+    })
+
+    await expect(
+      store.getState().shutdownCompletedAgentPaneForHibernation('wt-hib', {
+        paneKey: 'tab-hib:41111111-1111-4111-8111-111111111111',
+        tabId: 'tab-hib',
+        leafId: '41111111-1111-4111-8111-111111111111',
+        ptyId: 'wt-hib@@session-1'
+      })
+    ).rejects.toThrow('kill_failed')
+
+    // Why: on kill failure the session keeps running — disposing would leave
+    // it silently unwatched (the kept entry blocks a restart until re-park).
+    expect(dispose).not.toHaveBeenCalled()
+  })
+})

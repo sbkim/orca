@@ -1994,6 +1994,13 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         rollbackTargetShutdownState()
         throw err
       }
+      // Why: a parked tab's byte watcher rides the dispatcher sidecar, which
+      // unregisterPtyDataHandlers does not touch — dispose it once the kill
+      // succeeded so the teardown flush cannot mark unread or arm
+      // notification timers for the hibernated pane. Deliberately after the
+      // try/catch: on kill failure the session keeps running and must keep
+      // its watcher (the PTY-exit sidecar remains the exit-time backstop).
+      disposeParkedTerminalWatchersForPtyIds(shutdownPtyIds)
     }
 
     set((s) => {

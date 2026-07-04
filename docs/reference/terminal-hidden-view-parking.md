@@ -116,7 +116,7 @@ byte sidecar to the `2031-subscribe` fact; the model query responder
 (Phase 5) answers queries in hidden-dropped chunks. None of that main-process
 machinery exists in this build — the watcher's byte-parser mode is the only
 mode until #7214 lands, and it remains the fallback behind the kill switches
-afterwards. Parking still excludes
+afterward. Parking still excludes
 remote-runtime and SSH PTYs (no local snapshot to restore from); the watcher
 would return as a byte parser only if remote-runtime tabs — whose bytes never
 transit local main — ever became parkable.
