@@ -38,6 +38,8 @@ const GROUP_FROM_DESKTOP: Record<NonNullable<WorkspaceViewSettings['groupBy']>, 
 }
 
 const SORT_VALUES: readonly MobileSortMode[] = ['smart', 'name', 'recent', 'repo', 'manual']
+const LEGACY_MOBILE_LINEAGE_GROUP_PREFIX = 'workspace-lineage:'
+const SHARED_LINEAGE_GROUP_PREFIX = 'lineage:'
 
 export function groupModeToDesktop(
   mode: MobileGroupMode
@@ -55,6 +57,22 @@ export function sortModeFromDesktop(
   sortBy: WorkspaceViewSettings['sortBy']
 ): MobileSortMode | null {
   return sortBy && SORT_VALUES.includes(sortBy) ? sortBy : null
+}
+
+function normalizeCollapsedGroupKey(key: string): string {
+  if (!key.startsWith(LEGACY_MOBILE_LINEAGE_GROUP_PREFIX)) {
+    return key
+  }
+  const encodedWorktreeId = key.slice(LEGACY_MOBILE_LINEAGE_GROUP_PREFIX.length)
+  try {
+    return `${SHARED_LINEAGE_GROUP_PREFIX}${decodeURIComponent(encodedWorktreeId)}`
+  } catch {
+    return `${SHARED_LINEAGE_GROUP_PREFIX}${encodedWorktreeId}`
+  }
+}
+
+export function normalizeCollapsedGroups(keys: readonly string[]): string[] {
+  return [...new Set(keys.map(normalizeCollapsedGroupKey))]
 }
 
 export type MobileViewState = {
@@ -88,7 +106,9 @@ export function applyDesktopViewSettings(
     hideSleeping: settings.hideSleepingWorkspaces ?? current.hideSleeping,
     hideDefaultBranch: settings.hideDefaultBranchWorkspace ?? current.hideDefaultBranch,
     filterRepoIds: settings.filterRepoIds ?? current.filterRepoIds,
-    collapsedGroups: settings.collapsedGroups ?? current.collapsedGroups,
+    collapsedGroups: settings.collapsedGroups
+      ? normalizeCollapsedGroups(settings.collapsedGroups)
+      : current.collapsedGroups,
     workspaceStatuses
   }
   if (settings.workspaceHostScope !== undefined) {

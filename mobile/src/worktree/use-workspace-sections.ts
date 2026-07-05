@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import type { RuntimeWorkspaceListModelResult } from '../../../src/shared/runtime-types'
 import type { WorkspaceStatusDefinition } from '../../../src/shared/types'
 import type { MobileGroupMode, MobileSortMode } from './workspace-view-settings'
 import {
@@ -7,6 +8,7 @@ import {
   type Section,
   type Worktree
 } from './workspace-list-sections'
+import { buildMobileSectionsFromWorkspaceListModel } from './shared-workspace-list-model-sections'
 import { repoColor } from './repo-color'
 
 const ALL_EXECUTION_HOSTS_SCOPE = 'all'
@@ -125,6 +127,7 @@ export function useWorkspaceSections(args: {
   workspaceHostScope?: string
   visibleWorkspaceHostIds?: string[] | null
   workspaceStatuses: readonly WorkspaceStatusDefinition[]
+  workspaceListModel?: RuntimeWorkspaceListModelResult | null
 }): {
   sections: Section[]
   rawSections: Section[]
@@ -144,7 +147,8 @@ export function useWorkspaceSections(args: {
     collapsedGroups,
     workspaceHostScope,
     visibleWorkspaceHostIds,
-    workspaceStatuses
+    workspaceStatuses,
+    workspaceListModel
   } = args
 
   const visibleRepoIdsByName = useMemo(() => {
@@ -183,20 +187,15 @@ export function useWorkspaceSections(args: {
     [uniqueRepos]
   )
 
-  const rawSections = useMemo(
-    () =>
-      buildSections(
-        hostScopedWorktrees,
-        sortMode,
-        filters,
-        search,
-        groupMode,
-        pinnedIds,
-        visibleRepoIdsByName,
-        workspaceStatuses,
-        collapsedGroups
-      ),
-    [
+  const rawSections = useMemo(() => {
+    if (workspaceListModel) {
+      return buildMobileSectionsFromWorkspaceListModel({
+        model: workspaceListModel,
+        displayWorktrees,
+        search
+      })
+    }
+    return buildSections(
       hostScopedWorktrees,
       sortMode,
       filters,
@@ -206,8 +205,20 @@ export function useWorkspaceSections(args: {
       visibleRepoIdsByName,
       workspaceStatuses,
       collapsedGroups
-    ]
-  )
+    )
+  }, [
+    displayWorktrees,
+    hostScopedWorktrees,
+    sortMode,
+    filters,
+    search,
+    groupMode,
+    pinnedIds,
+    visibleRepoIdsByName,
+    workspaceStatuses,
+    collapsedGroups,
+    workspaceListModel
+  ])
 
   const sections = useMemo(
     () =>

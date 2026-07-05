@@ -162,7 +162,10 @@ import {
 import { parsePtySessionId } from '../../shared/pty-session-id-format'
 import { clampLinearIssueListLimit } from '../../shared/linear-issue-read-limits'
 import { isFolderRepo } from '../../shared/repo-kind'
-import { DEFAULT_WORKSPACE_STATUS_ID } from '../../shared/workspace-statuses'
+import {
+  DEFAULT_WORKSPACE_STATUS_ID,
+  cloneDefaultWorkspaceStatuses
+} from '../../shared/workspace-statuses'
 import {
   buildSetupRunnerCommand,
   getSetupRunnerCommandPlatformForPath
@@ -279,6 +282,7 @@ import type {
   RuntimeTerminalVisualTab,
   RuntimeSyncedLeaf,
   RuntimeSyncedTab,
+  RuntimeWorkspaceListModelResult,
   RuntimeMarkdownReadTabResult,
   RuntimeMarkdownSaveTabResult,
   RuntimeMobileSessionCreateTerminalResult,
@@ -300,6 +304,14 @@ import type {
   BrowserTabInfo,
   BrowserScreencastResult
 } from '../../shared/runtime-types'
+import { buildExecutionHostRegistry } from '../../shared/execution-host-registry'
+import { getSettingsFocusedExecutionHostId } from '../../shared/execution-host'
+import { deriveWorkspaceListModel } from '../../shared/workspace-list/workspace-list-derivation'
+import { normalizeLinkedReviewState } from '../../shared/workspace-list/workspace-review-state'
+import type {
+  WorkspaceListInput,
+  WorkspaceReviewState
+} from '../../shared/workspace-list/workspace-list-model'
 import type { AutomationService } from '../automations/service'
 import { RuntimeBrowserCommands } from './orca-runtime-browser'
 import { buildHeadlessTerminalSplitLayout } from './headless-terminal-split-layout'
@@ -615,6 +627,7 @@ import {
 import {
   DEFAULT_REPO_BADGE_COLOR,
   FLOATING_TERMINAL_WORKTREE_ID,
+  getDefaultUIState,
   getDefaultVoiceSettings
 } from '../../shared/constants'
 import { listRepoWorktrees } from '../repo-worktrees'
@@ -9521,6 +9534,354 @@ export class OrcaRuntimeService {
       totalCount: sorted.length,
       truncated: sorted.length > limit
     }
+  }
+
+  async getWorkspaceListModel(limit?: number): Promise<RuntimeWorkspaceListModelResult> {
+    if (limit !== undefined && (!Number.isInteger(limit) || limit <= 0)) {
+      throw new Error('invalid_limit')
+    }
+    const now = Date.now()
+    const input = await this.buildWorkspaceListInput(now)
+    const model = deriveWorkspaceListModel(input, now)
+    const totalRowCount = model.rows.length
+    const rows = limit === undefined ? model.rows : model.rows.slice(0, limit)
+    return {
+      ...model,
+      rows,
+      totalRowCount,
+      truncated: limit !== undefined && totalRowCount > limit
+    }
+  }
+
+  private async buildWorkspaceListInput(now: number): Promise<WorkspaceListInput> {
+    const resolvedWorktrees = (await this.listResolvedWorktrees()).filter((worktree) =>
+      this.isRuntimeWorktreeVisible(worktree)
+    )
+    await this.refreshPtyWorktreeRecordsFromController(resolvedWorktrees)
+    const repos = this.store?.getRepos() ?? []
+    const ui = this.store?.getUI?.() ?? getDefaultUIState()
+    const settings = this.store?.getSettings()
+    const tabsByWorktree = this.buildWorkspaceListTabsByWorktree()
+    const ptyIdsByTabId = this.buildWorkspaceListPtyIdsByTabId()
+    const browserTabsByWorktree = this.buildWorkspaceListBrowserTabsByWorktree(
+      resolvedWorktrees.map((worktree) => worktree.id)
+    )
+    const runtimePaneTitlesByTabId = this.buildWorkspaceListRuntimePaneTitlesByTabId()
+    const terminalLayoutsByTabId = this.buildWorkspaceListTerminalLayoutsByTabId()
+    const agentStatusByPaneKey = this.buildWorkspaceListAgentStatusByPaneKey(now)
+    const worktreesByRepo = new Map<string, Worktree[]>()
+    for (const worktree of resolvedWorktrees) {
+      const list = worktreesByRepo.get(worktree.repoId) ?? []
+      list.push(worktree)
+      worktreesByRepo.set(worktree.repoId, list)
+    }
+    const hostOptions = buildExecutionHostRegistry({
+      repos,
+      settings: settings as Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
+    }).map((host) => ({
+      id: host.id,
+      kind: host.kind,
+      label: host.label,
+      detail: host.detail,
+      health: host.health,
+      compatibility: host.compatibility,
+      connectionStatus: host.connectionStatus
+    }))
+
+    return {
+      preferences: {
+        groupBy: ui.groupBy,
+        sortBy: ui.sortBy,
+        projectOrderBy: ui.projectOrderBy,
+        collapsedGroups: ui.collapsedGroups ?? [],
+        filterRepoIds: ui.filterRepoIds ?? [],
+        showSleepingWorkspaces: ui.showSleepingWorkspaces ?? !(ui.hideSleepingWorkspaces ?? false),
+        hideDefaultBranchWorkspace: ui.hideDefaultBranchWorkspace,
+        hideAutomationGeneratedWorkspaces: ui.hideAutomationGeneratedWorkspaces ?? false,
+        workspaceHostScope: ui.workspaceHostScope ?? 'all',
+        visibleWorkspaceHostIds: ui.visibleWorkspaceHostIds ?? null,
+        workspaceHostOrder: ui.workspaceHostOrder ?? []
+      },
+      repos,
+      worktreesByRepo: Object.fromEntries(worktreesByRepo),
+      workspaceStatuses: ui.workspaceStatuses ?? cloneDefaultWorkspaceStatuses(),
+      tabsByWorktree,
+      ptyIdsByTabId,
+      browserTabsByWorktree,
+      worktreeLineageById: this.store?.getAllWorktreeLineage?.() ?? {},
+      reviewStateByWorktreeId: this.buildWorkspaceListReviewStateByWorktreeId(resolvedWorktrees),
+      agentStatusByPaneKey,
+      runtimePaneTitlesByTabId,
+      terminalLayoutsByTabId,
+      runtimeAgentOrchestrationByPaneKey: this.buildAgentOrchestrationByPaneKey(),
+      projectGroups: this.store?.getProjectGroups?.() ?? [],
+      projectGrouping: {
+        projects: this.store?.getProjects?.() ?? [],
+        projectHostSetups: this.store?.getProjectHostSetups?.() ?? []
+      },
+      folderWorkspaces: this.store?.getFolderWorkspaces?.() ?? [],
+      hostOptions,
+      defaultHostId: getSettingsFocusedExecutionHostId(
+        settings as Pick<GlobalSettings, 'activeRuntimeEnvironmentId'> | null | undefined
+      ),
+      sourceCompletenessWarnings: ['runtime-retained-agent-cache-unavailable']
+    }
+  }
+
+  private buildWorkspaceListTabsByWorktree(): Record<string, TerminalTab[]> {
+    const result: Record<string, TerminalTab[]> = {}
+    const sessionTabs = this.store?.getWorkspaceSession?.().tabsByWorktree ?? {}
+    for (const [worktreeId, tabs] of Object.entries(sessionTabs)) {
+      result[worktreeId] = tabs.map((tab) => ({ ...tab }))
+    }
+    const tabIds = new Set(
+      Object.values(result)
+        .flat()
+        .map((tab) => tab.id)
+    )
+    for (const tab of this.tabs.values()) {
+      if (tabIds.has(tab.tabId)) {
+        continue
+      }
+      const ptyId =
+        [...this.leaves.values()].find((leaf) => leaf.tabId === tab.tabId)?.ptyId ?? null
+      const list = result[tab.worktreeId] ?? []
+      list.push({
+        id: tab.tabId,
+        ptyId,
+        worktreeId: tab.worktreeId,
+        title: tab.title ?? 'Terminal',
+        customTitle: null,
+        color: null,
+        sortOrder: list.length,
+        createdAt: 0
+      })
+      result[tab.worktreeId] = list
+      tabIds.add(tab.tabId)
+    }
+    return result
+  }
+
+  private buildWorkspaceListPtyIdsByTabId(): Record<string, string[]> {
+    const result: Record<string, string[]> = {}
+    const add = (tabId: string | null | undefined, ptyId: string | null | undefined): void => {
+      if (!tabId || !ptyId) {
+        return
+      }
+      const list = result[tabId] ?? []
+      if (!list.includes(ptyId)) {
+        list.push(ptyId)
+      }
+      result[tabId] = list
+    }
+    for (const leaf of this.leaves.values()) {
+      if (leaf.connected) {
+        add(leaf.tabId, leaf.ptyId)
+      }
+    }
+    for (const pty of this.ptysById.values()) {
+      if (pty.connected) {
+        add(pty.tabId, pty.ptyId)
+      }
+    }
+    return result
+  }
+
+  private buildWorkspaceListBrowserTabsByWorktree(
+    knownWorktreeIds: readonly string[]
+  ): Record<string, { id: string }[]> {
+    const result: Record<string, { id: string }[]> = {}
+    for (const [worktreeId, tabs] of Object.entries(
+      this.store?.getWorkspaceSession?.().browserTabsByWorktree ?? {}
+    )) {
+      if (tabs.length > 0) {
+        result[worktreeId] = tabs.map((tab) => ({ id: tab.id }))
+      }
+    }
+    for (const [worktreeId, snapshot] of this.mobileSessionTabsByWorktree) {
+      const browserTabs = snapshot.tabs
+        .filter((tab): tab is RuntimeMobileSessionBrowserTab => tab.type === 'browser')
+        .map((tab) => ({ id: tab.id }))
+      if (browserTabs.length > 0) {
+        result[worktreeId] = browserTabs
+      }
+    }
+    if (!this.offscreenBrowserBackend || !this.agentBrowserBridge?.tabList) {
+      return result
+    }
+    for (const worktreeId of this.collectWorkspaceListBrowserTabWorktreeIds(knownWorktreeIds)) {
+      const browserTabs = this.buildHeadlessMobileSessionBrowserTabs(worktreeId).map((tab) => ({
+        id: tab.id
+      }))
+      if (browserTabs.length > 0) {
+        result[worktreeId] = browserTabs
+      }
+    }
+    return result
+  }
+
+  private collectWorkspaceListBrowserTabWorktreeIds(
+    knownWorktreeIds: readonly string[]
+  ): Set<string> {
+    const worktreeIds = new Set<string>([
+      ...knownWorktreeIds,
+      ...this.mobileSessionTabsByWorktree.keys()
+    ])
+    for (const worktreeId of Object.keys(
+      this.store?.getWorkspaceSession?.().browserTabsByWorktree ?? {}
+    )) {
+      worktreeIds.add(worktreeId)
+    }
+    for (const tabs of Object.values(this.store?.getWorkspaceSession?.().tabsByWorktree ?? {})) {
+      for (const tab of tabs) {
+        if (tab.worktreeId) {
+          worktreeIds.add(tab.worktreeId)
+        }
+      }
+    }
+    for (const tab of this.tabs.values()) {
+      worktreeIds.add(tab.worktreeId)
+    }
+    return worktreeIds
+  }
+
+  private buildWorkspaceListRuntimePaneTitlesByTabId(): Record<string, Record<number, string>> {
+    const result: Record<string, Record<number, string>> = {}
+    for (const leaf of this.leaves.values()) {
+      const title = leaf.paneTitle ?? leaf.lastOscTitle ?? leaf.title
+      if (!title) {
+        continue
+      }
+      const paneTitles = result[leaf.tabId] ?? {}
+      paneTitles[leaf.paneRuntimeId] = title
+      result[leaf.tabId] = paneTitles
+    }
+    return result
+  }
+
+  private buildWorkspaceListTerminalLayoutsByTabId(): Record<
+    string,
+    TerminalLayoutSnapshot | undefined
+  > {
+    // Why: mobile list derivation can run before a persisted tab is mounted in
+    // the runtime tab map, but desktop parity still needs its saved pane layout.
+    const result: Record<string, TerminalLayoutSnapshot | undefined> = {
+      ...this.store?.getWorkspaceSession?.().terminalLayoutsByTabId
+    }
+    for (const tab of this.tabs.values()) {
+      result[tab.tabId] = {
+        root: tab.layout,
+        activeLeafId: tab.activeLeafId,
+        expandedLeafId: null
+      }
+    }
+    return result
+  }
+
+  private buildWorkspaceListAgentStatusByPaneKey(now: number): Record<string, AgentStatusEntry> {
+    const result: Record<string, AgentStatusEntry> = {}
+    for (const snapshot of this.latestAgentStatusByPaneKey.values()) {
+      const { payload } = snapshot
+      result[snapshot.paneKey] = {
+        paneKey: snapshot.paneKey,
+        state: payload.state,
+        prompt: payload.prompt,
+        updatedAt: snapshot.updatedAt,
+        stateStartedAt: snapshot.stateStartedAt,
+        stateHistory: [],
+        agentType: payload.agentType,
+        worktreeId: snapshot.worktreeId,
+        tabId: snapshot.tabId,
+        lastAssistantMessage: payload.lastAssistantMessage,
+        toolName: payload.toolName,
+        toolInput: payload.toolInput,
+        interactivePrompt: payload.interactivePrompt,
+        interrupted: payload.interrupted,
+        terminalTitle: this.resolveWorkspaceListTerminalTitle(snapshot.paneKey)
+      }
+    }
+    for (const entry of this.getAgentStatusSnapshotFn?.() ?? []) {
+      result[entry.paneKey] = {
+        paneKey: entry.paneKey,
+        state: entry.state,
+        prompt: entry.prompt,
+        updatedAt: entry.receivedAt ?? now,
+        stateStartedAt: entry.stateStartedAt,
+        stateHistory: [],
+        agentType: entry.agentType,
+        worktreeId: entry.worktreeId,
+        tabId: entry.tabId,
+        lastAssistantMessage: entry.lastAssistantMessage ?? undefined,
+        toolName: entry.toolName,
+        toolInput: entry.toolInput,
+        interactivePrompt: entry.interactivePrompt,
+        interrupted: entry.interrupted,
+        terminalTitle: this.resolveWorkspaceListTerminalTitle(entry.paneKey),
+        orchestration: entry.orchestration,
+        providerSession: entry.providerSession
+      }
+    }
+    return result
+  }
+
+  private resolveWorkspaceListTerminalTitle(paneKey: string): string | undefined {
+    const parsed = parsePaneKey(paneKey)
+    if (!parsed) {
+      return undefined
+    }
+    const leaf = this.leaves.get(this.getLeafKey(parsed.tabId, parsed.leafId))
+    return (
+      leaf?.paneTitle ??
+      leaf?.lastOscTitle ??
+      leaf?.title ??
+      this.tabs.get(parsed.tabId)?.title ??
+      undefined
+    )
+  }
+
+  private buildWorkspaceListReviewStateByWorktreeId(
+    worktrees: readonly Worktree[]
+  ): Record<string, WorkspaceReviewState | undefined> {
+    const ghCache = this.store?.getGitHubCache?.()
+    const repoById = new Map((this.store?.getRepos() ?? []).map((repo) => [repo.id, repo]))
+    const result: Record<string, WorkspaceReviewState | undefined> = {}
+    for (const worktree of worktrees) {
+      const repo = repoById.get(worktree.repoId)
+      const branch = worktree.branch.replace(/^refs\/heads\//, '')
+      const cached =
+        branch && ghCache
+          ? ((repo?.id ? ghCache.pr[`${repo.id}::${branch}`] : undefined) ??
+            (repo?.path ? ghCache.pr[`${repo.path}::${branch}`] : undefined))
+          : undefined
+      const cachedPr =
+        cached?.data && typeof cached.data === 'object'
+          ? (cached.data as { number?: number; state?: string })
+          : null
+      const github =
+        cachedPr?.number != null
+          ? normalizeLinkedReviewState({
+              provider: 'github',
+              reviewType: 'pr',
+              number: cachedPr.number,
+              state: cachedPr.state
+            })
+          : normalizeLinkedReviewState({
+              provider: 'github',
+              reviewType: 'pr',
+              number: worktree.linkedPR,
+              state: 'unknown'
+            })
+      result[worktree.id] =
+        github ??
+        normalizeLinkedReviewState({
+          provider: 'gitlab',
+          reviewType: 'mr',
+          number: worktree.linkedGitLabMR,
+          state: 'unknown'
+        }) ??
+        undefined
+    }
+    return result
   }
 
   // Why: maps the retained per-pane agent snapshots into each worktree's inline

@@ -26,7 +26,11 @@ import {
 } from '../src/components/AccountUsage'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts, removeHost, renameHost } from '../src/transport/host-store'
-import { pickResumeWorktree } from '../src/worktree/resume-worktree'
+import {
+  orderWorktreesByWorkspaceListModel,
+  pickResumeWorktreeForHome
+} from '../src/worktree/home-worktree-list-model'
+import { fetchWorkspaceListModelSnapshot } from '../src/worktree/workspace-list-model-fetch'
 import type { RpcClient } from '../src/transport/rpc-client'
 import {
   useAllHostClients,
@@ -186,22 +190,20 @@ function fetchWorktreeInfo(
     })
   }
 
-  client
-    // Why: worktree.ps defaults to 200 and silently truncates; request the full
-    // set so the host worktree count and active count are accurate.
-    .sendRequest('worktree.ps', { limit: 10000 })
-    .then((response) => {
+  fetchWorkspaceListModelSnapshot(client)
+    .then(({ worktreesResponse: response, workspaceListModel }) => {
       if (disposed()) {
         return
       }
       if (response.ok) {
         const result = response.result as { worktrees: WorktreeSummary[] }
         const worktrees = result.worktrees ?? []
-        setCachedWorktrees(hostId, worktrees)
-        const activeStatuses = new Set(['working', 'active', 'permission'])
-        const active = worktrees.filter((w) => w.status && activeStatuses.has(w.status))
-        // Mirror the desktop's focused workspace (see pickResumeWorktree).
-        const lastActive = pickResumeWorktree(worktrees)
+        const orderedWorktrees = orderWorktreesByWorkspaceListModel(worktrees, workspaceListModel)
+        setCachedWorktrees(hostId, orderedWorktrees)
+        const active = worktrees.filter(
+          (w) => w.status && ['working', 'active', 'permission'].includes(w.status)
+        )
+        const lastActive = pickResumeWorktreeForHome(worktrees, workspaceListModel)
         setInfo((prev) => ({
           ...prev,
           [hostId]: {

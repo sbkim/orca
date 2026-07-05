@@ -31,6 +31,7 @@ import type { RuntimeCapability } from './protocol-version'
 import type { RemoteRuntimeSharedConnectionDiagnostics } from './remote-runtime-shared-control-types'
 import type { SleepingAgentLaunchConfig } from './agent-session-resume'
 import type { StartupCommandDelivery } from './codex-startup-delivery'
+import type { WorkspaceListModel } from './workspace-list/workspace-list-model'
 
 export type { RuntimeMarkdownReadTabResult, RuntimeMarkdownSaveTabResult }
 
@@ -564,7 +565,7 @@ export type RuntimeWorktreeAgentRow = {
   paneKey: string
   /** paneKey of the orchestration parent, or null for a root agent. */
   parentPaneKey: string | null
-  state: AgentStatusState
+  state: AgentStatusState | 'idle'
   agentType: AgentType | null
   /** Raw hook-reported prompt. Display surfaces can prefer displayName. */
   prompt: string
@@ -675,6 +676,11 @@ export type RuntimeWorktreeRemoveResult = RemoveWorktreeResult & {
 export type RuntimeWorktreePsResult = {
   worktrees: RuntimeWorktreePsSummary[]
   totalCount: number
+  truncated: boolean
+}
+
+export type RuntimeWorkspaceListModelResult = WorkspaceListModel & {
+  totalRowCount: number
   truncated: boolean
 }
 
