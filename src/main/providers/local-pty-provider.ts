@@ -37,7 +37,6 @@ import {
   STARTUP_COMMAND_READY_MAX_WAIT_MS
 } from './local-pty-shell-ready'
 import type { ShellReadySignal } from './local-pty-shell-ready'
-import { isPowerShellProcess } from '../../shared/shell-process-detection'
 import { removeInheritedNoColor } from '../pty/terminal-color-env'
 import { removeAppImageRuntimeEnv } from '../pty/appimage-terminal-env'
 import { isHostCodexHomeForWsl, isWslCodexHomeForHost } from '../pty/codex-home-wsl-env'
@@ -903,19 +902,12 @@ export class LocalPtyProvider implements IPtyProvider {
     // Why: xterm.js clear() only resets the renderer. ConPTY keeps its own
     // screen buffer, so without this its stale cursor row makes the next
     // prompt repaint land below a blank gap. No-op on POSIX.
-    const proc = ptyProcesses.get(id)
-    if (!proc) {
-      return
-    }
+    //
+    // Unlike the daemon session, no PSReadLine form-feed nudge here: it is
+    // only safe at an empty prompt, and without a headless emulator this
+    // provider cannot tell whether input is pending.
     try {
-      proc.clear()
-      // Why: the ConPTY clear cannot reach PSReadLine's cached cursor row; a
-      // form feed (Ctrl+L) makes PSReadLine repaint the prompt at the true
-      // origin. Gated to a PowerShell foreground so a running command or TUI
-      // never gets a stray 0x0C.
-      if (process.platform === 'win32' && isPowerShellProcess(proc.process)) {
-        proc.write('\x0c')
-      }
+      ptyProcesses.get(id)?.clear()
     } catch {
       /* PTY may have just exited */
     }

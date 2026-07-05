@@ -455,25 +455,51 @@ describe('Session', () => {
       expect(take?.records).toContainEqual({ kind: 'clear' })
     })
 
-    it('nudges a Windows PowerShell prompt to repaint with a form feed', () => {
+    it('nudges a Windows PowerShell prompt to repaint with a form feed', async () => {
       createSession()
       subprocess.foregroundProcess = 'powershell.exe'
+      subprocess.simulateData('PS C:\\Users\\me> ')
+      await vi.advanceTimersByTimeAsync(10)
       withPlatform('win32', () => session.clearScrollback())
       // Why: the ConPTY clear cannot reach PSReadLine's cached cursor row;
       // Ctrl+L makes PSReadLine repaint the prompt at the true origin.
       expect(subprocess.written).toEqual(['\x0c'])
     })
 
-    it('does not send a form feed while a command owns the foreground', () => {
+    it('does not send a form feed while input is pending at the prompt', async () => {
       createSession()
-      subprocess.foregroundProcess = 'node'
+      subprocess.foregroundProcess = 'powershell.exe'
+      subprocess.simulateData('PS C:\\Users\\me> fd')
+      await vi.advanceTimersByTimeAsync(10)
+      // Why: PSReadLine repaints pending input at a stale cached row that
+      // ConPTY's fixed viewport doesn't track, so the nudge must be skipped.
       withPlatform('win32', () => session.clearScrollback())
       expect(subprocess.written).toEqual([])
     })
 
-    it('does not send a form feed on POSIX platforms', () => {
+    it('does not send a form feed at a PowerShell continuation prompt', async () => {
+      createSession()
+      subprocess.foregroundProcess = 'powershell.exe'
+      subprocess.simulateData('PS C:\\Users\\me> {\r\n>> ')
+      await vi.advanceTimersByTimeAsync(10)
+      withPlatform('win32', () => session.clearScrollback())
+      expect(subprocess.written).toEqual([])
+    })
+
+    it('does not send a form feed while a command owns the foreground', async () => {
+      createSession()
+      subprocess.foregroundProcess = 'node'
+      subprocess.simulateData('PS C:\\Users\\me> ')
+      await vi.advanceTimersByTimeAsync(10)
+      withPlatform('win32', () => session.clearScrollback())
+      expect(subprocess.written).toEqual([])
+    })
+
+    it('does not send a form feed on POSIX platforms', async () => {
       createSession()
       subprocess.foregroundProcess = 'pwsh'
+      subprocess.simulateData('PS C:\\Users\\me> ')
+      await vi.advanceTimersByTimeAsync(10)
       withPlatform('linux', () => session.clearScrollback())
       expect(subprocess.written).toEqual([])
     })

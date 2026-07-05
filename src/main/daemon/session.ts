@@ -298,12 +298,17 @@ export class Session {
    *  so PowerShell's first Enter after a clear would still repaint the prompt
    *  at the stale row, leaving a blank gap. A form feed (Ctrl+L) makes
    *  PSReadLine itself repaint at the true origin. Gated to a PowerShell
-   *  foreground so a running command or TUI never gets a stray 0x0C. */
+   *  foreground so a running command or TUI never gets a stray 0x0C, and to
+   *  an empty prompt because PSReadLine repaints pending input at a stale
+   *  cached row that ConPTY's fixed viewport doesn't track. */
   #nudgePowerShellPromptRepaint(): void {
     if (process.platform !== 'win32') {
       return
     }
     if (!isPowerShellProcess(this.subprocess.getForegroundProcess())) {
+      return
+    }
+    if (!this.emulator.isCursorOnEmptyPromptLine()) {
       return
     }
     this.subprocess.write('\x0c')
