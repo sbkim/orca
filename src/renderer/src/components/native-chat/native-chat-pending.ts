@@ -153,6 +153,9 @@ export function isPendingMessageId(id: string): boolean {
   return id.startsWith('pending:')
 }
 
+// Why: the seeded prompt has a synthetic id that never matches the real turn's,
+// so dedup/prune match on normalized user-message text instead — this hides the
+// optimistic bubble once the transcript's own copy of the turn catches up.
 export function launchPromptAsMessage(
   entry: NativeChatLaunchPrompt | null,
   existingMessages: NativeChatMessage[] = []

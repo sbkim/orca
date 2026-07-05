@@ -33,13 +33,13 @@ describe('orderNativeChatMessages', () => {
     expect(ordered.map((m) => m.id)).toEqual(['a', 'z'])
   })
 
-  it('sorts the synthetic streaming message after timestamped content', () => {
+  it('sorts the streaming preview after real content but before optimistic echoes', () => {
     const ordered = orderNativeChatMessages([
+      msg({ id: 'pending:abc', role: 'user', timestamp: 20, source: 'scrape' }),
       msg({ id: NATIVE_CHAT_STREAMING_ID, timestamp: null }),
-      msg({ id: 'real-user', role: 'user', timestamp: 10 }),
-      msg({ id: 'pending-user', role: 'user', timestamp: 20, source: 'scrape' })
+      msg({ id: 'real-user', role: 'user', timestamp: 10 })
     ])
-    expect(ordered.map((m) => m.id)).toEqual(['real-user', 'pending-user', 'streaming'])
+    expect(ordered.map((m) => m.id)).toEqual(['real-user', 'streaming', 'pending:abc'])
   })
 })
 

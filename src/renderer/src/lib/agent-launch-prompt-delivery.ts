@@ -1,3 +1,4 @@
+import { agentDeliversDraftViaNativePrefill } from '@/lib/agent-native-draft-prefill'
 import { pasteDraftWhenAgentReady } from '@/lib/agent-paste-draft'
 import { isNativeChatSupportedAgent } from '@/lib/native-chat-supported-agent'
 import { useAppStore } from '@/store'
@@ -25,6 +26,11 @@ export function deliverLaunchPromptToAgentTab(args: {
     })
   }
 
+  // Why: native-prefill agents (claude/openclaude etc.) get the prompt at launch,
+  // so pasteDraftWhenAgentReady returns false without pasting. That is a successful
+  // native delivery, not a failure — don't flag the seeded bubble in that case.
+  const deliversViaNativePrefill = agentDeliversDraftViaNativePrefill(agent, forcePaste)
+
   return pasteDraftWhenAgentReady({
     tabId,
     content,
@@ -34,9 +40,9 @@ export function deliverLaunchPromptToAgentTab(args: {
     timeoutMs,
     onTimeout
   }).then((delivered) => {
-    if (shouldSeed && !delivered) {
+    if (shouldSeed && !delivered && !deliversViaNativePrefill) {
       useAppStore.getState().markNativeChatLaunchPromptFailed(tabId)
     }
-    return delivered
+    return delivered || deliversViaNativePrefill
   })
 }

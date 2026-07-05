@@ -97,6 +97,25 @@ describe('deliverLaunchPromptToAgentTab', () => {
     expect(mocks.markNativeChatLaunchPromptFailed).toHaveBeenCalledWith('tab-1')
   })
 
+  it('treats native-prefill delivery as success without flagging the seeded prompt', async () => {
+    // claude delivers via `--prefill` at launch, so paste no-ops (returns false)
+    // when forcePaste is false — that is a native delivery, not a failure.
+    mocks.pasteDraftWhenAgentReady.mockResolvedValue(false)
+
+    await expect(
+      deliverLaunchPromptToAgentTab({
+        tabId: 'tab-1',
+        agent: 'claude',
+        content: 'Large generated prompt',
+        submit: true,
+        forcePaste: false
+      })
+    ).resolves.toBe(true)
+
+    expect(mocks.seedNativeChatLaunchPrompt).toHaveBeenCalled()
+    expect(mocks.markNativeChatLaunchPromptFailed).not.toHaveBeenCalled()
+  })
+
   it('does not mark unseeded launches failed', async () => {
     mocks.pasteDraftWhenAgentReady.mockResolvedValue(false)
 
