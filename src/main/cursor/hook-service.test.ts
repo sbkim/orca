@@ -77,8 +77,8 @@ describe('CursorHookService', () => {
     if (process.platform === 'win32') {
       expect(script).toContain('%SystemRoot%\\System32\\curl.exe')
     } else {
-      // Payload goes to a private temp file (off argv); token is streamed as a
-      // header via `-H @-`; the endpoint file is parsed, never sourced.
+      // Payload goes to a private temp file (off argv); the endpoint file is
+      // parsed, never sourced.
       expect(script).toContain('--data-urlencode "payload@${__orca_payload_file}"')
       expect(script).not.toContain('. "$ORCA_AGENT_HOOK_ENDPOINT"')
     }

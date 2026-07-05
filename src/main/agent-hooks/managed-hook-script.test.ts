@@ -20,10 +20,8 @@ describe('buildPosixManagedHookScript — static invariants', () => {
     expect(script).toContain('done < "$ORCA_AGENT_HOOK_ENDPOINT"')
   })
 
-  it('keeps the token off the command line (streamed as a header via stdin)', () => {
-    expect(script).not.toContain('X-Orca-Agent-Hook-Token: ${ORCA_AGENT_HOOK_TOKEN}')
-    expect(script).toContain('printf \'X-Orca-Agent-Hook-Token: %s\\n\' "$ORCA_AGENT_HOOK_TOKEN" |')
-    expect(script).toContain('-H @-')
+  it('sends the token as a header (matching the other hook transports)', () => {
+    expect(script).toContain('-H "X-Orca-Agent-Hook-Token: ${ORCA_AGENT_HOOK_TOKEN}"')
   })
 
   it('keeps the payload off the command line (read from a temp file)', () => {

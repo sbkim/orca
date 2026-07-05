@@ -10,10 +10,11 @@ import type { AgentHookSource } from '../../shared/agent-hook-relay'
 //      it (`. "$file"` / `call "%file%"`), so any shell/batch written into that
 //      path ran with the agent's privileges. We only ever copy the four known
 //      `ORCA_AGENT_HOOK_*` values out of it.
-//   2. The hook token and the raw payload never appear on the process command
-//      line. `ps`/`/proc/<pid>/cmdline` are readable by other same-UID (and, on
-//      many systems, cross-UID) processes, so the token went to a header read
-//      from stdin and the payload to a private temp file read via `@file`.
+//   2. The raw payload never appears on the process command line. `ps`/
+//      `/proc/<pid>/cmdline` are readable by other same-UID processes, so the
+//      payload (the user's prompt and tool output) goes to a private temp file
+//      read via `@file`. The token stays an argv header — see the note on
+//      `buildPosixSecureCurlPostLines` for why that is deliberate.
 // `--noproxy 127.0.0.1` keeps the loopback POST from being redirected through a
 // configured `http_proxy`/`ALL_PROXY`, which would send the token and payload
 // off-box.
@@ -77,13 +78,17 @@ export function buildPosixHookGuardLines(): string[] {
 
 // Why: capture the payload into a private temp file (mktemp is 0600) and post
 // it with `--data-urlencode payload@<file>` so the raw prompt never lands on
-// argv. This also keeps tens-of-KB tool output off the curl command line, which
-// avoids EDR command-line-length false positives (the concern #4475 fixed via a
-// stdin pipe). We use a temp file rather than that stdin pipe because stdin is
-// needed for the token: it is streamed into curl as a header via `-H @-`, so the
-// secret stays off argv AND off disk. Non-secret identifiers
-// (paneKey/tabId/worktreeId/…) stay as argv fields — they are not sensitive and
-// keeping them there avoids escaping filesystem paths into the temp file.
+// argv. This keeps tens-of-KB tool output off the curl command line, which
+// avoids EDR command-line-length false positives (the concern #4475 fixed).
+// The token stays an argv header: it is a low-value, per-session, loopback-only
+// credential already present in the 0600 endpoint file, so its `ps` exposure
+// matches the Windows path's documented same-user exposure. Moving it off argv
+// on the curl versions we still support would mean routing it through curl's
+// config-file loader (the only pre-7.55 stdin-header mechanism), which adds a
+// config-directive injection surface out of proportion to what a fake-status
+// loopback token is worth. Non-secret identifiers (paneKey/tabId/worktreeId/…)
+// stay as argv fields — they are not sensitive and keeping them there avoids
+// escaping filesystem paths into the temp file.
 export function buildPosixSecureCurlPostLines(options: PosixManagedHookScriptOptions): string[] {
   const { source, extraDataFields = [], emptyPayload = 'exit' } = options
   const emptyLines =
@@ -103,12 +108,11 @@ export function buildPosixSecureCurlPostLines(options: PosixManagedHookScriptOpt
     'trap \'rm -f "$__orca_payload_file"\' EXIT',
     'cat > "$__orca_payload_file"',
     ...emptyLines,
-    'printf \'X-Orca-Agent-Hook-Token: %s\\n\' "$ORCA_AGENT_HOOK_TOKEN" | ' +
-      `curl -sS -X POST "http://127.0.0.1:\${ORCA_AGENT_HOOK_PORT}/hook/${source}" \\`,
+    `curl -sS -X POST "http://127.0.0.1:\${ORCA_AGENT_HOOK_PORT}/hook/${source}" \\`,
     '  --noproxy 127.0.0.1 \\',
     '  --connect-timeout 0.5 --max-time 1.5 \\',
     '  -H "Content-Type: application/x-www-form-urlencoded" \\',
-    '  -H @- \\',
+    '  -H "X-Orca-Agent-Hook-Token: ${ORCA_AGENT_HOOK_TOKEN}" \\',
     '  --data-urlencode "paneKey=${ORCA_PANE_KEY}" \\',
     '  --data-urlencode "tabId=${ORCA_TAB_ID}" \\',
     '  --data-urlencode "launchToken=${ORCA_AGENT_LAUNCH_TOKEN}" \\',
