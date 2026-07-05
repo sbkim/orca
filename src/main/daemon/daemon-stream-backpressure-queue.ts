@@ -135,6 +135,8 @@ export class BackpressuredStreamWriteQueue {
     pending.queuedBytes += this.measureLinesBytes(lines)
     // Why: a wedged stream socket can otherwise retain unbounded hidden-output
     // floods below the renderer ACK budget. Preserve the newest bounded tail.
+    // The sole remaining line is never dropped, so the effective bound is
+    // maxQueuedBytes plus at most one frame (frames are <= the NDJSON line cap).
     while (pending.queuedBytes > this.maxQueuedBytes && pending.lines.length > 1) {
       const dropIndex = pending.lines.findIndex((line) => !line.priority)
       const [dropped] = pending.lines.splice(dropIndex === -1 ? 0 : dropIndex, 1)

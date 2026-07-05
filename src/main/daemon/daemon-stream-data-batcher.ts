@@ -169,6 +169,15 @@ export class DaemonStreamDataBatcher {
     }
   }
 
+  writeEventLine(clientId: string, streamSocket: Socket, sessionId: string, line: string): void {
+    // Why: session events (exit) must not overtake this session's queued output
+    // on a backpressured socket; the priority path orders the event after the
+    // session's own lines and protects it from bounded-queue trimming.
+    this.backpressureQueue.write(clientId, streamSocket, [{ sessionId, line, priority: true }], {
+      prioritizeBackpressuredSession: true
+    })
+  }
+
   private writeStreamDataEvent(
     clientId: string,
     streamSocket: Socket,
