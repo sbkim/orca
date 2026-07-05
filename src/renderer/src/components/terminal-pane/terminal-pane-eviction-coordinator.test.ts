@@ -80,6 +80,45 @@ describe('terminal-pane-eviction coordinator', () => {
     expect(mountMap()['a']).toBe(true)
   })
 
+  describe('warm-set population across the visible->hidden transition', () => {
+    // Regression: the overlay slot reports a hide only while it is still mounted,
+    // and a slot unmounts in the same commit that flips it hidden UNLESS the store
+    // warm map already keeps it mounted. So a VISIBLE tab must appear in
+    // terminalPaneMountByTabId; otherwise the just-hidden pane unmounts before it
+    // can report the hide and the whole managed/warm/park pipeline never engages.
+    it('a visible tab is present in the warm mount map (survives the hide render)', async () => {
+      seedStore(['a'])
+      noteTerminalPaneVisibility('a', 'wt-1', true)
+      await settle()
+      expect(mountMap()['a']).toBe(true)
+    })
+
+    it('report visible then hidden: the pane is brought under management (warm)', async () => {
+      seedStore(['a'], { terminalPaneEvictionAfterMinutes: 5 })
+      noteTerminalPaneVisibility('a', 'wt-1', true)
+      await settle()
+      expect(mountMap()['a']).toBe(true)
+      // The hide report can only happen because the pane stayed mounted above.
+      noteTerminalPaneVisibility('a', 'wt-1', false)
+      await settle()
+      expect(mountMap()['a']).toBe(true) // warm within dwell
+    })
+
+    it('a tab closed while visible is pruned from the warm map on the next recompute', async () => {
+      seedStore(['a', 'b'])
+      noteTerminalPaneVisibility('a', 'wt-1', true)
+      await settle()
+      expect(mountMap()['a']).toBe(true)
+      // Close tab a while it is visible (it never reports hidden), then drive a
+      // recompute by reporting b hidden. Stale visible ids must not leak.
+      useAppStore.setState({ tabsByWorktree: { 'wt-1': [makeTab('b')] } })
+      noteTerminalPaneVisibility('b', 'wt-1', false)
+      await settle()
+      expect(mountMap()['a']).toBeUndefined()
+      expect(mountMap()['b']).toBe(true)
+    })
+  })
+
   it('evicts a hidden pane once it passes the dwell window (deferred teardown)', async () => {
     seedStore(['a'], { terminalPaneEvictionAfterMinutes: 1 })
     noteTerminalPaneVisibility('a', 'wt-1', false)

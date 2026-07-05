@@ -811,6 +811,15 @@ function Terminal(): React.JSX.Element | null {
         nextMountedWorktreeIds.add(id)
       }
     }
+    // Why: an Activity-page terminal portal shows a pane whose worktree may be
+    // fully aged-out (no policy-mounted tab). Its worktree must stay mounted so
+    // the overlay layer exists to host the portal — otherwise a terminal the user
+    // is viewing on the Activity page would render nothing (Tier 0 violation).
+    for (const portal of activityTerminalPortals) {
+      if (allWorktreeIds.has(portal.worktreeId)) {
+        nextMountedWorktreeIds.add(portal.worktreeId)
+      }
+    }
     mountedWorktreeIdsRef.current = nextMountedWorktreeIds
   }
   const anyMountedWorktreeHasLayout = computeAnyMountedWorktreeHasLayout(

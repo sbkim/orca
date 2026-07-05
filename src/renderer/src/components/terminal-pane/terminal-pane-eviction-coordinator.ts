@@ -85,6 +85,14 @@ function pushMountMap(): void {
   for (const tabId of managedTabs.keys()) {
     next[tabId] = true
   }
+  // Why: a visible tab must also be in the warm mount map so the overlay keeps it
+  // mounted through the single render where it flips visible->hidden — that render
+  // is when the slot's effect reports the hide (an unmounting slot never runs its
+  // effect body). Without this the just-hidden pane unmounts in the same commit
+  // and is never brought under management, defeating the warm set entirely.
+  for (const tabId of visibleTabIds) {
+    next[tabId] = true
+  }
   const current = useAppStore.getState().terminalPaneMountByTabId
   // Why: skip the store write when unchanged so our own store subscription does
   // not re-trigger a recompute (avoids a feedback loop, keeps this off hot ticks).
@@ -114,6 +122,18 @@ function pruneClosedManagedTabs(state: StoreState): void {
       lastVisibleAt.delete(tabId)
       visibleTabIds.delete(tabId)
       cancelTeardown(tabId)
+    }
+  }
+  // Why: a tab closed while visible never reports hidden, so prune stale visible
+  // entries here too — otherwise the warm mount map (which now includes visible
+  // tabs) would retain closed-tab ids across recomputes.
+  if (visibleTabIds.size > 0) {
+    const liveTabIds = collectLiveTabAndWorktreeIds(state).tabIds
+    for (const tabId of visibleTabIds) {
+      if (!liveTabIds.has(tabId)) {
+        visibleTabIds.delete(tabId)
+        lastVisibleAt.delete(tabId)
+      }
     }
   }
 }

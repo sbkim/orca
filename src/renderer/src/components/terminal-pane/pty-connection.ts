@@ -1092,6 +1092,12 @@ export function connectPanePty(
   // Why: STA-1282 — set when this fresh pane is remounting a parked (evicted)
   // transport, so the first snapshot outcome charges the fail-open counter.
   let evictionRemountReplayPending = false
+  // Why: STA-1282 — a parked entry claim (which releases the old parked feed and
+  // removes the registry entry) must not commit until this fresh pane actually
+  // adopts the PTY. Holding the claim here until bindActivePanePty keeps the
+  // parked entry live through the deferred-connect window, so a dispose before
+  // adoption (StrictMode / split-group remount) can never orphan the PTY (gate #8).
+  let pendingEvictionClaimKey: string | null = null
   let connectFrame: number | null = null
   let connectFallbackTimer: ReturnType<typeof setTimeout> | null = null
   let startupGridSettleHandle: TerminalStartupGridSettleHandle | null = null
@@ -1155,13 +1161,16 @@ export function connectPanePty(
   const cacheKey = makePaneKey(deps.tabId, pane.leafId)
   // Why: STA-1282 — a fresh pane mounting over a parked (evicted) entry claims
   // the live PTY back (no new spawn — the store still owns its ptyId) and marks
-  // its first snapshot outcome to charge the fail-open counter. releaseForClaim
-  // disposes the stale parked feed so it never double-drives the store.
+  // its first snapshot outcome to charge the fail-open counter. The claim's
+  // releaseForClaim (disposing the stale parked feed so it never double-drives the
+  // store) is deferred to adoption so a dispose before attach cannot orphan it.
   if (isPaneParked(cacheKey)) {
-    evictionRemountReplayPending = claimEvictedPane(cacheKey)
-    if (evictionRemountReplayPending) {
-      logTerminalPaneEvictionBreadcrumb('remount-claim', { tabId: deps.tabId, paneKey: cacheKey })
-    }
+    // Enter replay mode now (the main mirror is the snapshot source), but defer
+    // the registry claim/release to adoption (bindActivePanePty) so a dispose
+    // before attach leaves the parked entry intact and reapable (gate #8).
+    evictionRemountReplayPending = true
+    pendingEvictionClaimKey = cacheKey
+    logTerminalPaneEvictionBreadcrumb('remount-claim', { tabId: deps.tabId, paneKey: cacheKey })
   }
   const getSleepingRecordForPane = (
     state: ReturnType<typeof useAppStore.getState>
@@ -2435,6 +2444,14 @@ export function connectPanePty(
     // restored PTYs may already be inside Codex with no new foreground signal.
     if (options.sampleVisibleForegroundAgent === true) {
       sampleVisiblePaneForegroundAgent()
+    }
+    // Why: adoption succeeded — this fresh pane now owns the PTY, so it is safe to
+    // release the parked entry (drops the stale parked feed + removes the registry
+    // entry). Deferring the release to here is what prevents a claim->dispose race
+    // from orphaning the PTY (gate #8).
+    if (pendingEvictionClaimKey !== null) {
+      claimEvictedPane(pendingEvictionClaimKey)
+      pendingEvictionClaimKey = null
     }
   }
 
@@ -6332,10 +6349,28 @@ export function connectPanePty(
       return false
     }
     parked = true
+    // Why: capture whether this leaf drove the tab title at park time. A split tab
+    // parks every leaf, so without this guard two parked feeds would both write the
+    // tab title and flicker it (the live handler gates the same way on the active
+    // pane). The pane is still in the manager here — dispose() runs after park().
+    const drivesTabTitleWhileParked = manager.getActivePane()?.id === pane.id
     const parkedSinks: ParkedPtySinks = {
       onTitleChange: (title, rawTitle) => {
         const paneTitle = normalizeCompatibleAgentTitleForOwner(title, getAuthoritativePaneAgent())
-        deps.updateTabTitle(deps.tabId, paneTitle)
+        // Match the live handler: drop Codex auto-approval synthetic titles so a
+        // parked pane never leaks one to the tab chip.
+        if (
+          shouldSuppressCodexAutoApprovalSyntheticTitle(paneTitle, {
+            paneKey: cacheKey,
+            tabId: deps.tabId,
+            ...(launchToken ? { launchToken } : {})
+          })
+        ) {
+          return
+        }
+        if (drivesTabTitleWhileParked) {
+          deps.updateTabTitle(deps.tabId, paneTitle)
+        }
         if (syncAgentTaskCompleteTrackingEnabled()) {
           agentCompletionCoordinator.observeTitle(rawTitle)
         }

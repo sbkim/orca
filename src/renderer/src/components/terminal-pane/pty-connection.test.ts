@@ -8206,6 +8206,37 @@ describe('connectPanePty', () => {
     }
   })
 
+  it('defers the parked claim until adoption: a dispose before attach leaves the entry reapable (STA-1282 gate #8)', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { __resetEvictedPaneRegistryForTest, isPaneParked, registerEvictedPane } =
+      await import('./evicted-pane-registry')
+    __resetEvictedPaneRegistryForTest()
+    const paneKey = makePaneKey('tab-1', LEAF_1)
+    const releaseForClaim = vi.fn()
+    registerEvictedPane({
+      paneKey,
+      tabId: 'tab-1',
+      worktreeId: 'wt-1',
+      getPtyId: () => 'pty-id',
+      destroy: vi.fn(),
+      releaseForClaim
+    })
+    const transport = createMockTransport('pty-id')
+    transportFactoryQueue.push(transport)
+    const binding = connectPanePty(
+      createPane(1) as never,
+      createManager(1) as never,
+      createDeps() as never
+    )
+    // Dispose before the deferred connect adopts the PTY (StrictMode / split-group
+    // remount race). Pre-fix the claim released the entry at bind, orphaning the
+    // still-live PTY; the claim must instead survive to be reaped on close.
+    binding.dispose()
+    expect(isPaneParked(paneKey)).toBe(true)
+    expect(releaseForClaim).not.toHaveBeenCalled()
+    __resetEvictedPaneRegistryForTest()
+  })
+
   it('keeps all visible bytes after a pending hidden ESC becomes non-query output', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
