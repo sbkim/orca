@@ -9,7 +9,7 @@ import { CLIENT_PLATFORM } from '@/lib/new-workspace'
 import { getAgentLaunchPlatformForRepo } from '@/lib/agent-launch-platform'
 import { reconcileTabOrder } from '@/components/tab-bar/reconcile-order'
 import { track, tuiAgentToAgentKind } from '@/lib/telemetry'
-import { pasteDraftWhenAgentReady } from '@/lib/agent-paste-draft'
+import { deliverLaunchPromptToAgentTab } from '@/lib/agent-launch-prompt-delivery'
 import { initialAgentTabViewModeProps } from '@/lib/native-chat-initial-view-mode'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
@@ -271,7 +271,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
   const tab = store.createTab(worktreeId, groupId, undefined, {
     launchAgent: agent,
     quickCommandLabel,
-    ...initialAgentTabViewModeProps(store.settings)
+    ...initialAgentTabViewModeProps(store.settings, { agent, promptDelivery })
   })
   store.queueTabStartupCommand(tab.id, {
     command: startupPlan.launchCommand,
@@ -302,7 +302,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
     // don't fire for user-initiated cancellation (mirrors the 5s launch
     // watchdog in QuickLaunchButton).
     const tabId = tab.id
-    void pasteDraftWhenAgentReady({
+    void deliverLaunchPromptToAgentTab({
       tabId,
       content: pasteDraftAfterLaunch,
       agent,

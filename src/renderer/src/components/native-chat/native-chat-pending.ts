@@ -5,6 +5,7 @@
 
 import { isTextBlock, type NativeChatMessage } from '../../../../shared/native-chat-types'
 import { stripImagePromptMarker } from './native-chat-image-transcript-markers'
+import type { NativeChatLaunchPrompt } from '@/lib/native-chat-launch-prompt'
 
 /** An optimistic, not-yet-confirmed composer send. */
 export type NativeChatPendingSend = {
@@ -150,6 +151,37 @@ export function pendingSendsAsMessages(
 /** True when a message id was minted for an optimistic pending send. */
 export function isPendingMessageId(id: string): boolean {
   return id.startsWith('pending:')
+}
+
+export function launchPromptAsMessage(
+  entry: NativeChatLaunchPrompt | null,
+  existingMessages: NativeChatMessage[] = []
+): NativeChatMessage | null {
+  if (!entry) {
+    return null
+  }
+  const represented = matchingUserMessageTexts(existingMessages)
+  if (represented.has(normalize(entry.text))) {
+    return null
+  }
+  return {
+    id: `launch-pending:${entry.tabId}`,
+    role: 'user' as const,
+    blocks: entry.text.trim().length > 0 ? [{ type: 'text' as const, text: entry.text }] : [],
+    timestamp: entry.createdAt,
+    source: 'scrape' as const
+  }
+}
+
+export function shouldPruneLaunchPrompt(
+  entry: NativeChatLaunchPrompt,
+  messages: NativeChatMessage[]
+): boolean {
+  return advancedPastUserMessageTexts(messages).has(normalize(entry.text))
+}
+
+export function isLaunchPromptMessageId(id: string): boolean {
+  return id.startsWith('launch-pending:')
 }
 
 /** A locally-recorded slash command (e.g. `/clear`). Slash commands dispatch to

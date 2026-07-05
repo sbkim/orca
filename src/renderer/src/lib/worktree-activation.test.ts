@@ -421,6 +421,32 @@ describe('ensureWorktreeHasInitialTerminal', () => {
     })
   })
 
+  it('keeps draft startup payloads in terminal mode even when native chat is configured', () => {
+    const store = createMockStore({
+      settings: {
+        experimentalNativeChat: true,
+        openAgentTabsInChatByDefault: true
+      }
+    })
+
+    ensureWorktreeHasInitialTerminal(
+      store,
+      'wt-1',
+      {
+        command: 'claude',
+        launchAgent: 'claude',
+        draftPrompt: 'Review before sending'
+      },
+      undefined,
+      undefined
+    )
+
+    expect(store.createTab).toHaveBeenCalledWith('wt-1', undefined, undefined, {
+      pendingActivationSpawn: true,
+      launchAgent: 'claude'
+    })
+  })
+
   it('gates startup behind setup completion when both are provided in new-tab mode', () => {
     setSetupScriptLaunchMode('new-tab')
     let createdIndex = 0

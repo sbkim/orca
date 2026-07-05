@@ -12364,7 +12364,8 @@
         "title": "¿Permitir {{value0}}?",
         "allow": "Permitir",
         "deny": "Denegar"
-      }
+      },
+      "launchPromptNotDelivered": "Not delivered — check the terminal"
     },
     "tab": {
       "bar": {

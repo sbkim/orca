@@ -6,6 +6,7 @@ import {
   type NativeChatSession,
   type NativeChatSessionStatus
 } from '../../../../shared/native-chat-types'
+import { NATIVE_CHAT_STREAMING_ID } from '../../../../shared/native-chat-streaming'
 import { normalizeImageTranscriptMessages } from './native-chat-image-transcript-markers'
 
 /** Messages grouped by source. Higher-priority sources (transcript > hook >
@@ -84,12 +85,20 @@ function supersedes(candidate: NativeChatMessage, existing: NativeChatMessage): 
   return candidateRank > existingRank
 }
 
+function messageSortTimestamp(message: NativeChatMessage): number {
+  if (message.id === NATIVE_CHAT_STREAMING_ID) {
+    return Number.POSITIVE_INFINITY
+  }
+  return message.timestamp ?? Number.NEGATIVE_INFINITY
+}
+
 // Why: null timestamps (sources that can't supply one, e.g. scrape segments)
-// sort before any real timestamp so they don't jump to the end. Ties break on
-// id for a stable, deterministic order.
+// sort before any real timestamp so they don't jump to the end. The synthetic
+// streaming preview is the one exception: it is a tail bubble and sorts last.
+// Ties break on id for a stable, deterministic order.
 export function compareMessages(a: NativeChatMessage, b: NativeChatMessage): number {
-  const at = a.timestamp ?? Number.NEGATIVE_INFINITY
-  const bt = b.timestamp ?? Number.NEGATIVE_INFINITY
+  const at = messageSortTimestamp(a)
+  const bt = messageSortTimestamp(b)
   if (at !== bt) {
     return at - bt
   }
