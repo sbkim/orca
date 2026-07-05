@@ -9163,7 +9163,8 @@
             "b715ef615b": "{{value0}} commits adelante de {{value1}}",
             "c1a8f3e204": "1 commit detrás de {{value0}}",
             "d2b9g4f315": "{{value0}} commits detrás de {{value1}}",
-            "e9c2a5d416": "A la par con {{value0}}"
+            "e9c2a5d416": "A la par con {{value0}}",
+            "4b4a7de138": "Open review page in browser"
           },
           "SourceControlAgentActionDialog": {
             "8e856842d1": "No se pudo iniciar el agente seleccionado.",
