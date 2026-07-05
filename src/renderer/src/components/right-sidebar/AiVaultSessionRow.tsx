@@ -224,7 +224,6 @@ export function VaultSessionRow({
     </ContextMenu>
   )
 }
-
 export function SessionActionMenuItems({
   menuKind = 'dropdown',
   resumeDisabled,
