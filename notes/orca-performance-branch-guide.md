@@ -80,6 +80,18 @@ Three cooperating layers, innermost first:
   fully-gated pty triggers a resync probe instead of a timeout reset. The only
   timer is a hygiene warn that mutates nothing. Main's 512KB per-pty in-flight
   gate + 2MB pendingData cap sit on top.
+- **Renderer-pull delivery watchdog** (`terminal-delivery-watchdog.ts`,
+  `pty:reportRendererDeliveryState` in pty.ts): recovers the field-confirmed
+  wedge where every main→renderer PUSH channel dies while invoke stays alive
+  (v1.4.121-rc.0 snapshot; electron#37067 class) — a state the push-ridden
+  resync probe can never reach. The 15s heartbeat costs one Map upsert per
+  received chunk and does no IPC while output flows; mutation stays
+  verified-state-only (the timer decides when to REPORT; the write-off derives
+  entirely from the renderer's cumulative received totals, never wall-clock,
+  and a received-but-unparsed window is never written off). Heal = re-attach
+  push listeners + pull restore markers through the modelRestoreNeeded router.
+  E2e blackhole harness: `__terminalDeliveryWatchdog`,
+  `terminal-push-delivery-loss-recovery.spec.ts`.
 - **Producer flow control** (protocol v19 `pausePty`/`resumePty`, 256KB pause /
   32KB resume watermarks, keyed off **pendingData only** — never renderer
   counters; kill switch `PRODUCER_FLOW_CONTROL_ENABLED`, ipc/pty.ts): when main's
