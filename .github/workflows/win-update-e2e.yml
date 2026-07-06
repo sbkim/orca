@@ -9,7 +9,19 @@ name: Windows Update-Survival E2E
 # delete it. A fresh runner has no Orca registered, so it is the only safe home
 # for install-based testing. Manual dispatch only.
 
+# Why: workflow_dispatch only works once a workflow is on the default branch.
+# To exercise this from the unmerged feature branch WITHOUT touching main, a
+# push trigger scoped to that exact branch runs the workflow from the branch's
+# own tree. The paths filter keeps it to harness/workflow edits so ordinary
+# commits don't spend 30 min of Windows runner time. Push runs have no inputs,
+# so every parameter falls back to a default below.
 on:
+  push:
+    branches:
+      - Jinwoo-H/windows-update-survival
+    paths:
+      - 'tools/win-update-e2e/**'
+      - '.github/workflows/win-update-e2e.yml'
   workflow_dispatch:
     inputs:
       from_tag:
@@ -42,15 +54,23 @@ on:
 permissions:
   contents: read
 
+# Why: cancel a superseded run when iterating — a new push to the branch makes
+# the in-flight Windows job obsolete, so free the runner immediately.
 concurrency:
   group: win-update-e2e-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   update-e2e:
-    name: update ${{ inputs.from_tag }} -> ${{ inputs.to_tag }} (${{ inputs.expect }})
+    name: update ${{ inputs.from_tag || 'v1.4.124-rc.8' }} -> ${{ inputs.to_tag || 'v1.4.124-rc.9' }} (${{ inputs.expect || 'cold-restore' }})
     runs-on: windows-2022
     timeout-minutes: 30
+    env:
+      FROM_TAG: ${{ inputs.from_tag || 'v1.4.124-rc.8' }}
+      TO_TAG: ${{ inputs.to_tag || 'v1.4.124-rc.9' }}
+      EXPECT: ${{ inputs.expect || 'cold-restore' }}
+      ASSET_PATTERN: ${{ inputs.asset_pattern || '*windows-setup.exe' }}
+      SOAK_SECONDS: ${{ inputs.soak_seconds || '60' }}
 
     steps:
       - name: Checkout
@@ -80,12 +100,12 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force artifacts/from | Out-Null
           New-Item -ItemType Directory -Force artifacts/to | Out-Null
-          gh release download "${{ inputs.from_tag }}" --repo "${{ github.repository }}" --pattern "${{ inputs.asset_pattern }}" --dir artifacts/from
-          gh release download "${{ inputs.to_tag }}" --repo "${{ github.repository }}" --pattern "${{ inputs.asset_pattern }}" --dir artifacts/to
+          gh release download "$env:FROM_TAG" --repo "${{ github.repository }}" --pattern "$env:ASSET_PATTERN" --dir artifacts/from
+          gh release download "$env:TO_TAG" --repo "${{ github.repository }}" --pattern "$env:ASSET_PATTERN" --dir artifacts/to
           $from = Get-ChildItem artifacts/from -Filter *.exe | Select-Object -First 1
           $to = Get-ChildItem artifacts/to -Filter *.exe | Select-Object -First 1
-          if (-not $from) { throw "No installer matching '${{ inputs.asset_pattern }}' in ${{ inputs.from_tag }}" }
-          if (-not $to) { throw "No installer matching '${{ inputs.asset_pattern }}' in ${{ inputs.to_tag }}" }
+          if (-not $from) { throw "No installer matching '$env:ASSET_PATTERN' in $env:FROM_TAG" }
+          if (-not $to) { throw "No installer matching '$env:ASSET_PATTERN' in $env:TO_TAG" }
           "FROM_EXE=$($from.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "TO_EXE=$($to.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
@@ -101,8 +121,8 @@ jobs:
           node tools/win-update-e2e/run.mjs `
             --from "$env:FROM_EXE" `
             --to "$env:TO_EXE" `
-            --expect "${{ inputs.expect }}" `
-            --soak-seconds "${{ inputs.soak_seconds }}" 2>&1 | Tee-Object -FilePath $log
+            --expect "$env:EXPECT" `
+            --soak-seconds "$env:SOAK_SECONDS" 2>&1 | Tee-Object -FilePath $log
           exit $LASTEXITCODE
 
       - name: Upload harness output
