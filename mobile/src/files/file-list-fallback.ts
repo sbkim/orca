@@ -53,17 +53,21 @@ export function directoryCacheFromFileList(files: LegacyMobileFileEntry[]): Dire
       }
     })
   }
-  const cache: DirectoryCache = {}
-  for (const [path, children] of childrenByDir) {
-    cache[path] = {
-      entries: Array.from(
-        children,
-        ([name, isDirectory]): MobileDirEntry => ({
-          name,
-          isDirectory
-        })
-      )
-    }
-  }
-  return cache
+  // Why: plain `cache[path] = ...` with a '__proto__' path segment mutates the
+  // object's prototype instead of storing the directory; fromEntries always
+  // creates own keys.
+  return Object.fromEntries(
+    Array.from(childrenByDir, ([path, children]) => [
+      path,
+      {
+        entries: Array.from(
+          children,
+          ([name, isDirectory]): MobileDirEntry => ({
+            name,
+            isDirectory
+          })
+        )
+      }
+    ])
+  )
 }

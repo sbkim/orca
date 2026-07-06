@@ -58,6 +58,7 @@ export function MobileFileExplorerPanel(props: {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [legacyListTruncated, setLegacyListTruncated] = useState(false)
   const worktreeLabel = getWorktreeLabel(name, worktreeId)
 
   const loadDirectory = useCallback(
@@ -133,8 +134,14 @@ export function MobileFileExplorerPanel(props: {
               }
               const legacyResult = (legacy as RpcSuccess).result as LegacyFilesListResult
               setDirectoryCache(directoryCacheFromFileList(legacyResult.files))
+              // Why: the capped list silently omits files past the cap — keep
+              // the legacy explorer's "Showing first 5000" note.
+              setLegacyListTruncated(legacyResult.truncated)
               return
             }
+            throw new Error(
+              legacy.error?.message || response.error?.message || 'Unable to load files'
+            )
           }
           throw new Error(response.error?.message || 'Unable to load files')
         }
@@ -144,6 +151,9 @@ export function MobileFileExplorerPanel(props: {
           return
         }
         const entries = (response as RpcSuccess).result as MobileDirEntry[]
+        if (rootLoad) {
+          setLegacyListTruncated(false)
+        }
         setDirectoryCache((prev) => ({
           ...prev,
           [relativePath]: { entries }
@@ -189,6 +199,7 @@ export function MobileFileExplorerPanel(props: {
     setExpanded(new Set())
     setLoading(true)
     setError(null)
+    setLegacyListTruncated(false)
   }, [scope])
 
   useEffect(() => {
@@ -302,6 +313,7 @@ export function MobileFileExplorerPanel(props: {
         </Text>
         <Text style={styles.meta} numberOfLines={1}>
           {worktreeLabel}
+          {legacyListTruncated ? ' - Showing first 5000' : ''}
         </Text>
       </View>
     </View>

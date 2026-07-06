@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { directoryCacheFromFileList, isMobileMethodUnavailableError } from './file-list-fallback'
+import { getDirectoryCacheState } from './file-tree'
 
 describe('isMobileMethodUnavailableError', () => {
   it('detects old-desktop allowlist and missing-method failures', () => {
@@ -49,5 +50,16 @@ describe('directoryCacheFromFileList', () => {
   it('returns an empty root for an empty list', () => {
     const cache = directoryCacheFromFileList([])
     expect(cache['']?.entries).toEqual([])
+  })
+
+  it('stores a __proto__ directory as an own key instead of mutating the prototype', () => {
+    const cache = directoryCacheFromFileList([
+      { relativePath: '__proto__/pollute.js', basename: 'pollute.js', kind: 'text' }
+    ])
+    expect(Object.getPrototypeOf(cache)).toBe(Object.prototype)
+    expect(cache['']?.entries).toEqual([{ name: '__proto__', isDirectory: true }])
+    expect(getDirectoryCacheState(cache, '__proto__')?.entries).toEqual([
+      { name: 'pollute.js', isDirectory: false }
+    ])
   })
 })

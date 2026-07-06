@@ -334,4 +334,65 @@ describe('MobileFileExplorerPanel', () => {
     // plus one files.list call total, no per-directory RPCs afterwards.
     expect(legacyClient.sendRequest).toHaveBeenCalledTimes(2)
   })
+
+  it('surfaces the legacy cap note when the files.list fallback is truncated', async () => {
+    const legacyClient: MockClient = {
+      sendRequest: vi.fn(async (method: string): Promise<RpcResponse> => {
+        if (method === 'files.readDir') {
+          return {
+            id: 'response-id',
+            ok: false,
+            error: { code: 'method_not_found', message: 'Unknown method' },
+            _meta: { runtimeId: 'runtime-id' }
+          }
+        }
+        return {
+          id: 'response-id',
+          ok: true,
+          result: {
+            files: [{ relativePath: 'README.md', basename: 'README.md', kind: 'text' }],
+            totalCount: 6000,
+            truncated: true
+          },
+          _meta: { runtimeId: 'runtime-id' }
+        }
+      })
+    }
+    mockTransport.client = legacyClient
+
+    const renderer = await renderExplorer()
+
+    expect(renderedText(renderer)).toContain('README.md')
+    expect(renderedText(renderer)).toContain('Showing first 5000')
+  })
+
+  it('reports the files.list failure when the fallback itself fails', async () => {
+    const legacyClient: MockClient = {
+      sendRequest: vi.fn(async (method: string): Promise<RpcResponse> => {
+        if (method === 'files.readDir') {
+          return {
+            id: 'response-id',
+            ok: false,
+            error: {
+              code: 'forbidden',
+              message: "Method 'files.readDir' is not available to mobile clients"
+            },
+            _meta: { runtimeId: 'runtime-id' }
+          }
+        }
+        return {
+          id: 'response-id',
+          ok: false,
+          error: { code: 'internal', message: 'legacy list failed' },
+          _meta: { runtimeId: 'runtime-id' }
+        }
+      })
+    }
+    mockTransport.client = legacyClient
+
+    const renderer = await renderExplorer()
+
+    expect(renderedText(renderer)).toContain('legacy list failed')
+    expect(renderedText(renderer)).not.toContain('not available to mobile clients')
+  })
 })
