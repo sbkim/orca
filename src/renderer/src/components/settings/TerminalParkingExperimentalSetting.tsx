@@ -38,7 +38,7 @@ export function TerminalParkingExperimentalSetting({
           <p className="text-xs text-muted-foreground">
             {translate(
               'auto.components.settings.ExperimentalPane.terminalParking.copy',
-              'Reclaims renderer memory in workspaces with many terminals by unmounting panes that have been hidden for a while; a lightweight watcher keeps bell, title, and agent-completion notifications alive, and panes restore when you reopen the worktree. Excludes SSH and remote terminals. Experimental while we validate restore fidelity for full-screen agent UIs.'
+              'For people running many heavy agent sessions at once: reclaims renderer memory by unmounting terminal panes that have been hidden for a while; a lightweight watcher keeps bell, title, and agent-completion notifications alive, and panes restore when you reopen the worktree. Excludes SSH and remote terminals.'
             )}
           </p>
         </div>
