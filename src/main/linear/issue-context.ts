@@ -1,8 +1,10 @@
 import type {
   LinearCurrentIssueContextHints,
+  LinearIssueChildNode,
   LinearIssueContextResult,
   LinearIssueRequest
 } from '../../shared/linear-agent-access'
+import { extractLinearInlineMedia } from '../../shared/linear-inline-media'
 import { parseLinearIssueInput } from '../../shared/linear-links'
 import {
   resolveIssue,
@@ -96,6 +98,29 @@ async function buildIssueContextResult(
   }
 
   await readOptionalIncludes(resolved, request, result, includeErrors, sections)
+  result.inlineMedia = collectInlineMedia(result)
   result.meta.partial = includeErrors.length > 0
   return result
+}
+
+export function collectInlineMedia(
+  result: LinearIssueContextResult
+): LinearIssueContextResult['inlineMedia'] {
+  const media = [
+    ...extractLinearInlineMedia(result.issue.description, 'description'),
+    ...(result.comments ?? []).flatMap((comment) =>
+      extractLinearInlineMedia(comment.body, 'comment', comment.id)
+    ),
+    ...(result.children ?? []).flatMap((child) => collectChildInlineMedia(child))
+  ]
+  return media.length > 0 ? media : undefined
+}
+
+function collectChildInlineMedia(
+  child: LinearIssueChildNode
+): NonNullable<LinearIssueContextResult['inlineMedia']> {
+  return [
+    ...extractLinearInlineMedia(child.description, 'child-description', child.id),
+    ...(child.children ?? []).flatMap((nested) => collectChildInlineMedia(nested))
+  ]
 }

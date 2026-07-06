@@ -5,6 +5,7 @@ import type {
   LinearIssueListFilter,
   LinearIssueTaskUpdateRequest
 } from './linear-agent-access'
+import type { LinearInlineMedia } from './linear-inline-media'
 
 export type LinearIssueSummary = {
   id: string
@@ -84,6 +85,7 @@ export type LinearIssueContextResult = {
   children?: LinearIssueChildNode[]
   attachments?: LinearIssueAttachment[]
   relations?: LinearIssueRelation[]
+  inlineMedia?: LinearInlineMedia[]
   meta: {
     requested: {
       id?: string
