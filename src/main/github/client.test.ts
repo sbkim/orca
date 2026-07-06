@@ -801,7 +801,7 @@ describe('getPRForBranch', () => {
 
     expect(ghExecFileAsyncMock).toHaveBeenNthCalledWith(
       3,
-      ['api', 'repos/acme/widgets/commits/bbbb2222bbbb2222/pulls?per_page=100'],
+      ['api', 'repos/acme/widgets/commits/bbbb2222bbbb2222/pulls?per_page=100&page=1'],
       expect.anything()
     )
     expect(pr).toMatchObject({
@@ -970,12 +970,12 @@ describe('getPRForBranch', () => {
         confirmedContainedHeadOid: 'bbbb2222bbbb2222'
       }
     })
-    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPR : undefined).toBe(
+    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPRAtOid : undefined).toBe(
       undefined
     )
   })
 
-  it('stamps headDivergedFromMergedPR for a linked merged PR with a definite miss', async () => {
+  it('stamps headDivergedFromMergedPRAtOid for a linked merged PR with a definite miss', async () => {
     mockMergedLinkedPRLookup()
     ghExecFileAsyncMock.mockResolvedValueOnce({
       stdout: JSON.stringify([{ number: 42 }])
@@ -990,9 +990,85 @@ describe('getPRForBranch', () => {
       pr: {
         number: 7447,
         state: 'merged',
-        headDivergedFromMergedPR: true
+        headDivergedFromMergedPRAtOid: 'bbbb2222bbbb2222'
       }
     })
+  })
+
+  it('stamps linked merged divergence when a later membership page proves absence', async () => {
+    mockMergedLinkedPRLookup()
+    // Page 1 is full and omits the linked PR (truncated), but page 2 is short and
+    // still omits it — that pair definitively proves the head is not contained.
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({ number: 1000 + index }))
+    ghExecFileAsyncMock
+      .mockResolvedValueOnce({ stdout: JSON.stringify(fullPage) })
+      .mockResolvedValueOnce({ stdout: JSON.stringify([{ number: 2000 }]) })
+
+    const outcome = await getPRForBranchOutcome('/repo-root', 'new-work', 7447, null, null, {
+      currentHeadOid: 'bbbb2222bbbb2222'
+    })
+
+    expect(outcome).toMatchObject({
+      kind: 'found',
+      pr: { number: 7447, state: 'merged', headDivergedFromMergedPRAtOid: 'bbbb2222bbbb2222' }
+    })
+  })
+
+  it('leaves linked merged divergence unset when membership pages stay full to the cap', async () => {
+    mockMergedLinkedPRLookup()
+    // Every page up to the cap is full and omits the linked PR, so absence can
+    // never be proven — the probe must stay unknown rather than clear the link.
+    const fullPage = Array.from({ length: 100 }, (_, index) => ({ number: 1000 + index }))
+    for (let page = 0; page < 5; page += 1) {
+      ghExecFileAsyncMock.mockResolvedValueOnce({ stdout: JSON.stringify(fullPage) })
+    }
+
+    const outcome = await getPRForBranchOutcome('/repo-root', 'new-work', 7447, null, null, {
+      currentHeadOid: 'bbbb2222bbbb2222'
+    })
+
+    expect(outcome).toMatchObject({ kind: 'found', pr: { number: 7447, state: 'merged' } })
+    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPRAtOid : undefined).toBe(
+      undefined
+    )
+  })
+
+  it('stamps linked merged divergence via the PR url when no repo candidates resolve', async () => {
+    // Fallback path: no resolved candidates, so `gh pr view` returns the PR with
+    // dataRepo=null. The membership probe must still run against the repo derived
+    // from the PR's own URL so a diverged merged linked PR can clear.
+    resolvePRRepositoryCandidatesMock.mockResolvedValueOnce({ candidates: [], headRepo: null })
+    ghExecFileAsyncMock
+      .mockResolvedValueOnce({
+        stdout: JSON.stringify({
+          number: 7447,
+          title: 'Merged linked PR',
+          state: 'MERGED',
+          url: 'https://github.com/acme/widgets/pull/7447',
+          statusCheckRollup: [],
+          updatedAt: '2026-07-03T21:27:36Z',
+          isDraft: false,
+          mergeable: 'MERGEABLE',
+          baseRefName: 'main',
+          headRefName: 'old-linked-branch',
+          baseRefOid: 'base-oid',
+          headRefOid: 'aaaa1111aaaa1111'
+        })
+      })
+      .mockResolvedValueOnce({ stdout: JSON.stringify([{ number: 2000 }]) })
+
+    const outcome = await getPRForBranchOutcome('/repo-root', 'new-work', 7447, null, null, {
+      currentHeadOid: 'bbbb2222bbbb2222'
+    })
+
+    expect(outcome).toMatchObject({
+      kind: 'found',
+      pr: { number: 7447, state: 'merged', headDivergedFromMergedPRAtOid: 'bbbb2222bbbb2222' }
+    })
+    expect(ghExecFileAsyncMock).toHaveBeenCalledWith(
+      ['api', 'repos/acme/widgets/commits/bbbb2222bbbb2222/pulls?per_page=100&page=1'],
+      expect.anything()
+    )
   })
 
   it('leaves linked merged divergence unset when the membership probe is rate-limited', async () => {
@@ -1008,7 +1084,7 @@ describe('getPRForBranch', () => {
     })
 
     expect(outcome).toMatchObject({ kind: 'found', pr: { number: 7447, state: 'merged' } })
-    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPR : undefined).toBe(
+    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPRAtOid : undefined).toBe(
       undefined
     )
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)
@@ -1023,7 +1099,7 @@ describe('getPRForBranch', () => {
     })
 
     expect(outcome).toMatchObject({ kind: 'found', pr: { number: 7447, state: 'merged' } })
-    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPR : undefined).toBe(
+    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPRAtOid : undefined).toBe(
       undefined
     )
   })
@@ -1034,7 +1110,7 @@ describe('getPRForBranch', () => {
     const outcome = await getPRForBranchOutcome('/repo-root', 'new-work', 7447, null, null)
 
     expect(outcome).toMatchObject({ kind: 'found', pr: { number: 7447, state: 'merged' } })
-    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPR : undefined).toBe(
+    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPRAtOid : undefined).toBe(
       undefined
     )
     expect(ghExecFileAsyncMock).toHaveBeenCalledTimes(1)

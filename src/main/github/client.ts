@@ -2774,6 +2774,15 @@ export async function getPRForBranch(
   return outcome.kind === 'found' ? outcome.pr : null
 }
 
+// Why: the exact-linked fallback (`gh pr view` with no resolved repo candidates)
+// returns dataRepo=null, which would leave the merged-PR membership probe unable
+// to run. Derive the PR's own repo from its web URL so a diverged merged linked
+// PR can still be confirmed and cleared. Host-agnostic to cover GitHub Enterprise.
+function ownerRepoFromPullRequestUrl(url: string): OwnerRepo | null {
+  const match = url.match(/^https?:\/\/[^/\s]+\/([^/\s]+)\/([^/\s]+)\/pull\/\d+/)
+  return match ? { owner: match[1], repo: match[2] } : null
+}
+
 export async function getPRForBranchOutcome(
   repoPath: string,
   branch: string,
@@ -2813,7 +2822,7 @@ export async function getPRForBranchOutcome(
         ? options.currentHeadOid.trim()
         : null
     let confirmedContainedHeadOid: string | null = null
-    let headDivergedFromMergedPR = false
+    let headDivergedFromMergedPRAtOid: string | null = null
     const mergedPRContainsHead = async (
       candidate: PullRequestLookupData,
       candidateRepo: OwnerRepo | null,
@@ -2848,11 +2857,13 @@ export async function getPRForBranchOutcome(
       }
       const membership = await mergedPRContainsHead(
         candidate,
-        candidateRepo,
+        candidateRepo ?? ownerRepoFromPullRequestUrl(candidate.url),
         explicitCurrentHeadOid
       )
       if (membership === 'not-contained') {
-        headDivergedFromMergedPR = true
+        // explicitCurrentHeadOid is non-null here (guarded above); record the
+        // exact head so consumers only clear the worktree that actually diverged.
+        headDivergedFromMergedPRAtOid = explicitCurrentHeadOid
       }
     }
     const hideMergedImplicitPR = async (
@@ -3029,7 +3040,7 @@ export async function getPRForBranchOutcome(
         ...(data.mergeStateStatus !== undefined ? { mergeStateStatus: data.mergeStateStatus } : {}),
         headSha: data.headRefOid,
         ...(confirmedContainedHeadOid ? { confirmedContainedHeadOid } : {}),
-        ...(headDivergedFromMergedPR ? { headDivergedFromMergedPR: true } : {}),
+        ...(headDivergedFromMergedPRAtOid ? { headDivergedFromMergedPRAtOid } : {}),
         ...(data.baseRefName ? { baseRefName: data.baseRefName } : {}),
         prRepo: dataRepo ?? undefined,
         headRepo: dataHeadRepo ?? undefined,

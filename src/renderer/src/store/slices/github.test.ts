@@ -2201,7 +2201,7 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
         number: 12,
         state: 'merged',
         headSha: 'merged-pr-head',
-        headDivergedFromMergedPR: true
+        headDivergedFromMergedPRAtOid: 'current-head'
       }),
       fetchedAt: 2
     })
@@ -2222,6 +2222,54 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
     )
     expect(store.getState().worktreesByRepo[repoId]?.[0]?.linkedPR).toBeNull()
     expect(store.getState().prCache[`${repoId}::${branch}`]).toBeUndefined()
+  })
+
+  it('clears a linked merged PR on a fresh cache hit that already carries a head-scoped divergence signal', async () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const repoId = 'repo-1'
+    const branch = 'feature/cached-diverged'
+    const worktreeId = 'wt-cached-diverged'
+    const updateWorktreeMeta = installLinkedPRClearStub(store, {
+      repoId,
+      repoPath,
+      branch,
+      worktree: makePRRefreshWorktree({
+        id: worktreeId,
+        repoId,
+        branch,
+        head: 'current-head',
+        linkedPR: 12
+      })
+    })
+    store.setState({
+      prCache: {
+        [`${repoId}::${branch}`]: {
+          data: makePR({
+            number: 12,
+            state: 'merged',
+            headSha: 'merged-pr-head',
+            headDivergedFromMergedPRAtOid: 'current-head'
+          }),
+          fetchedAt: Date.now()
+        }
+      }
+    } as unknown as Partial<AppState>)
+
+    const result = await store.getState().fetchPRForBranch(repoPath, branch, {
+      repoId,
+      worktreeId,
+      linkedPRNumber: 12
+    })
+
+    expect(result).toMatchObject({ number: 12 })
+    expect(mockApi.gh.refreshPRNow).not.toHaveBeenCalled()
+    expect(updateWorktreeMeta).toHaveBeenCalledWith(
+      worktreeId,
+      { linkedPR: null },
+      { shouldApply: expect.any(Function) }
+    )
+    expect(store.getState().worktreesByRepo[repoId]?.[0]?.linkedPR).toBeNull()
   })
 
   it('does not clear a linked merged PR when the request head equals the PR head', async () => {
@@ -2248,7 +2296,7 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
         number: 12,
         state: 'merged',
         headSha: 'same-head',
-        headDivergedFromMergedPR: true
+        headDivergedFromMergedPRAtOid: 'same-head'
       }),
       fetchedAt: 2
     })
@@ -2289,7 +2337,7 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
         state: 'merged',
         headSha: 'merged-pr-head',
         confirmedContainedHeadOid: 'contained-head',
-        headDivergedFromMergedPR: true
+        headDivergedFromMergedPRAtOid: 'contained-head'
       }),
       fetchedAt: 2
     })
@@ -2329,7 +2377,7 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
         number: 12,
         state: 'open',
         headSha: 'pr-head',
-        headDivergedFromMergedPR: true
+        headDivergedFromMergedPRAtOid: 'current-head'
       }),
       fetchedAt: 2
     })
@@ -2465,7 +2513,7 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
         number: 12,
         state: 'merged',
         headSha: 'merged-pr-head',
-        headDivergedFromMergedPR: true
+        headDivergedFromMergedPRAtOid: 'current-head'
       }),
       fetchedAt: 2
     })
@@ -2526,7 +2574,7 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
         number: 12,
         state: 'merged',
         headSha: 'merged-pr-head',
-        headDivergedFromMergedPR: true
+        headDivergedFromMergedPRAtOid: 'request-head'
       }),
       fetchedAt: 2
     })
@@ -2955,6 +3003,192 @@ describe('createGitHubSlice.fetchPRForBranch', () => {
       reason: 'manual',
       message: 'network unavailable'
     })
+  })
+
+  it('clears a linked merged PR from a coordinator refresh event when the request head diverged', () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const repoId = 'repo-1'
+    const branch = 'feature/coordinator-diverged'
+    const worktreeId = 'wt-coordinator-diverged'
+    const cacheKey = `${repoId}::${branch}`
+    const worktree = makePRRefreshWorktree({
+      id: worktreeId,
+      repoId,
+      branch,
+      head: 'current-head',
+      linkedPR: 12
+    })
+    const updateWorktreeMeta = installLinkedPRClearStub(store, {
+      repoId,
+      repoPath,
+      branch,
+      worktree
+    })
+
+    store.getState().applyGitHubPRRefreshEvent({
+      sequence: 1,
+      reason: 'swr',
+      aliases: [
+        {
+          cacheKey,
+          repoPath,
+          repoId,
+          branch,
+          worktreeId,
+          linkedPRNumber: 12,
+          currentHeadOid: 'current-head'
+        }
+      ],
+      outcome: {
+        kind: 'found',
+        pr: makePR({
+          number: 12,
+          state: 'merged',
+          headSha: 'merged-pr-head',
+          headDivergedFromMergedPRAtOid: 'current-head'
+        }),
+        fetchedAt: 2
+      }
+    })
+
+    expect(updateWorktreeMeta).toHaveBeenCalledWith(
+      worktreeId,
+      { linkedPR: null },
+      { shouldApply: expect.any(Function) }
+    )
+    expect(store.getState().worktreesByRepo[repoId]?.[0]?.linkedPR).toBeNull()
+  })
+
+  it('does not clear a linked merged PR from a coordinator refresh event without a request head', () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const repoId = 'repo-1'
+    const branch = 'feature/coordinator-no-head'
+    const worktreeId = 'wt-coordinator-no-head'
+    const cacheKey = `${repoId}::${branch}`
+    const updateWorktreeMeta = installLinkedPRClearStub(store, {
+      repoId,
+      repoPath,
+      branch,
+      worktree: makePRRefreshWorktree({
+        id: worktreeId,
+        repoId,
+        branch,
+        head: 'current-head',
+        linkedPR: 12
+      })
+    })
+
+    store.getState().applyGitHubPRRefreshEvent({
+      sequence: 1,
+      reason: 'swr',
+      aliases: [
+        { cacheKey, repoPath, repoId, branch, worktreeId, linkedPRNumber: 12, currentHeadOid: null }
+      ],
+      outcome: {
+        kind: 'found',
+        pr: makePR({
+          number: 12,
+          state: 'merged',
+          headSha: 'merged-pr-head',
+          headDivergedFromMergedPRAtOid: 'current-head'
+        }),
+        fetchedAt: 2
+      }
+    })
+
+    expect(updateWorktreeMeta).not.toHaveBeenCalled()
+    expect(store.getState().worktreesByRepo[repoId]?.[0]?.linkedPR).toBe(12)
+  })
+
+  it('clears only the diverged worktree when a PR-number-coalesced event fans out to sibling aliases', () => {
+    const store = createTestStore()
+    const repoPath = '/repo'
+    const repoId = 'repo-1'
+    const worktreeA = makePRRefreshWorktree({
+      id: 'wt-a',
+      repoId,
+      branch: 'feature/a',
+      head: 'head-a',
+      linkedPR: 12
+    })
+    const worktreeB = makePRRefreshWorktree({
+      id: 'wt-b',
+      repoId,
+      branch: 'feature/b',
+      head: 'head-b',
+      linkedPR: 12
+    })
+    const updateWorktreeMeta = vi.fn(
+      async (
+        worktreeId: string,
+        updates: Parameters<AppState['updateWorktreeMeta']>[1],
+        options?: Parameters<AppState['updateWorktreeMeta']>[2]
+      ) => {
+        const current = store
+          .getState()
+          .worktreesByRepo[repoId]?.find((worktree) => worktree.id === worktreeId)
+        if (options?.shouldApply && !options.shouldApply(current)) {
+          return
+        }
+        store.setState((state) => ({
+          worktreesByRepo: {
+            ...state.worktreesByRepo,
+            [repoId]: (state.worktreesByRepo[repoId] ?? []).map((worktree) =>
+              worktree.id === worktreeId ? { ...worktree, ...updates } : worktree
+            )
+          }
+        }))
+      }
+    )
+    store.setState({
+      repos: [{ id: repoId, path: repoPath, name: 'repo', kind: 'git' }],
+      worktreesByRepo: { [repoId]: [worktreeA, worktreeB] },
+      updateWorktreeMeta
+    } as unknown as Partial<AppState>)
+
+    // The coordinator coalesces linked PR refreshes by PR number, so one probe
+    // (worktree A's head) is broadcast to both aliases. Only A actually diverged;
+    // B is still on a contained commit and must keep its link.
+    store.getState().applyGitHubPRRefreshEvent({
+      sequence: 1,
+      reason: 'swr',
+      aliases: [
+        {
+          cacheKey: `${repoId}::feature/a`,
+          repoPath,
+          repoId,
+          branch: 'feature/a',
+          worktreeId: 'wt-a',
+          linkedPRNumber: 12,
+          currentHeadOid: 'head-a'
+        },
+        {
+          cacheKey: `${repoId}::feature/b`,
+          repoPath,
+          repoId,
+          branch: 'feature/b',
+          worktreeId: 'wt-b',
+          linkedPRNumber: 12,
+          currentHeadOid: 'head-b'
+        }
+      ],
+      outcome: {
+        kind: 'found',
+        pr: makePR({
+          number: 12,
+          state: 'merged',
+          headSha: 'merged-pr-head',
+          headDivergedFromMergedPRAtOid: 'head-a'
+        }),
+        fetchedAt: 2
+      }
+    })
+
+    const worktrees = store.getState().worktreesByRepo[repoId] ?? []
+    expect(worktrees.find((worktree) => worktree.id === 'wt-a')?.linkedPR).toBeNull()
+    expect(worktrees.find((worktree) => worktree.id === 'wt-b')?.linkedPR).toBe(12)
   })
 
   it('preserves visible cached PR data when a fallback refresh event misses', () => {

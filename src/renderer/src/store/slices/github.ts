@@ -1016,7 +1016,10 @@ function shouldClearDivergedLinkedMergedPR(args: {
     requestHeadOid !== null &&
     pr?.number === linkedPRNumber &&
     pr.state === 'merged' &&
-    pr.headDivergedFromMergedPR === true &&
+    // Head-scoped: only clear the worktree whose exact head diverged, so a
+    // PR-number-coalesced refresh broadcast cannot clear a sibling worktree that
+    // is still on the PR's line of work.
+    pr.headDivergedFromMergedPRAtOid === requestHeadOid &&
     pr.headSha !== requestHeadOid &&
     pr.confirmedContainedHeadOid !== requestHeadOid
   )
@@ -2958,6 +2961,38 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     const linkedRefetch =
       cached?.data === null && (linkedPRNumber !== null || fallbackPRNumber !== null)
     if (!options?.force && !linkedRefetch && isFresh(cached)) {
+      // Why: a fresh cache hit still carries the head-scoped divergence signal.
+      // If a prior clear was declined because the head moved mid-request and the
+      // worktree is now back on that diverged head, clear the durable link the
+      // cache would otherwise keep serving until it expires.
+      if (
+        options?.worktreeId &&
+        linkedPRNumber != null &&
+        cached?.data?.headDivergedFromMergedPRAtOid != null
+      ) {
+        const currentHeadOid = findWorktreeById(get(), options.worktreeId)?.head ?? null
+        if (
+          shouldClearDivergedLinkedMergedPR({
+            pr: cached.data,
+            linkedPRNumber,
+            requestHeadOid: currentHeadOid
+          })
+        ) {
+          void get().updateWorktreeMeta(
+            options.worktreeId,
+            { linkedPR: null },
+            {
+              shouldApply: (worktree) =>
+                shouldApplyDivergedLinkedPRClear({
+                  worktree,
+                  linkedPRNumber,
+                  branch,
+                  requestHeadOid: currentHeadOid
+                })
+            }
+          )
+        }
+      }
       return cached.data
     }
 
@@ -3830,6 +3865,34 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
   },
 
   applyGitHubPRRefreshEvent: (event) => {
+    // Why: the sidebar/left-list refresh for local repos flows through the main
+    // PR coordinator (not fetchPRForBranch), so it must run the same guarded
+    // clear when main stamps a merged linked PR whose head has diverged.
+    const divergedLinkedPRClears: {
+      worktreeId: string
+      linkedPRNumber: number
+      branch: string
+      requestHeadOid: string | null
+    }[] = []
+    if (event.outcome?.kind === 'found') {
+      const pr = event.outcome.pr
+      for (const alias of event.aliases) {
+        const linkedPRNumber = alias.linkedPRNumber ?? null
+        const requestHeadOid = alias.currentHeadOid ?? null
+        if (
+          alias.worktreeId &&
+          linkedPRNumber != null &&
+          shouldClearDivergedLinkedMergedPR({ pr, linkedPRNumber, requestHeadOid })
+        ) {
+          divergedLinkedPRClears.push({
+            worktreeId: alias.worktreeId,
+            linkedPRNumber,
+            branch: alias.branch,
+            requestHeadOid
+          })
+        }
+      }
+    }
     let didUpdatePRCache = false
     set((s) => {
       const nextSequences = { ...s.prRefreshSequences }
@@ -4025,6 +4088,21 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     })
     if (didUpdatePRCache && event.outcome && event.outcome.kind !== 'upstream-error') {
       debouncedSaveCache(get())
+    }
+    for (const clear of divergedLinkedPRClears) {
+      void get().updateWorktreeMeta(
+        clear.worktreeId,
+        { linkedPR: null },
+        {
+          shouldApply: (worktree) =>
+            shouldApplyDivergedLinkedPRClear({
+              worktree,
+              linkedPRNumber: clear.linkedPRNumber,
+              branch: clear.branch,
+              requestHeadOid: clear.requestHeadOid
+            })
+        }
+      )
     }
   },
 
