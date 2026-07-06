@@ -51,6 +51,11 @@ type MiniMaxRateLimitConfig = {
   models: string
 }
 
+type MiniMaxResolvedConfig = {
+  config: MiniMaxRateLimitConfig
+  error: string | null
+}
+
 type GeminiCliOAuthEnabledResolver = () => boolean
 
 // Why: Claude's subscription usage endpoint has a tight request budget. Quota
@@ -92,6 +97,10 @@ function isSystemDefaultClaudeAuth(
   }
   const provenance = authPreparation?.provenance
   return provenance === 'system' || Boolean(provenance?.endsWith(':system'))
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 export class RateLimitService {
@@ -280,6 +289,16 @@ export class RateLimitService {
     // though the user is asking for a fresh read right now.
     await this.fetchAll({ force: true })
     return this.getState()
+  }
+
+  invalidateMiniMaxCredentialState(): void {
+    this.minimaxFetchGeneration += 1
+    // Why: saving or forgetting the browser cookie can race an in-flight usage
+    // fetch; clear the visible snapshot before any old-cookie result returns.
+    this.updateState({
+      ...this.state,
+      minimax: this.withFetchingStatus(null, 'minimax')
+    })
   }
 
   async refreshForCodexAccountChange(
@@ -968,6 +987,42 @@ export class RateLimitService {
     return process.platform !== 'win32'
   }
 
+  private resolveMiniMaxConfig(): MiniMaxResolvedConfig {
+    try {
+      return {
+        config: this.miniMaxConfigResolver?.() ?? {
+          sessionCookie: '',
+          groupId: '',
+          models: 'general'
+        },
+        error: null
+      }
+    } catch (error) {
+      // Why: one unreadable browser cookie must not abort every provider's
+      // quota refresh; surface it as MiniMax-only state instead.
+      return {
+        config: {
+          sessionCookie: '',
+          groupId: '',
+          models: 'general'
+        },
+        error: toErrorMessage(error)
+      }
+    }
+  }
+
+  private getMiniMaxCredentialError(message: string): ProviderRateLimits {
+    return {
+      provider: 'minimax',
+      session: null,
+      weekly: null,
+      updatedAt: Date.now(),
+      error: message,
+      status: 'error',
+      usageMetadata: { failureKind: 'keychain-unavailable', source: 'web' }
+    }
+  }
+
   private withFetchingStatus(
     current: ProviderRateLimits | null,
     provider: 'claude' | 'codex' | 'gemini' | 'opencode-go' | 'kimi' | 'minimax'
@@ -1004,10 +1059,10 @@ export class RateLimitService {
     const openCodeGoConfig = this.openCodeGoConfigResolver?.()
     const cookie = openCodeGoConfig?.sessionCookie ?? ''
     const workspaceIdOverride = openCodeGoConfig?.workspaceIdOverride ?? ''
-    const miniMaxConfig = this.miniMaxConfigResolver?.()
-    const miniMaxCookie = miniMaxConfig?.sessionCookie ?? ''
-    const miniMaxGroupId = miniMaxConfig?.groupId ?? ''
-    const miniMaxModels = miniMaxConfig?.models ?? 'general'
+    const miniMaxConfigResult = this.resolveMiniMaxConfig()
+    const miniMaxCookie = miniMaxConfigResult.config.sessionCookie
+    const miniMaxGroupId = miniMaxConfigResult.config.groupId
+    const miniMaxModels = miniMaxConfigResult.config.models
     const geminiCliOAuthEnabled = this.geminiCliOAuthEnabledResolver?.() ?? false
 
     // Detect if configuration changed — if it did, we must discard any stale
@@ -1020,7 +1075,7 @@ export class RateLimitService {
     }
     const opencodeGeneration = this.opencodeFetchGeneration
 
-    const currentMiniMaxConfigHash = `${miniMaxCookie}|${miniMaxGroupId}|${miniMaxModels}`
+    const currentMiniMaxConfigHash = `${miniMaxCookie}|${miniMaxGroupId}|${miniMaxModels}|${miniMaxConfigResult.error ?? ''}`
     const miniMaxConfigChanged = currentMiniMaxConfigHash !== this.lastMiniMaxConfigHash
     if (miniMaxConfigChanged) {
       this.lastMiniMaxConfigHash = currentMiniMaxConfigHash
@@ -1066,11 +1121,13 @@ export class RateLimitService {
         fetchGeminiRateLimits(geminiCliOAuthEnabled),
         fetchOpenCodeGoRateLimits(cookie, workspaceIdOverride || undefined),
         fetchKimiRateLimits(),
-        fetchMiniMaxRateLimits({
-          cookie: miniMaxCookie,
-          groupId: miniMaxGroupId,
-          models: miniMaxModels
-        })
+        miniMaxConfigResult.error
+          ? Promise.resolve(this.getMiniMaxCredentialError(miniMaxConfigResult.error))
+          : fetchMiniMaxRateLimits({
+              cookie: miniMaxCookie,
+              groupId: miniMaxGroupId,
+              models: miniMaxModels
+            })
       ])
 
     if (signal.aborted) {

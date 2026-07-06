@@ -898,8 +898,19 @@ export class LocalPtyProvider implements IPtyProvider {
   async getInitialCwd(_id: string): Promise<string> {
     return ''
   }
-  async clearBuffer(_id: string): Promise<void> {
-    /* handled client-side in xterm.js */
+  async clearBuffer(id: string): Promise<void> {
+    // Why: xterm.js clear() only resets the renderer. ConPTY keeps its own
+    // screen buffer, so without this its stale cursor row makes the next
+    // prompt repaint land below a blank gap. No-op on POSIX.
+    //
+    // Unlike the daemon session, no PSReadLine form-feed nudge here: it is
+    // only safe at an empty prompt, and without a headless emulator this
+    // provider cannot tell whether input is pending.
+    try {
+      ptyProcesses.get(id)?.clear()
+    } catch {
+      /* PTY may have just exited */
+    }
   }
   acknowledgeDataEvent(_id: string, _charCount: number): void {
     /* no flow control for local */

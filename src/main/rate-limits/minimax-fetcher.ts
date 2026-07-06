@@ -81,13 +81,15 @@ function makeError(
 
 function parseModels(models: FetchMiniMaxRateLimitsOptions['models']): string[] {
   if (Array.isArray(models)) {
-    return models.map((model) => model.trim()).filter(Boolean)
+    const parsed = models.map((model) => model.trim()).filter(Boolean)
+    return parsed.length > 0 ? parsed : ['general']
   }
   if (typeof models === 'string') {
-    return models
+    const parsed = models
       .split(',')
       .map((model) => model.trim())
       .filter(Boolean)
+    return parsed.length > 0 ? parsed : ['general']
   }
   return ['general']
 }
@@ -242,7 +244,13 @@ export async function fetchMiniMaxRateLimits(
     if (httpError) {
       return httpError
     }
-    const payload = (await fetchResult.response.json()) as MiniMaxUsageResponse
+    let payload: MiniMaxUsageResponse
+    try {
+      payload = (await fetchResult.response.json()) as MiniMaxUsageResponse
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid MiniMax usage response'
+      return makeError(redactMiniMaxSecret(message), 'parse')
+    }
     const payloadError = handleMiniMaxPayloadError(fetchResult, payload)
     if (payloadError) {
       return payloadError
@@ -268,8 +276,7 @@ export async function fetchMiniMaxRateLimits(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown MiniMax usage error'
-    const failureKind = message.toLowerCase().includes('json') ? 'parse' : 'network'
-    return makeError(redactMiniMaxSecret(message), failureKind)
+    return makeError(redactMiniMaxSecret(message), 'network')
   } finally {
     clearTimeout(timeout)
   }

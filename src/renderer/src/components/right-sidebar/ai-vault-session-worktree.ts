@@ -10,12 +10,21 @@ import {
 import {
   isPathInsideOrEqual,
   isRuntimePathAbsolute,
-  normalizeRuntimePathForComparison,
-  normalizeRuntimePathSeparators
+  normalizeRuntimePathForComparison
 } from '../../../../shared/cross-platform-path'
 import type { AiVaultSession } from '../../../../shared/ai-vault-types'
 import type { Repo, Worktree } from '../../../../shared/types'
-import { translate } from '@/i18n/i18n'
+import { aiVaultWorktreeCompactPath } from './ai-vault-session-worktree-affordances'
+
+export {
+  aiVaultWorktreeCompactPath,
+  aiVaultWorktreeJumpTooltip,
+  aiVaultWorktreeStatusLabel,
+  canJumpToAiVaultSessionWorktree,
+  isAiVaultSessionInCurrentWorktree,
+  shouldShowAiVaultSessionWorktreeLine,
+  shouldShowAiVaultWorktreeStatusBadge
+} from './ai-vault-session-worktree-affordances'
 
 export type AiVaultSessionWorktreeStatus = 'current' | 'active' | 'archived' | 'unavailable'
 
@@ -155,58 +164,6 @@ export function useAiVaultSessionWorktreeMap({
   )
 }
 
-export function canJumpToAiVaultSessionWorktree(
-  worktreeInfo: AiVaultSessionWorktreeInfo | null
-): boolean {
-  return Boolean(
-    worktreeInfo?.worktreeId &&
-    worktreeInfo.status !== 'archived' &&
-    worktreeInfo.status !== 'unavailable'
-  )
-}
-
-// Why: a session in the worktree you're already viewing has nowhere to jump,
-// so we hide the affordance rather than offering a self-jump (the "Current
-// worktree" badge already signals where it lives).
-export function isAiVaultSessionInCurrentWorktree(
-  worktreeInfo: AiVaultSessionWorktreeInfo | null
-): boolean {
-  return worktreeInfo?.status === 'current'
-}
-
-export function aiVaultWorktreeJumpTooltip(
-  worktreeInfo: AiVaultSessionWorktreeInfo | null
-): string {
-  if (canJumpToAiVaultSessionWorktree(worktreeInfo)) {
-    return translate(
-      'auto.components.right.sidebar.AiVaultSessionWorktree.jumpToWorktree',
-      'Jump to Worktree'
-    )
-  }
-  if (!worktreeInfo) {
-    return translate(
-      'auto.components.right.sidebar.AiVaultSessionWorktree.noRecordedWorktree',
-      'No worktree was recorded for this session.'
-    )
-  }
-  if (worktreeInfo.status === 'archived') {
-    return translate(
-      'auto.components.right.sidebar.AiVaultSessionWorktree.archivedJumpUnavailable',
-      'This session is in an archived worktree.'
-    )
-  }
-  if (worktreeInfo.status === 'unavailable') {
-    return translate(
-      'auto.components.right.sidebar.AiVaultSessionWorktree.noActiveWorktreeMatch',
-      'No active worktree matches this session.'
-    )
-  }
-  return translate(
-    'auto.components.right.sidebar.AiVaultSessionWorktree.noActiveWorktreeTarget',
-    'No active worktree is available.'
-  )
-}
-
 function buildWorktreeCandidates(
   worktrees: readonly Worktree[],
   repos: readonly Pick<Repo, 'id' | 'connectionId' | 'executionHostId'>[]
@@ -270,21 +227,6 @@ function compareWorktreeCandidates(left: WorktreeCandidate, right: WorktreeCandi
   return left.source === 'current-path' ? -1 : 1
 }
 
-export function aiVaultWorktreeCompactPath(pathValue: string): string {
-  const parts = normalizeRuntimePathSeparators(pathValue).split('/').filter(Boolean)
-  if (parts.length >= 2) {
-    return parts.slice(-2).join('/')
-  }
-  return parts[0] ?? pathValue
-}
-
-export function shouldShowAiVaultWorktreeStatusBadge(
-  status: AiVaultSessionWorktreeStatus
-): boolean {
-  // Why: "active" repeats the branch label without adding scan value in dense rows.
-  return status !== 'active'
-}
-
 function unavailableWorktreeInfo(pathValue: string): AiVaultSessionWorktreeInfo {
   return {
     status: 'unavailable',
@@ -295,29 +237,4 @@ function unavailableWorktreeInfo(pathValue: string): AiVaultSessionWorktreeInfo 
 
 function compactPathLabel(pathValue: string): string {
   return aiVaultWorktreeCompactPath(pathValue)
-}
-
-export function aiVaultWorktreeStatusLabel(status: AiVaultSessionWorktreeStatus): string {
-  if (status === 'current') {
-    return translate(
-      'auto.components.right.sidebar.AiVaultSessionWorktree.currentWorktree',
-      'Current worktree'
-    )
-  }
-  if (status === 'active') {
-    return translate(
-      'auto.components.right.sidebar.AiVaultSessionWorktree.activeWorktree',
-      'Active worktree'
-    )
-  }
-  if (status === 'archived') {
-    return translate(
-      'auto.components.right.sidebar.AiVaultSessionWorktree.archivedWorktree',
-      'Archived worktree'
-    )
-  }
-  return translate(
-    'auto.components.right.sidebar.AiVaultSessionWorktree.unavailableWorktree',
-    'Unavailable worktree'
-  )
 }

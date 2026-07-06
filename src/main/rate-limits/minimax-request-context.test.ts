@@ -20,6 +20,7 @@ vi.mock('electron', () => ({
 }))
 
 import {
+  clearMiniMaxSessionCookieJar,
   extractMiniMaxCookieValue,
   fetchMiniMaxWithManualCookieHeader,
   fetchMiniMaxWithSessionCookieJar,
@@ -107,6 +108,12 @@ describe('redactMiniMaxSecret', () => {
     expect(redacted).not.toContain('x.y')
   })
 
+  it('redacts quoted values with whitespace around the colon', () => {
+    const redacted = redactMiniMaxSecret('_token : "spaced.secret"')
+    expect(redacted).not.toContain('spaced.secret')
+    expect(redacted).toContain('_token:[REDACTED]')
+  })
+
   it('redacts minimax_group_id_v2', () => {
     expect(redactMiniMaxSecret('minimax_group_id_v2=99999 trailing')).not.toContain('99999')
   })
@@ -171,7 +178,7 @@ describe('fetchMiniMaxWithSessionCookieJar', () => {
     vi.restoreAllMocks()
   })
 
-  it('uses a dedicated MiniMax partition and clears cookies before fetching', async () => {
+  it('uses a dedicated MiniMax partition and clears cookies before and after fetching', async () => {
     netFetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -184,6 +191,50 @@ describe('fetchMiniMaxWithSessionCookieJar', () => {
       groupId: '12345',
       signal: controller.signal
     })
+    expect(sessionFromPartitionMock).toHaveBeenCalledWith('orca-minimax-rate-limit-fetch')
+    expect(clearStorageDataMock).toHaveBeenCalledTimes(2)
+    expect(clearStorageDataMock).toHaveBeenNthCalledWith(1, {
+      origin: 'https://platform.minimax.io',
+      storages: ['cookies']
+    })
+    expect(clearStorageDataMock).toHaveBeenNthCalledWith(2, {
+      origin: 'https://platform.minimax.io',
+      storages: ['cookies']
+    })
+  })
+
+  it('attempts the final session cleanup when the pre-fetch clear rejects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    clearStorageDataMock
+      .mockRejectedValueOnce(new Error('pre-clear boom'))
+      .mockResolvedValueOnce(undefined)
+    const controller = new AbortController()
+
+    await expect(
+      fetchMiniMaxWithSessionCookieJar({
+        cookie: FULL_COOKIE,
+        endpoint: MINIMAX_USAGE_ENDPOINT,
+        groupId: '12345',
+        signal: controller.signal
+      })
+    ).rejects.toThrow('pre-clear boom')
+
+    expect(clearStorageDataMock).toHaveBeenCalledTimes(2)
+    expect(clearStorageDataMock).toHaveBeenNthCalledWith(1, {
+      origin: 'https://platform.minimax.io',
+      storages: ['cookies']
+    })
+    expect(clearStorageDataMock).toHaveBeenNthCalledWith(2, {
+      origin: 'https://platform.minimax.io',
+      storages: ['cookies']
+    })
+    expect(cookiesSetMock).not.toHaveBeenCalled()
+    expect(netFetchMock).not.toHaveBeenCalled()
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it('clears the dedicated MiniMax partition on demand', async () => {
+    await clearMiniMaxSessionCookieJar()
     expect(sessionFromPartitionMock).toHaveBeenCalledWith('orca-minimax-rate-limit-fetch')
     expect(clearStorageDataMock).toHaveBeenCalledWith({
       origin: 'https://platform.minimax.io',
@@ -251,14 +302,22 @@ describe('fetchMiniMaxWithSessionCookieJar', () => {
 
 describe('fetchMiniMaxWithManualCookieHeader', () => {
   beforeEach(() => {
+    clearStorageDataMock.mockClear()
+    cookiesSetMock.mockClear()
     netFetchMock.mockReset()
+    sessionFromPartitionMock.mockClear()
+    sessionFromPartitionMock.mockImplementation(() => ({
+      clearStorageData: clearStorageDataMock,
+      cookies: { set: cookiesSetMock },
+      fetch: netFetchMock
+    }))
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('attaches the full Cookie header and X-Group-Id via net.fetch', async () => {
+  it('attaches the full Cookie header and X-Group-Id via the dedicated partition fetch', async () => {
     netFetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -272,6 +331,9 @@ describe('fetchMiniMaxWithManualCookieHeader', () => {
       signal: controller.signal
     })
     expect(result.transport).toBe('manual-cookie-header')
+    expect(sessionFromPartitionMock).toHaveBeenCalledWith('orca-minimax-rate-limit-fetch')
+    expect(clearStorageDataMock).toHaveBeenCalledTimes(2)
+    expect(cookiesSetMock).not.toHaveBeenCalled()
     expect(netFetchMock).toHaveBeenCalledTimes(1)
     const [url, init] = netFetchMock.mock.calls[0]
     expect(url).toBe(MINIMAX_USAGE_ENDPOINT)
@@ -295,6 +357,44 @@ describe('fetchMiniMaxWithManualCookieHeader', () => {
     })
     const [, init] = netFetchMock.mock.calls[0]
     expect(init.headers['X-Group-Id']).toBeUndefined()
+  })
+
+  it('normalizes copied Cookie prefix and quoted syntax before sending manual header', async () => {
+    netFetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ base_resp: { status_code: 0 }, model_remains: [] })
+    })
+    const controller = new AbortController()
+    await fetchMiniMaxWithManualCookieHeader({
+      cookie: 'Cookie: _token=tok; minimax_group_id_v2=42; _twpid:"tw"',
+      endpoint: MINIMAX_USAGE_ENDPOINT,
+      groupId: null,
+      signal: controller.signal
+    })
+    const [, init] = netFetchMock.mock.calls[0]
+    expect(init.headers.Cookie).toBe('_token=tok; minimax_group_id_v2=42; _twpid=tw')
+  })
+
+  it('attempts the final cleanup when the manual fallback pre-fetch clear rejects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    clearStorageDataMock
+      .mockRejectedValueOnce(new Error('manual pre-clear boom'))
+      .mockResolvedValueOnce(undefined)
+    const controller = new AbortController()
+
+    await expect(
+      fetchMiniMaxWithManualCookieHeader({
+        cookie: FULL_COOKIE,
+        endpoint: MINIMAX_USAGE_ENDPOINT,
+        groupId: '12345',
+        signal: controller.signal
+      })
+    ).rejects.toThrow('manual pre-clear boom')
+
+    expect(clearStorageDataMock).toHaveBeenCalledTimes(2)
+    expect(netFetchMock).not.toHaveBeenCalled()
+    expect(warn).not.toHaveBeenCalled()
   })
 })
 

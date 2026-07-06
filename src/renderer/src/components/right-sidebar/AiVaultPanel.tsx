@@ -355,6 +355,7 @@ export default function AiVaultPanel(): React.JSX.Element {
         sessionsCount={sessions.length}
         filteredSessionsCount={filteredSessions.length}
         error={error}
+        vaultScope={scope}
         buildResumeStartup={buildResumeStartup}
         getSessionResumeState={getSessionResumeState}
         getSessionResumeActions={getSessionResumeActions}

@@ -134,6 +134,42 @@ describe('fetchMiniMaxRateLimits', () => {
     expect(result.error).toMatch(/500/)
   })
 
+  it('aborts a hung fetch after the timeout and classifies it as network', async () => {
+    netFetchMock.mockImplementation((_url: string, init: { signal: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        const abort = (): void => {
+          const error = new Error('The operation was aborted')
+          error.name = 'AbortError'
+          reject(error)
+        }
+        // The manual-cookie-header fallback receives the already-aborted signal.
+        if (init.signal.aborted) {
+          abort()
+          return
+        }
+        init.signal.addEventListener('abort', abort)
+      })
+    })
+    const promise = fetchMiniMaxRateLimits({ cookie: FULL_COOKIE })
+    await vi.advanceTimersByTimeAsync(15_000)
+    const result = await promise
+    expect(result.status).toBe('error')
+    expect(result.usageMetadata?.failureKind).toBe('network')
+  })
+
+  it('falls back to a manual Cookie header when the session cookie jar fetch throws', async () => {
+    netFetchMock
+      .mockRejectedValueOnce(new Error('cookie jar transport boom'))
+      .mockResolvedValueOnce(makeResponse(makeOkPayload(70)))
+    const result = await fetchMiniMaxRateLimits({ cookie: FULL_COOKIE })
+    expect(result.status).toBe('ok')
+    expect(result.session?.usedPercent).toBe(30)
+    expect(netFetchMock).toHaveBeenCalledTimes(2)
+    // First (session-cookie-jar) transport sends no Cookie header; the fallback does.
+    expect(netFetchMock.mock.calls[0][1].headers.Cookie).toBeUndefined()
+    expect(netFetchMock.mock.calls[1][1].headers.Cookie).toContain('_token=')
+  })
+
   it('returns ok with session window mapping remaining to usedPercent', async () => {
     netFetchMock.mockResolvedValueOnce(makeResponse(makeOkPayload(35)))
     const result = await fetchMiniMaxRateLimits({ cookie: FULL_COOKIE })
@@ -287,6 +323,20 @@ describe('fetchMiniMaxRateLimits', () => {
     expect(result.error).toContain('unauth')
   })
 
+  it('classifies malformed MiniMax JSON responses as parse failures', async () => {
+    netFetchMock.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token <')
+      }
+    } as unknown as Response)
+    const result = await fetchMiniMaxRateLimits({ cookie: FULL_COOKIE })
+    expect(result.status).toBe('error')
+    expect(result.usageMetadata?.failureKind).toBe('parse')
+    expect(result.error).toContain('Unexpected token')
+  })
+
   it('returns error when model_remains is empty', async () => {
     netFetchMock.mockResolvedValueOnce(
       makeResponse({ base_resp: { status_code: 0 }, model_remains: [] })
@@ -344,6 +394,33 @@ describe('fetchMiniMaxRateLimits', () => {
     })
     expect(result.status).toBe('ok')
     expect(result.session?.usedPercent).toBe(60)
+  })
+
+  it('treats a blank model list as the default general model', async () => {
+    const payload = makeOkPayload(25)
+    ;(payload as { model_remains: unknown[] }).model_remains = [
+      {
+        model_name: 'unrelated',
+        current_interval_remaining_percent: 10,
+        start_time: Date.now() - 60_000,
+        end_time: Date.now() + 5 * 60 * 60 * 1000,
+        remains_time: 5 * 60 * 60 * 1000
+      },
+      {
+        model_name: 'general',
+        current_interval_remaining_percent: 25,
+        start_time: Date.now() - 60_000,
+        end_time: Date.now() + 5 * 60 * 60 * 1000,
+        remains_time: 5 * 60 * 60 * 1000
+      }
+    ]
+    netFetchMock.mockResolvedValueOnce(makeResponse(payload))
+    const result = await fetchMiniMaxRateLimits({
+      cookie: FULL_COOKIE,
+      models: '   '
+    })
+    expect(result.status).toBe('ok')
+    expect(result.session?.usedPercent).toBe(75)
   })
 
   it('redacts _token in any error path that includes payload text', async () => {

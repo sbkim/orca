@@ -1124,6 +1124,42 @@ describe('RateLimitService', () => {
     expect(state.minimax?.session?.usedPercent).toBe(10)
   })
 
+  it('does not apply an in-flight MiniMax result after credential invalidation', async () => {
+    const service = new RateLimitService()
+    const firstMiniMax = deferred<ProviderRateLimits>()
+    const secondMiniMax = deferred<ProviderRateLimits>()
+    service.setMiniMaxConfigResolver(() => ({
+      sessionCookie: '_token=abc',
+      groupId: '',
+      models: 'general'
+    }))
+    vi.mocked(fetchMiniMaxRateLimits)
+      .mockImplementationOnce(() => firstMiniMax.promise)
+      .mockImplementationOnce(() => secondMiniMax.promise)
+
+    const firstRefresh = service.refresh()
+    await Promise.resolve()
+
+    service.invalidateMiniMaxCredentialState()
+    const queuedRefresh = service.refresh()
+    await Promise.resolve()
+
+    firstMiniMax.resolve(okProvider('minimax', 50, Date.now()))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(service.getState().minimax?.status).toBe('fetching')
+    expect(service.getState().minimax?.session).toBeNull()
+
+    secondMiniMax.resolve(okProvider('minimax', 10, Date.now()))
+    await firstRefresh
+    await queuedRefresh
+
+    const state = service.getState()
+    expect(fetchMiniMaxRateLimits).toHaveBeenCalledTimes(2)
+    expect(state.minimax?.session?.usedPercent).toBe(10)
+  })
+
   it('isolates MiniMax failures from other providers', async () => {
     const service = new RateLimitService()
     service.setMiniMaxConfigResolver(() => ({
@@ -1139,6 +1175,22 @@ describe('RateLimitService', () => {
     const state = service.getState()
     expect(state.minimax?.status).toBe('error')
     expect(state.minimax?.error).toBe('minimax down')
+    expect(state.claude?.status).toBe('ok')
+  })
+
+  it('isolates MiniMax config resolver failures from other providers', async () => {
+    const service = new RateLimitService()
+    service.setMiniMaxConfigResolver(() => {
+      throw new Error('MiniMax session cookie could not be decrypted')
+    })
+    vi.mocked(fetchClaudeRateLimits).mockResolvedValueOnce(okProvider('claude', 10, Date.now()))
+
+    await service.refresh()
+
+    const state = service.getState()
+    expect(fetchMiniMaxRateLimits).not.toHaveBeenCalled()
+    expect(state.minimax?.status).toBe('error')
+    expect(state.minimax?.error).toBe('MiniMax session cookie could not be decrypted')
     expect(state.claude?.status).toBe('ok')
   })
 })

@@ -116,7 +116,7 @@ function MiniMaxCookieHelpPopover(): React.JSX.Element {
         <p className="text-muted-foreground">
           {translate(
             'auto.components.settings.AccountsPane.4e32e030b2',
-            'The cookie stays on this device. Orca only sends it to platform.minimax.io for usage refreshes.'
+            'Stored locally. Orca sends it only to platform.minimax.io for usage refreshes.'
           )}
         </p>
       </div>
@@ -340,7 +340,6 @@ export function AccountsPane({
   const miniMaxRateLimits = useAppStore((s) => s.rateLimits.minimax)
   const recordFeatureInteraction = useAppStore((s) => s.recordFeatureInteraction)
   const fetchSettings = useAppStore((s) => s.fetchSettings)
-  const refreshRateLimits = useAppStore((s) => s.refreshRateLimits)
   const recordedOpenCodeSettingEditsRef = useRef<Set<'cookie' | 'workspaceId'>>(new Set())
   const [miniMaxCookieDraft, setMiniMaxCookieDraft] = useState('')
   const [miniMaxConfigured, setMiniMaxConfigured] = useState(false)
@@ -425,11 +424,18 @@ export function AccountsPane({
     }
     setMiniMaxCredentialBusy(true)
     try {
-      const status = await window.api.minimaxCredentials.saveCookie(miniMaxCookieDraft)
+      const status = await window.api.minimaxCredentials.saveCookie(miniMaxCookieDraft.trim())
+      if (!status.configured) {
+        throw new Error(
+          translate(
+            'auto.components.settings.AccountsPane.8e6f0cb1d8',
+            'MiniMax cookie was not saved.'
+          )
+        )
+      }
       setMiniMaxConfigured(status.configured)
       setMiniMaxCookieDraft('')
       recordFeatureInteraction('usage-tracking')
-      void refreshRateLimits()
       toast.success(
         translate('auto.components.settings.AccountsPane.8d61637a77', 'MiniMax cookie saved.')
       )
@@ -453,7 +459,6 @@ export function AccountsPane({
       setMiniMaxConfigured(status.configured)
       setMiniMaxCookieDraft('')
       recordFeatureInteraction('usage-tracking')
-      void refreshRateLimits()
     } catch (error) {
       toast.error(
         translate(
@@ -1544,15 +1549,14 @@ export function AccountsPane({
           />
           <div className="space-y-0.5">
             <p className="text-xs font-medium">
-              {translate(
-                'auto.components.settings.AccountsPane.0b8c1c7e02',
-                miniMaxConfigured ? 'Encrypted locally' : 'Cookie not set'
-              )}
+              {miniMaxConfigured
+                ? translate('auto.components.settings.AccountsPane.0b8c1c7e02', 'Stored locally')
+                : translate('auto.components.settings.AccountsPane.1fd1b1b6b4', 'Cookie not set')}
             </p>
             <p className="text-xs text-muted-foreground">
               {translate(
                 'auto.components.settings.AccountsPane.5e08b0fe57',
-                'Sent only to platform.minimax.io. Never leaves Orca.'
+                'Stored locally and sent only to platform.minimax.io for usage refreshes.'
               )}
             </p>
           </div>
@@ -1635,7 +1639,7 @@ export function AccountsPane({
                 disabled={miniMaxCredentialBusy}
                 className="h-7 shrink-0 text-xs text-muted-foreground hover:text-foreground"
               >
-                {translate('auto.components.settings.AccountsPane.b398b834c9', 'Forget cookie')}
+                {translate('auto.components.settings.AccountsPane.316ca4e610', 'Forget cookie')}
               </Button>
             ) : null}
           </div>
@@ -1677,17 +1681,6 @@ export function AccountsPane({
                 )}
               </p>
             </div>
-            {miniMaxConfigured ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                onClick={() => void clearMiniMaxCookie()}
-                disabled={miniMaxCredentialBusy}
-                className="h-6 shrink-0 text-xs text-muted-foreground hover:text-foreground"
-              >
-                {translate('auto.components.settings.AccountsPane.42c2cb21cf', 'Forget cookie')}
-              </Button>
-            ) : null}
           </div>
 
           <SearchableSetting
@@ -1711,7 +1704,7 @@ export function AccountsPane({
               onChange={(e) => updateSettings({ minimaxGroupId: e.target.value })}
               placeholder={translate(
                 'auto.components.settings.AccountsPane.0747d6391a',
-                settings.minimaxGroupId ? 'From cookie' : 'Use group ID from cookie'
+                'Use group ID from cookie'
               )}
               spellCheck={false}
               className="text-xs"
