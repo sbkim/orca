@@ -590,24 +590,39 @@ describePosix('daemon shell-ready launch config', () => {
   )
 
   itWithBash(
-    'dispatches bash-preexec callbacks against the real command, not Orca hooks',
+    'dispatches a non-empty preexec_functions against the real command, not Orca hooks',
     async () => {
       const { getDaemonBashShellReadyRcfileContent } = await importFreshShellReady()
       // Why: Orca's epilogue captures bash-preexec's re-armed DEBUG trap and
-      // chains it. A non-empty preexec_functions must still see the user's real
-      // command as $BASH_COMMAND — not __orca_osc133_epilogue or a __bp_* helper.
+      // chains it. A real preexec callback must fire against the user's command —
+      // not __orca_osc133_epilogue. Mirror upstream bash-preexec faithfully: it
+      // enables `functrace` (so Orca's `trap -p DEBUG` capture sees its trap),
+      // defers that install to the first prompt via PROMPT_COMMAND, and reads the
+      // command from `history` (so DEBUG fires on prompt hooks never dispatch a
+      // phantom). The naive `$BASH_COMMAND` imitation does none of these.
       writeFileSync(
         join(userDataPath, '.bash_profile'),
         [
           'preexec_functions=(__user_preexec)',
           '__user_preexec() { printf \'USER_PREEXEC:%s\\n\' "$1"; }',
+          '__bp_inside=0',
+          '__bp_last_hist=""',
           '__bp_preexec_invoke_exec() {',
+          '  (( __bp_inside > 0 )) && return',
           '  [[ -n "${__bp_interactive_mode:-}" ]] || return',
+          '  local __bp_inside=1',
+          '  local this_command',
+          '  this_command="$(builtin history 1)"',
+          '  this_command="${this_command#"${this_command%%[![:space:]]*}"}"',
+          '  this_command="${this_command#* }"',
+          '  this_command="${this_command#"${this_command%%[![:space:]]*}"}"',
+          '  [[ -n "$this_command" && "$this_command" != "$__bp_last_hist" ]] || return',
+          '  __bp_last_hist="$this_command"',
           '  __bp_interactive_mode=""',
           '  local f',
-          '  for f in "${preexec_functions[@]}"; do "$f" "$BASH_COMMAND"; done',
+          '  for f in "${preexec_functions[@]}"; do "$f" "$this_command"; done',
           '}',
-          "__bp_arm() { __bp_interactive_mode=1; trap '__bp_preexec_invoke_exec' DEBUG; }",
+          "__bp_arm() { set -o functrace; __bp_interactive_mode=1; trap '__bp_preexec_invoke_exec' DEBUG; }",
           'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}__bp_arm"'
         ].join('\n')
       )

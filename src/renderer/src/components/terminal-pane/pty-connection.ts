@@ -1757,21 +1757,27 @@ export function connectPanePty(
     }
     return pendingWrite.then(() => interruptInference.flushPending())
   }
-  // Why: a launched/hook-known agent pane must confirm — not trust — a 133;D so a
-  // full-screen agent's leaked nested-shell 133;D can't clear its tab identity,
-  // even on a restore where no command-start read has recorded evidence yet.
-  const paneHasKnownAgentIdentity = (): boolean => {
-    const state = useAppStore.getState()
+  // Why: the 133;D confirmation guard and the visible-pane resampler both key off
+  // "does this pane expect an agent"; derive each signal once so the two callers
+  // can't drift and silently reintroduce the icon bug this fix closes.
+  const paneHasLiveHookAgentIcon = (state: ReturnType<typeof useAppStore.getState>): boolean => {
     const entry = state.agentStatusByPaneKey[cacheKey]
-    if (entry?.state !== 'done' && agentTypeToIconAgent(entry?.agentType)) {
-      return true
-    }
+    return entry?.state !== 'done' && Boolean(agentTypeToIconAgent(entry?.agentType))
+  }
+  const paneExpectsLaunchAgent = (state: ReturnType<typeof useAppStore.getState>): boolean => {
     const tab = (state.tabsByWorktree[deps.worktreeId] ?? []).find(
       (candidate) => candidate.id === deps.tabId
     )
     return Boolean(
       tab?.launchAgent ?? paneStartup?.launchAgent ?? paneStartup?.initialAgentStatus?.agent
     )
+  }
+  // Why: a launched/hook-known agent pane must confirm — not trust — a 133;D so a
+  // full-screen agent's leaked nested-shell 133;D can't clear its tab identity,
+  // even on a restore where no command-start read has recorded evidence yet.
+  const paneHasKnownAgentIdentity = (): boolean => {
+    const state = useAppStore.getState()
+    return paneHasLiveHookAgentIcon(state) || paneExpectsLaunchAgent(state)
   }
   // Why: a plain `codex`/`grok` sets its OSC title and the shell never repaints
   // it on exit, so a confirmed return-to-shell must clear a title that still
@@ -1811,16 +1817,10 @@ export function connectPanePty(
     if (foreground?.agent) {
       return
     }
-    const entry = state.agentStatusByPaneKey[cacheKey]
-    if (entry?.state !== 'done' && agentTypeToIconAgent(entry?.agentType)) {
+    if (paneHasLiveHookAgentIcon(state)) {
       return
     }
-    const tab = (state.tabsByWorktree[deps.worktreeId] ?? []).find(
-      (candidate) => candidate.id === deps.tabId
-    )
-    const expectsAgent = Boolean(
-      tab?.launchAgent ?? paneStartup?.launchAgent ?? paneStartup?.initialAgentStatus?.agent
-    )
+    const expectsAgent = paneExpectsLaunchAgent(state)
     // Why: with no shell mark yet, launchAgent bootstrap already paints the icon,
     // so a read is pointless. Otherwise probe the foreground: a shell mark (from a
     // reattach or a full-screen agent's leaked nested-shell 133;D) can hide a
