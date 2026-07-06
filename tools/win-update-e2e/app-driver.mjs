@@ -150,16 +150,24 @@ async function createWorkspaceFromSeededRepo(page, timeoutMs) {
     .first()
     .click({ timeout: timeoutMs })
   // Choose the plain-terminal mode (best-effort — if it is already the default
-  // or the label differs, the create click below still produces a worktree).
+  // or the label differs, the create below still produces a worktree).
   await page
     .getByRole('button', { name: 'Blank Terminal' })
     .first()
     .click({ timeout: 15_000 })
     .catch(() => {})
-  await page
-    .getByRole('button', { name: 'Create worktree', exact: true })
-    .first()
+  // Submit. The create button's accessible name carries the shortcut hint
+  // ("Create worktreeCtrl"), so match by prefix; fall back to the documented
+  // Ctrl+Enter shortcut if the button is not directly clickable.
+  const created = await page
+    .getByRole('button', { name: /^Create worktree/ })
+    .last()
     .click({ timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (!created) {
+    await page.keyboard.press('Control+Enter')
+  }
 }
 
 /** Create a new terminal tab via the New tab menu. Returns the count after. */
