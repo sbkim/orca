@@ -76,6 +76,17 @@ describe('orchestration skill guidance', () => {
     expect(skill).toContain(
       'orca worktree create --name <task-name> --no-parent --agent codex --prompt'
     )
+    expect(fullHandoffs).toContain(
+      'Before creating a new worktree from an active feature branch, decide and state whether the desired Orca lineage is child or top-level'
+    )
+    expect(fullHandoffs).toContain(
+      'Use child worktree lineage only when the new work is conceptually stacked under or dependent on the active worktree'
+    )
+    expect(fullHandoffs).toContain(
+      'For independent repo-wide fixes, standalone feature work, or unrelated follow-up tasks, create a top-level worktree with `--no-parent`'
+    )
+    expect(fullHandoffs).toContain('If the work should start from the repo default base')
+    expect(fullHandoffs).toContain('omit `--base-branch`')
   })
 
   it('classifies handoff wording as ownership transfer unless supervision is explicit', () => {
@@ -141,6 +152,12 @@ describe('orchestration skill guidance', () => {
     )
     expect(workerTerminals).toContain(
       'only when the task can safely run from an isolated checkout and does not need uncommitted artifacts from the current working tree'
+    )
+    expect(workerTerminals).toContain(
+      'For supervised new-worktree workers, decide the desired Orca lineage before creation'
+    )
+    expect(workerTerminals).toContain(
+      'use `--no-parent` for independent repo-wide fixes, standalone feature work, or unrelated follow-up tasks'
     )
   })
 
