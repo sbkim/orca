@@ -278,7 +278,7 @@ import {
   resolveHostedReviewActionUpstreamStatus,
   resolveHostedReviewStateForActions
 } from './source-control-hosted-review-push-target'
-import { buildSourceControlManualReviewUrl } from './source-control-manual-review-url'
+import { buildSourceControlManualReviewUrlFromContext } from './source-control-manual-review-url'
 export { HostedReviewHeaderLink } from './hosted-review-header-chrome'
 import {
   createRunningCommitMessageGenerationRecord,
@@ -1468,28 +1468,21 @@ function SourceControlInner(): React.JSX.Element {
   const linkedBitbucketPR = activeWorktree?.linkedBitbucketPR ?? null
   const linkedAzureDevOpsPR = activeWorktree?.linkedAzureDevOpsPR ?? null
   const linkedGiteaPR = activeWorktree?.linkedGiteaPR ?? null
-  const manualReviewProvider: HostedReviewProvider | null =
-    hostedReview?.provider ??
-    hostedReviewCreation?.provider ??
-    (linkedGitLabMR !== null
-      ? 'gitlab'
-      : linkedBitbucketPR !== null
-        ? 'bitbucket'
-        : linkedAzureDevOpsPR !== null
-          ? 'azure-devops'
-          : linkedGiteaPR !== null
-            ? 'gitea'
-            : linkedGitHubPR !== null || fallbackGitHubPRNumber !== null
-              ? 'github'
-              : null)
   const manualReviewUrl = useMemo(
     () =>
-      buildSourceControlManualReviewUrl({
+      buildSourceControlManualReviewUrlFromContext({
+        hostedReviewProvider: hostedReview?.provider ?? null,
+        hostedReviewCreationProvider: hostedReviewCreation?.provider ?? null,
+        linkedGitHubPR,
+        fallbackGitHubPRNumber,
+        linkedGitLabMR,
+        linkedBitbucketPR,
+        linkedAzureDevOpsPR,
+        linkedGiteaPR,
         baseRef: compareBaseRef,
         branchName,
         repoRemoteName: activeRepo?.gitRemoteIdentity?.remoteName ?? null,
         repoRemoteUrl: activeRepo?.gitRemoteIdentity?.remoteUrl ?? null,
-        provider: manualReviewProvider,
         pushTarget: activeWorktree?.pushTarget ?? null,
         upstreamName: remoteStatus?.upstreamName ?? null
       }),
@@ -1499,7 +1492,14 @@ function SourceControlInner(): React.JSX.Element {
       activeWorktree?.pushTarget,
       branchName,
       compareBaseRef,
-      manualReviewProvider,
+      fallbackGitHubPRNumber,
+      hostedReview?.provider,
+      hostedReviewCreation?.provider,
+      linkedAzureDevOpsPR,
+      linkedBitbucketPR,
+      linkedGitHubPR,
+      linkedGitLabMR,
+      linkedGiteaPR,
       remoteStatus?.upstreamName
     ]
   )

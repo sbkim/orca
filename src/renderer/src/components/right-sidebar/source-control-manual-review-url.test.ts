@@ -1,5 +1,81 @@
 import { describe, expect, it } from 'vitest'
-import { buildSourceControlManualReviewUrl } from './source-control-manual-review-url'
+import {
+  buildSourceControlManualReviewUrl,
+  buildSourceControlManualReviewUrlFromContext,
+  resolveSourceControlManualReviewProvider
+} from './source-control-manual-review-url'
+
+describe('resolveSourceControlManualReviewProvider', () => {
+  it('prefers hosted review and creation providers over linked review hints', () => {
+    expect(
+      resolveSourceControlManualReviewProvider({
+        hostedReviewProvider: 'gitlab',
+        hostedReviewCreationProvider: 'github',
+        linkedGitLabMR: 12
+      })
+    ).toBe('gitlab')
+    expect(
+      resolveSourceControlManualReviewProvider({
+        hostedReviewCreationProvider: 'bitbucket',
+        linkedGitLabMR: 12
+      })
+    ).toBe('bitbucket')
+  })
+
+  it('falls back through linked review metadata when no hosted provider is known', () => {
+    expect(
+      resolveSourceControlManualReviewProvider({
+        linkedGitLabMR: 12
+      })
+    ).toBe('gitlab')
+    expect(
+      resolveSourceControlManualReviewProvider({
+        linkedBitbucketPR: 3
+      })
+    ).toBe('bitbucket')
+    expect(
+      resolveSourceControlManualReviewProvider({
+        linkedAzureDevOpsPR: 7
+      })
+    ).toBe('azure-devops')
+    expect(
+      resolveSourceControlManualReviewProvider({
+        linkedGiteaPR: 2
+      })
+    ).toBe('gitea')
+    expect(
+      resolveSourceControlManualReviewProvider({
+        linkedGitHubPR: 42
+      })
+    ).toBe('github')
+    expect(
+      resolveSourceControlManualReviewProvider({
+        fallbackGitHubPRNumber: 42
+      })
+    ).toBe('github')
+  })
+
+  it('returns null when there is no provider hint', () => {
+    expect(resolveSourceControlManualReviewProvider({})).toBeNull()
+  })
+})
+
+describe('buildSourceControlManualReviewUrlFromContext', () => {
+  it('resolves the provider from linked review metadata before building the URL', () => {
+    expect(
+      buildSourceControlManualReviewUrlFromContext({
+        linkedBitbucketPR: 3,
+        baseRef: 'origin/main',
+        branchName: 'feature/bitbucket',
+        repoRemoteName: 'origin',
+        repoRemoteUrl: 'git@bitbucket.org:team/project.git',
+        upstreamName: 'origin/feature/bitbucket'
+      })
+    ).toBe(
+      'https://bitbucket.org/team/project/pull-requests/new?source=feature%2Fbitbucket&dest=main'
+    )
+  })
+})
 
 describe('buildSourceControlManualReviewUrl', () => {
   it('builds a GitHub compare URL for the current remote branch', () => {
