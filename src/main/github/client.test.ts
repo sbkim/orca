@@ -169,6 +169,7 @@ describe('getPRForBranch', () => {
     execFileAsyncMock.mockReset()
     ghExecFileAsyncMock.mockReset()
     getOwnerRepoMock.mockReset()
+    getOriginOwnerRepoMock.mockReset()
     getIssueOwnerRepoMock.mockReset()
     getOwnerRepoForRemoteMock.mockReset()
     resolvePRRepositoryCandidatesMock.mockReset()
@@ -3107,6 +3108,7 @@ describe('updatePRState', () => {
   beforeEach(() => {
     ghExecFileAsyncMock.mockReset()
     getOwnerRepoMock.mockReset()
+    getOriginOwnerRepoMock.mockReset()
     ghRepoExecOptionsMock.mockClear()
     githubRepoContextMock.mockClear()
     acquireMock.mockReset()
@@ -3167,6 +3169,7 @@ describe('GitHub GraphQL rate-limit guard', () => {
     execFileAsyncMock.mockReset()
     ghExecFileAsyncMock.mockReset()
     getOwnerRepoMock.mockReset()
+    getOriginOwnerRepoMock.mockReset()
     getIssueOwnerRepoMock.mockReset()
     getOwnerRepoForRemoteMock.mockReset()
     resolvePRRepositoryCandidatesMock.mockReset()

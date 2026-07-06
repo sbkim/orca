@@ -221,11 +221,15 @@ describe('github owner/repo resolution', () => {
   })
 
   it('keeps local host and local WSL owner/repo cache entries separate for the same path', async () => {
-    // upstream-first: each getOwnerRepo call tries upstream then origin
+    // upstream-first: each getOwnerRepo call tries upstream then origin.
+    // Why: use the real "No such remote" wording so the upstream miss takes the
+    // stable-missing negative-cache path (isStableMissingGitRemoteError). That
+    // lets the third call hit cache with zero probes, which the call-count pin
+    // below asserts — guarding against git-process churn (issue #6381 class).
     gitExecFileAsyncMock
-      .mockRejectedValueOnce(new Error('not found'))
+      .mockRejectedValueOnce(new Error("fatal: No such remote 'upstream'"))
       .mockResolvedValueOnce({ stdout: 'git@github.com:host/orca.git\n' })
-      .mockRejectedValueOnce(new Error('not found'))
+      .mockRejectedValueOnce(new Error("fatal: No such remote 'upstream'"))
       .mockResolvedValueOnce({ stdout: 'git@github.com:wsl/orca.git\n' })
 
     await expect(getOwnerRepo('/repo')).resolves.toEqual({ owner: 'host', repo: 'orca' })
@@ -253,6 +257,8 @@ describe('github owner/repo resolution', () => {
       cwd: '/repo',
       wslDistro: 'Ubuntu'
     })
+    // The third (cached) lookup must not re-probe: 2 remotes x 2 distinct runtimes.
+    expect(gitExecFileAsyncMock).toHaveBeenCalledTimes(4)
   })
 
   it('prunes expired distinct owner/repo cache entries on later lookups', async () => {
