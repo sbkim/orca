@@ -95,7 +95,16 @@ export async function isCommitPartOfMergedPR(args: {
         args.ghOptions
       )
       const parsed = JSON.parse(stdout) as unknown
-      const entries = Array.isArray(parsed) ? parsed : []
+      // Why: a non-array success payload is a shape mismatch, not an empty page;
+      // caching it as definitive not-contained could wrongly clear a durable link.
+      if (!Array.isArray(parsed)) {
+        membershipCache.set(cacheKey, {
+          value: 'unknown',
+          expiresAt: now + MEMBERSHIP_ERROR_TTL_MS
+        })
+        return 'unknown'
+      }
+      const entries = parsed
       const contained = entries.some(
         (entry) =>
           typeof entry === 'object' &&

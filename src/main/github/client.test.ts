@@ -1104,6 +1104,22 @@ describe('getPRForBranch', () => {
     )
   })
 
+  it('leaves linked merged divergence unset when the membership probe returns a non-array payload', async () => {
+    mockMergedLinkedPRLookup()
+    ghExecFileAsyncMock.mockResolvedValueOnce({
+      stdout: JSON.stringify({ message: 'Server Error' })
+    })
+
+    const outcome = await getPRForBranchOutcome('/repo-root', 'new-work', 7447, null, null, {
+      currentHeadOid: 'bbbb2222bbbb2222'
+    })
+
+    expect(outcome).toMatchObject({ kind: 'found', pr: { number: 7447, state: 'merged' } })
+    expect(outcome.kind === 'found' ? outcome.pr.headDivergedFromMergedPRAtOid : undefined).toBe(
+      undefined
+    )
+  })
+
   it('leaves linked merged divergence unset without a current head oid', async () => {
     mockMergedLinkedPRLookup()
 
