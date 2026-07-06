@@ -113,19 +113,22 @@ test('GitHub Tasks drawer recovers when gh stalls on issue details', async ({
     return { repoId: repo.id }
   }, testRepoPath)
 
+  // Why: GitHub item details render inline (a plain container, not a Radix
+  // dialog), so scope to the detail surface via its stable test id.
   const drawer = orcaPage
-    .getByRole('dialog')
+    .getByTestId('github-item-detail')
     .filter({ hasText: 'Issue detail fetch that hangs in gh' })
-    .last()
   await expect(drawer).toBeVisible()
 
   // Why: this is the user-visible regression signal. Before ghExecFileAsync had
   // a default timeout, the drawer's pending details promise never settled and
-  // the conversation pane stayed stuck in its loading shell. The main GitHub
-  // details service degrades failed detail fetches to an empty shell, so the
-  // stable visible proof is that the drawer becomes usable and stops spinning.
-  await expect(drawer.getByText('No description provided.')).toBeVisible({ timeout: 5_000 })
-  await expect(drawer.getByText('No comments yet.')).toBeVisible()
+  // the conversation pane stayed stuck in its loading shell. Since #6473 a
+  // failed detail fetch degrades to an explicit "unable to load" error rather
+  // than an empty shell, so the stable proof of recovery is that the drawer
+  // settles on that message and stops spinning instead of hanging.
+  await expect(drawer.getByText('Unable to load details for this GitHub item.')).toBeVisible({
+    timeout: 5_000
+  })
   await expect(drawer.locator('.animate-spin')).toHaveCount(0)
 
   expect(repoId).toBeTruthy()

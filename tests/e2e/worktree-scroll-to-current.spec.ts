@@ -95,6 +95,11 @@ async function expectNoRevealHighlightDuring(
 
 test.describe('Reveal active workspace button', () => {
   test.beforeEach(async ({ orcaPage }) => {
+    // Why: headless Electron under xvfb never ticks a smooth-scroll animation,
+    // so the reveal's `scrollTo({ behavior: 'smooth' })` would never reach its
+    // target. Reduced-motion makes the reveal jump instantly (see
+    // worktree-sidebar-reveal.ts) so the geometry assertions are deterministic.
+    await orcaPage.emulateMedia({ reducedMotion: 'reduce' })
     await waitForSessionReady(orcaPage)
     await waitForActiveWorktree(orcaPage)
   })

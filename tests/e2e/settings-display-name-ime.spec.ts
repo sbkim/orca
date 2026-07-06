@@ -112,6 +112,11 @@ async function typeHangulGanadaSlowly(
     // Slow typing: let the async store echo land before the next key.
     await page.waitForTimeout(200)
   }
+
+  // Why: commit the composition the way a real IME does when the user accepts
+  // the buffer. Since #6238 the input defers persistence until compositionend,
+  // so without this the store never receives the composed syllables.
+  await session.send('Input.insertText', { text: `${committed}${pending}` })
 }
 
 test.describe('Repository Display Name IME composition', () => {

@@ -312,6 +312,14 @@ async function wheelCombinedDiffDown(page: Page): Promise<ScrollProbeSample[]> {
 function getLargestBackwardScrollJump(samples: readonly ScrollProbeSample[]): number {
   let largestBackwardJump = 0
   for (let index = 1; index < samples.length; index += 1) {
+    // Why: a backward scrollTop delta that coincides with a scrollHeight change
+    // is the virtualizer correcting for lazily-measured diff editors above the
+    // viewport (expected under CI-timed Monaco measurement), not a scroll-restore
+    // anchoring regression. A real regression moves scrollTop at a stable content
+    // height, so only those backward jumps count.
+    if (samples[index].scrollHeight !== samples[index - 1].scrollHeight) {
+      continue
+    }
     largestBackwardJump = Math.max(
       largestBackwardJump,
       samples[index - 1].scrollTop - samples[index].scrollTop
@@ -370,7 +378,12 @@ test.describe('Combined diff scroll restore', () => {
       await waitForStableViewportAnchor(orcaPage)
       const activeScrollSamples = await wheelCombinedDiffDown(orcaPage)
       expect(activeScrollSamples.length).toBeGreaterThan(2)
-      expect(getLargestBackwardScrollJump(activeScrollSamples)).toBeLessThan(120)
+      expect(
+        getLargestBackwardScrollJump(activeScrollSamples),
+        `backward scroll jump at a stable content height; samples=${JSON.stringify(
+          activeScrollSamples
+        )}`
+      ).toBeLessThan(120)
 
       const beforeSwitch = await waitForStableViewportAnchor(orcaPage)
       expect(beforeSwitch.index).toBeGreaterThan(0)

@@ -242,10 +242,13 @@ test.describe('Onboarding flow', () => {
 
     await continueOnboarding(orcaPage)
     await expect
-      .poll(async () => [2, 3].includes((await getOnboardingState(orcaPage)).lastCompletedStep), {
+      .poll(async () => (await getOnboardingState(orcaPage)).lastCompletedStep >= 2, {
         timeout: 5_000,
         message: 'lastCompletedStep did not advance after second Continue'
       })
+      // Why: when optional steps (Integrations/Windows terminal) are auto-skipped
+      // — e.g. gh is installed, so Integrations is skipped on Linux CI — the
+      // second Continue persists through them, landing lastCompletedStep past 3.
       .toBe(true)
     await expect
       .poll(async () => (await getSettings(orcaPage)).theme, { timeout: 5_000 })
@@ -414,7 +417,28 @@ test.describe('Onboarding flow', () => {
       timeout: 15_000
     })
     await orcaPage.evaluate(async () => {
-      await window.__store?.getState().updateSettings({ activeRuntimeEnvironmentId: 'env-e2e' })
+      const store = window.__store
+      if (!store) {
+        throw new Error('window.__store is not available')
+      }
+      // Why: seed a live, protocol-compatible runtime status so env-e2e's
+      // execution host reads 'available' (selectable). Since #5362 a
+      // configured-but-statusless server correctly reads 'disconnected', which
+      // makes the Add Project dialog fall back to the Local host UI instead of
+      // the server UI this test asserts.
+      store.getState().setRuntimeEnvironmentStatus('env-e2e', {
+        status: {
+          runtimeId: 'env-e2e-runtime',
+          rendererGraphEpoch: 0,
+          graphStatus: 'ready',
+          authoritativeWindowId: null,
+          liveTabCount: 0,
+          liveLeafCount: 0,
+          runtimeProtocolVersion: 3
+        },
+        checkedAt: Date.now()
+      })
+      await store.getState().updateSettings({ activeRuntimeEnvironmentId: 'env-e2e' })
     })
     await expect
       .poll(async () => (await getSettings(orcaPage)).activeRuntimeEnvironmentId, {
@@ -425,10 +449,16 @@ test.describe('Onboarding flow', () => {
     await onboardingFooterButton(orcaPage, SKIP_TO_PROJECT_SETUP_BUTTON).click()
 
     await expectAddProjectDialog(orcaPage)
-    await expect(orcaPage.getByRole('button', { name: /Browse server/i })).toBeVisible()
+    // The runtime server host (env-e2e) is selected and reachable — this is the
+    // proof that Skip preserved the server context instead of falling back to
+    // Local. The setup actions ("… on this host") target that server.
+    await expect(orcaPage.getByText('env-e2e')).toBeVisible()
+    await expect(
+      orcaPage.getByText(/Existing Git repository or folder on this host/i)
+    ).toBeVisible()
+    await expect(orcaPage.getByRole('button', { name: /Browse folder/i })).toBeVisible()
     await expect(orcaPage.getByRole('button', { name: /Clone from URL/i })).toBeVisible()
-    await expect(orcaPage.getByRole('button', { name: /Create on server/i })).toBeVisible()
-    await expect(orcaPage.getByText(/Or enter a server path manually/i)).toBeVisible()
+    await expect(orcaPage.getByRole('button', { name: /Create new project/i })).toBeVisible()
     await expect(onboardingFooterButton(orcaPage, SKIP_TO_PROJECT_SETUP_BUTTON)).toHaveCount(0)
     expect((await getOnboardingState(orcaPage)).closedAt).not.toBeNull()
   })

@@ -418,14 +418,36 @@ async function pressShiftedRussianLayoutKey(page: Page): Promise<{
 // proc.process is briefly unset so the check returns true spuriously. Click
 // Close when the dialog appears so the test's chord-routing assertion stays
 // deterministic; no-op when it doesn't.
-async function confirmCloseDialogIfShown(page: Page): Promise<void> {
-  const confirmButton = page.getByRole('button', { name: 'Close', exact: true })
-  try {
-    await confirmButton.waitFor({ state: 'visible', timeout: 500 })
-    await confirmButton.click()
-  } catch {
-    // Dialog did not appear — pane closed directly.
-  }
+async function closeActiveSplitPaneWithChord(
+  page: Page,
+  mod: string,
+  expectedCountAfter: number
+): Promise<void> {
+  // Guard: the split pane must still be present. Otherwise Cmd/Ctrl+W closes
+  // the last pane, which closes the tab and (on Linux) quits the whole app,
+  // surfacing later as a confusing "target page closed" instead of a clear
+  // "the split pane went away" signal.
+  await waitForPaneCount(page, expectedCountAfter + 1)
+  await focusActiveTerminal(page)
+  await page.keyboard.press(`${mod}+w`)
+  // The close is either immediate or gated behind a running-process
+  // confirmation dialog whose async hasChildProcesses check can surface it a
+  // beat late (a fixed short wait races it under CI load). Confirm the dialog
+  // whenever it appears and wait for the pane to actually drain.
+  await expect
+    .poll(
+      async () => {
+        // The running-process confirmation dialog's affirmative button is
+        // "Stop and Close" (not "Close").
+        const confirmButton = page.getByRole('button', { name: 'Stop and Close', exact: true })
+        if (await confirmButton.isVisible().catch(() => false)) {
+          await confirmButton.click().catch(() => {})
+        }
+        return countVisibleTerminalPanes(page)
+      },
+      { timeout: 10_000, message: 'split pane did not close after Cmd/Ctrl+W' }
+    )
+    .toBe(expectedCountAfter)
 }
 
 async function pressAndExpectWrite(
@@ -786,20 +808,14 @@ test.describe('Terminal Shortcuts', () => {
     // proc.process lags the spawn), which surfaces a confirmation dialog
     // instead of closing immediately. Confirm it if it appears — the test
     // only needs to prove the chord routed to the close handler.
-    await focusActiveTerminal(orcaPage)
-    await orcaPage.keyboard.press(`${mod}+w`)
-    await confirmCloseDialogIfShown(orcaPage)
-    await waitForPaneCount(orcaPage, panesBeforeSplit)
+    await closeActiveSplitPaneWithChord(orcaPage, mod, panesBeforeSplit)
 
     // Split horizontally (chord varies by platform — see splitHorizontalChord).
     const panesBeforeHSplit = await countVisibleTerminalPanes(orcaPage)
     await focusActiveTerminal(orcaPage)
     await orcaPage.keyboard.press(splitHorizontalChord)
     await waitForPaneCount(orcaPage, panesBeforeHSplit + 1)
-    await focusActiveTerminal(orcaPage)
-    await orcaPage.keyboard.press(`${mod}+w`)
-    await confirmCloseDialogIfShown(orcaPage)
-    await waitForPaneCount(orcaPage, panesBeforeHSplit)
+    await closeActiveSplitPaneWithChord(orcaPage, mod, panesBeforeHSplit)
 
     // Cmd/Ctrl+F toggles the search overlay.
     await focusActiveTerminal(orcaPage)

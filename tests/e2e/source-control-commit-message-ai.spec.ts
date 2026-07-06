@@ -62,18 +62,31 @@ test.describe('Source Control AI commit messages', () => {
           if (!repo) {
             throw new Error(`Seeded E2E repo was not registered: ${repoPath}`)
           }
-          const listedWorktrees = await window.api.worktrees.list({ repoId: repo.id })
+          const normalizeMacTmpPath = (value: string): string =>
+            value.startsWith('/private/var/') ? value.slice('/private'.length) : value
+
+          // Why: worktrees:list serves a 5s detection-scan cache that a raw
+          // `git worktree add` (done outside Orca) does not invalidate, so the
+          // freshly-created worktree can be briefly absent from the boot scan.
+          // Poll until the cache refreshes and surfaces it.
+          const deadline = Date.now() + 10_000
+          let listedWorktrees = await window.api.worktrees.list({ repoId: repo.id })
+          let worktree = listedWorktrees.find(
+            (entry) => normalizeMacTmpPath(entry.path) === normalizeMacTmpPath(targetWorktreePath)
+          )
+          while (!worktree && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 250))
+            listedWorktrees = await window.api.worktrees.list({ repoId: repo.id })
+            worktree = listedWorktrees.find(
+              (entry) => normalizeMacTmpPath(entry.path) === normalizeMacTmpPath(targetWorktreePath)
+            )
+          }
           store.setState((current) => ({
             worktreesByRepo: {
               ...current.worktreesByRepo,
               [repo.id]: listedWorktrees
             }
           }))
-          const normalizeMacTmpPath = (value: string): string =>
-            value.startsWith('/private/var/') ? value.slice('/private'.length) : value
-          const worktree = listedWorktrees.find(
-            (entry) => normalizeMacTmpPath(entry.path) === normalizeMacTmpPath(targetWorktreePath)
-          )
           if (!worktree) {
             throw new Error(
               `E2E worktree was not loaded: ${targetWorktreePath}; listed=${listedWorktrees
