@@ -141,17 +141,25 @@ export async function ensureTerminal(page, timeoutMs = 60_000) {
 /**
  * Drive the "New workspace" composer to create a worktree from the single
  * seeded project. The composer is in-app DOM (unlike the native Add-Project
- * dialog). Submitting creates a worktree and opens it; its default tab is a
- * terminal.
+ * dialog): open it, choose the "Blank Terminal" mode so the worktree opens a
+ * plain terminal (not an agent), then submit "Create worktree".
  */
 async function createWorkspaceFromSeededRepo(page, timeoutMs) {
   await page
     .getByRole(NEW_WORKSPACE_BUTTON.role, { name: NEW_WORKSPACE_BUTTON.name })
     .first()
     .click({ timeout: timeoutMs })
-  // The composer focuses a name/branch field; submit with Enter to create the
-  // worktree with default settings.
-  await page.keyboard.press('Enter')
+  // Choose the plain-terminal mode (best-effort — if it is already the default
+  // or the label differs, the create click below still produces a worktree).
+  await page
+    .getByRole('button', { name: 'Blank Terminal' })
+    .first()
+    .click({ timeout: 15_000 })
+    .catch(() => {})
+  await page
+    .getByRole('button', { name: 'Create worktree', exact: true })
+    .first()
+    .click({ timeout: 15_000 })
 }
 
 /** Create a new terminal tab via the New tab menu. Returns the count after. */
