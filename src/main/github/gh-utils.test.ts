@@ -23,6 +23,7 @@ import {
   classifyGhError,
   classifyListIssuesError,
   getIssueOwnerRepo,
+  getOriginOwnerRepo,
   getOwnerRepo,
   getOwnerRepoForRemote,
   parseGitHubRemoteIdentity,
@@ -144,12 +145,15 @@ describe('github owner/repo resolution', () => {
   })
 
   it('does not mix origin and upstream cache entries for the same repo path', async () => {
-    // getOwnerRepo and getIssueOwnerRepo both resolve upstream-first now
+    // Why: getOriginOwnerRepo probes only `origin`; getIssueOwnerRepo is
+    // upstream-first. Distinct owner/repo values per remote prove the cache
+    // keys stay separate — a mixing regression would return `fork/orca` for
+    // the upstream lookup. Also gives getOriginOwnerRepo direct coverage.
     gitExecFileAsyncMock
-      .mockResolvedValueOnce({ stdout: 'git@github.com:stablyai/orca.git\n' })
+      .mockResolvedValueOnce({ stdout: 'git@github.com:fork/orca.git\n' })
       .mockResolvedValueOnce({ stdout: 'git@github.com:stablyai/orca.git\n' })
 
-    await expect(getOwnerRepo('/repo')).resolves.toEqual({ owner: 'stablyai', repo: 'orca' })
+    await expect(getOriginOwnerRepo('/repo')).resolves.toEqual({ owner: 'fork', repo: 'orca' })
     await expect(getIssueOwnerRepo('/repo')).resolves.toEqual({ owner: 'stablyai', repo: 'orca' })
   })
 

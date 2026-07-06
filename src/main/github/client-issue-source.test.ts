@@ -9,6 +9,7 @@ const {
   execFileAsyncMock,
   ghExecFileAsyncMock,
   getOwnerRepoMock,
+  getOriginOwnerRepoMock,
   getIssueOwnerRepoMock,
   getOwnerRepoForRemoteMock,
   resolveIssueSourceMock,
@@ -20,6 +21,7 @@ const {
   execFileAsyncMock: vi.fn(),
   ghExecFileAsyncMock: vi.fn(),
   getOwnerRepoMock: vi.fn(),
+  getOriginOwnerRepoMock: vi.fn(),
   getIssueOwnerRepoMock: vi.fn(),
   getOwnerRepoForRemoteMock: vi.fn(),
   resolveIssueSourceMock: vi.fn(),
@@ -37,9 +39,11 @@ vi.mock('./gh-utils', async () => {
     ghExecFileAsync: ghExecFileAsyncMock,
     getOwnerRepo: getOwnerRepoMock,
     // Why: resolvePrWorkItemSource resolves the raw origin candidate via
-    // getOriginOwnerRepo; map it to the same mock these tests use for the
-    // origin PR repo.
-    getOriginOwnerRepo: getOwnerRepoMock,
+    // getOriginOwnerRepo (distinct from upstream-first getOwnerRepo). Keep it a
+    // separate mock so a regression that collapses originCandidate back onto
+    // getOwnerRepo is observable; it delegates to getOwnerRepoMock by default
+    // (see beforeEach) so existing origin-candidate setups keep working.
+    getOriginOwnerRepo: getOriginOwnerRepoMock,
     getIssueOwnerRepo: getIssueOwnerRepoMock,
     getOwnerRepoForRemote: getOwnerRepoForRemoteMock,
     resolveIssueSource: resolveIssueSourceMock,
@@ -61,6 +65,7 @@ describe('GitHub issue source split', () => {
     execFileAsyncMock.mockReset()
     ghExecFileAsyncMock.mockReset()
     getOwnerRepoMock.mockReset()
+    getOriginOwnerRepoMock.mockReset()
     getIssueOwnerRepoMock.mockReset()
     getOwnerRepoForRemoteMock.mockReset()
     resolveIssueSourceMock.mockReset()
@@ -79,6 +84,13 @@ describe('GitHub issue source split', () => {
       source: await getIssueOwnerRepoMock(),
       fellBack: false
     }))
+    // Why: originCandidate is resolved via getOriginOwnerRepo. Delegate to
+    // getOwnerRepoMock by default so the many existing tests that queue the
+    // origin PR repo on getOwnerRepoMock keep working unchanged; tests that
+    // must distinguish the two (the revert-guard below) override it.
+    getOriginOwnerRepoMock.mockImplementation((...args: unknown[]) =>
+      (getOwnerRepoMock as (...a: unknown[]) => Promise<unknown>)(...args)
+    )
     // Default the upstream-candidate lookup to null so existing tests that
     // only mock `getIssueOwnerRepo` + `getOwnerRepo` don't need to think
     // about it. Tests that care set it explicitly.
@@ -688,6 +700,29 @@ describe('GitHub issue source split', () => {
         originCandidate: { owner: 'fork', repo: 'orca' },
         upstreamCandidate: { owner: 'stablyai', repo: 'orca' }
       })
+    })
+
+    it('resolves originCandidate via raw origin, not upstream-first getOwnerRepo', async () => {
+      // Why: regression guard for the fork toggle. originCandidate must be the
+      // raw `origin` remote so the renderer's IssueSourceSelector keeps
+      // rendering (it gates on originCandidate && upstreamCandidate && distinct).
+      // If this collapses back onto upstream-first getOwnerRepo, originCandidate
+      // would equal upstreamCandidate and the toggle vanishes for every fork.
+      resolveIssueSourceMock.mockResolvedValueOnce({
+        source: { owner: 'stablyai', repo: 'orca' },
+        fellBack: false
+      })
+      getOriginOwnerRepoMock.mockResolvedValueOnce({ owner: 'fork', repo: 'orca' })
+      // What upstream-first getOwnerRepo would return — must NOT reach originCandidate.
+      getOwnerRepoMock.mockResolvedValue({ owner: 'stablyai', repo: 'orca' })
+      getOwnerRepoForRemoteMock.mockResolvedValueOnce({ owner: 'stablyai', repo: 'orca' })
+      ghExecFileAsyncMock.mockResolvedValue({ stdout: '[]' })
+
+      const result = await listWorkItems('/repo-root', 10, 'is:pr', undefined, 'upstream')
+
+      expect(result.sources.originCandidate).toEqual({ owner: 'fork', repo: 'orca' })
+      expect(result.sources.upstreamCandidate).toEqual({ owner: 'stablyai', repo: 'orca' })
+      expect(getOriginOwnerRepoMock).toHaveBeenCalled()
     })
   })
 })
