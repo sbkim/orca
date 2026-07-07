@@ -177,6 +177,25 @@ describe('findRtlJoinRanges', () => {
     const text = 'منَّ هنا'
     expect(findRtlJoinRanges(text)).toEqual([[0, text.length]])
   })
+
+  it('does not open a run at zero-width Cf controls after an LTR base', () => {
+    // BOM/ZWNBSP and Arabic number signs are width-0 in xterm, so like
+    // combining marks a run opened there maps to an empty joined cell range
+    // that blanks the following glyph in WebGL.
+    const BOM = '\ufeff'
+    expect(findRtlJoinRanges(`a${BOM}${BOM}b`)).toEqual([])
+    expect(findRtlJoinRanges('x\u0600\u0602y')).toEqual([])
+    expect(findRtlJoinRanges(`a${BOM}\u0651b`)).toEqual([])
+  })
+
+  it('keeps zero-width Cf controls from opening or counting an RTL run', () => {
+    const BOM = '\ufeff'
+    // A single letter behind a BOM stays isolated (BOM neither opens nor counts).
+    expect(findRtlJoinRanges(`${BOM}م`)).toEqual([])
+    // BOM inside a word does not break the run.
+    const text = `مرحبا${BOM}بكم`
+    expect(findRtlJoinRanges(text)).toEqual([[0, text.length]])
+  })
 })
 
 describe('registerArabicShapingJoiner', () => {

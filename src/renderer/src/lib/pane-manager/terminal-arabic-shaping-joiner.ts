@@ -50,9 +50,22 @@ function isRunNeutralCharCode(charCode: number): boolean {
 // into two joined chunks laid out in swapped visual order. Transparent: never
 // opens, closes, extends, or counts toward a run. LRM (U+200E) is strong LTR
 // and intentionally still breaks the run.
+// The zero-width Cf controls inside the RTL blocks (Arabic number signs
+// U+0600–0605, end of ayah U+06DD, Syriac abbreviation mark U+070F, disputed
+// end of ayah U+08E2) and BOM/ZWNBSP U+FEFF are width-0 in xterm, so like
+// combining marks they must never open or count a run (an empty joined cell
+// range blanks the following glyph in WebGL) — and they have no shape to join.
 function isRtlRunTransparentCodePoint(codePoint: number): boolean {
   return (
-    codePoint === 0x200c || codePoint === 0x200d || codePoint === 0x200f || codePoint === 0x061c
+    codePoint === 0x200c ||
+    codePoint === 0x200d ||
+    codePoint === 0x200f ||
+    codePoint === 0x061c ||
+    (codePoint >= 0x0600 && codePoint <= 0x0605) ||
+    codePoint === 0x06dd ||
+    codePoint === 0x070f ||
+    codePoint === 0x08e2 ||
+    codePoint === 0xfeff
   )
 }
 
@@ -74,6 +87,11 @@ function canOpenRtlRun(codePoint: number): boolean {
  * cluster, tunneling through neutral characters between RTL words. Runs with
  * fewer than two RTL code points are skipped: an isolated Arabic letter
  * already renders in its correct (isolated) form cell-by-cell.
+ *
+ * Known upstream limitation (affects every joiner, ligatures too): a
+ * standalone width-0 cell (e.g. RLM at line start) makes xterm's
+ * CharacterJoinerService skip the cell without advancing its string index,
+ * shifting the run's cell range by one — fix belongs upstream in xterm.js.
  */
 export function findRtlJoinRanges(text: string): [number, number][] {
   const length = text.length
