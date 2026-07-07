@@ -164,6 +164,53 @@ describe('selectWorktreeAgentActivitySummary', () => {
     expect(nowSpy).toHaveBeenCalledTimes(2)
   })
 
+  it("reuses a worktree's summary reference when only another worktree's agent changes", () => {
+    vi.spyOn(Date, 'now').mockReturnValue(2_000)
+    const wt1PaneKey = makePaneKey('tab-1', LEAF_ID)
+    const wt2PaneKey = makePaneKey('tab-2', '22222222-2222-4222-8222-222222222222')
+    const tabsByWorktree = {
+      'repo::/wt-1': [makeTab('tab-1', 'repo::/wt-1')],
+      'repo::/wt-2': [makeTab('tab-2', 'repo::/wt-2')]
+    }
+    const baseInputs = {
+      tabsByWorktree,
+      migrationUnsupportedByPtyId: {},
+      runtimeAgentOrchestrationByPaneKey: {},
+      retainedAgentsByPaneKey: {}
+    }
+    const state: AgentActivityInput = {
+      ...baseInputs,
+      agentStatusEpoch: 0,
+      agentStatusByPaneKey: {
+        [wt1PaneKey]: makeAgentStatusEntry({ paneKey: wt1PaneKey, state: 'working' }),
+        [wt2PaneKey]: makeAgentStatusEntry({ paneKey: wt2PaneKey, state: 'working' })
+      }
+    }
+    // wt-2's agent transitions working -> done: the epoch bumps and invalidates
+    // the shared cache, but wt-1's agent state is unchanged. The map is re-spread
+    // with fresh entry objects, mirroring a real setAgentStatus write.
+    const changedState: AgentActivityInput = {
+      ...baseInputs,
+      agentStatusEpoch: 1,
+      agentStatusByPaneKey: {
+        [wt1PaneKey]: makeAgentStatusEntry({ paneKey: wt1PaneKey, state: 'working' }),
+        [wt2PaneKey]: makeAgentStatusEntry({ paneKey: wt2PaneKey, state: 'done' })
+      }
+    }
+
+    const firstWt1 = selectWorktreeAgentActivitySummary(state, 'repo::/wt-1')
+    const firstWt2 = selectWorktreeAgentActivitySummary(state, 'repo::/wt-2')
+    const secondWt1 = selectWorktreeAgentActivitySummary(changedState, 'repo::/wt-1')
+    const secondWt2 = selectWorktreeAgentActivitySummary(changedState, 'repo::/wt-2')
+
+    // wt-1 is structurally unchanged -> same reference, so its card's useShallow
+    // subscription does not re-render.
+    expect(secondWt1).toBe(firstWt1)
+    // wt-2 changed -> new reference, so its card does re-render.
+    expect(secondWt2).not.toBe(firstWt2)
+    expect(secondWt2).toMatchObject({ hasLiveWorking: false, hasLiveDone: true })
+  })
+
   it('summarizes worktree-attributed rows missing from the tab list', () => {
     vi.spyOn(Date, 'now').mockReturnValue(2_000)
     const childPaneKey = makePaneKey('tab-child', '22222222-2222-4222-8222-222222222222')
