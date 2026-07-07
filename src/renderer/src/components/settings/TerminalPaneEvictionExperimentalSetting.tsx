@@ -4,6 +4,7 @@ import { Label } from '../ui/label'
 import { SearchableSetting } from './SearchableSetting'
 import { NumberField, SettingsSwitch } from './SettingsFormControls'
 import { getExperimentalSearchEntry } from './experimental-search'
+import { seedTerminalPaneEvictionWarmSetOnEnable } from '../terminal-pane/terminal-pane-eviction-coordinator'
 import {
   isTerminalPaneEvictionEnabled,
   resolveTerminalPaneEvictionAfterMs,
@@ -66,7 +67,15 @@ export function TerminalPaneEvictionExperimentalSetting({
             'auto.components.settings.ExperimentalPane.terminalPaneEviction.toggleLabel',
             'Toggle free memory from hidden terminals'
           )}
-          onChange={() => updateSettings({ experimentalTerminalPaneEviction: !enabled })}
+          onChange={() => {
+            if (!enabled) {
+              // Why: seed BEFORE the enabling settings write — with an empty warm
+              // map the mount gate would mass-detach every hidden pane in the
+              // enable render instead of parking it (STA-1282 enable-time seam).
+              seedTerminalPaneEvictionWarmSetOnEnable()
+            }
+            updateSettings({ experimentalTerminalPaneEviction: !enabled })
+          }}
         />
       </div>
       {enabled ? (

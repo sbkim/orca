@@ -4,7 +4,8 @@ import { useAppStore } from '@/store'
 import {
   __resetTerminalPaneEvictionCoordinatorForTest,
   consumeTerminalPaneEviction,
-  noteTerminalPaneVisibility
+  noteTerminalPaneVisibility,
+  seedTerminalPaneEvictionWarmSetOnEnable
 } from './terminal-pane-eviction-coordinator'
 import {
   __resetEvictedPaneRegistryForTest,
@@ -116,6 +117,42 @@ describe('terminal-pane-eviction coordinator', () => {
       await settle()
       expect(mountMap()['a']).toBeUndefined()
       expect(mountMap()['b']).toBe(true)
+    })
+  })
+
+  describe('enable-time warm-set seed (runtime flag flip, STA-1282)', () => {
+    it('synchronously seeds every non-parked tab into the warm mount map', () => {
+      // Called by the settings toggle BEFORE the enabling settings write, so it
+      // must work while the flag is still OFF — the mount map must be populated
+      // in the same tick, before the enable render evaluates the mount gate
+      // (otherwise every hidden mounted pane mass-DETACHES instead of parking).
+      seedStore(['a', 'b', 'c'], { experimentalTerminalPaneEviction: false })
+      // A parked tab stays Tier-2 (claimable on demand) — never re-warmed.
+      registerEvictedPane({
+        paneKey: 'tab-c-leaf',
+        tabId: 'c',
+        worktreeId: 'wt-1',
+        getPtyId: () => 'pty-c',
+        destroy: vi.fn(),
+        releaseForClaim: vi.fn()
+      })
+      seedTerminalPaneEvictionWarmSetOnEnable()
+      expect(mountMap()['a']).toBe(true)
+      expect(mountMap()['b']).toBe(true)
+      expect(mountMap()['c']).toBeUndefined()
+    })
+
+    it('seeded panes age out through the normal dwell policy with the park signal', async () => {
+      seedStore(['a', 'b'], { terminalPaneEvictionAfterMinutes: 5 })
+      seedTerminalPaneEvictionWarmSetOnEnable()
+      await settle()
+      expect(mountMap()['a']).toBe(true)
+      // Past the dwell window the seeded panes evict through the ordinary idle
+      // teardown, raising the eviction signal so the lifecycle parks (not detach).
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 5)
+      await settle()
+      expect(mountMap()['a']).toBeUndefined()
+      expect(consumeTerminalPaneEviction('a')).toBe(true)
     })
   })
 

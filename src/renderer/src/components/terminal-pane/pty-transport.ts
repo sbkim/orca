@@ -881,7 +881,7 @@ export function createIpcPtyTransport(opts: IpcPtyTransportOptions = {}): PtyTra
       // titles/status for the parked feed) but nothing is written to xterm.
       storedCallbacks = {}
       sinks.onTitleChange = parkedSinks.onTitleChange
-      sinks.onBell = undefined
+      sinks.onBell = parkedSinks.onBell
       sinks.onAgentBecameIdle = undefined
       sinks.onAgentBecameWorking = undefined
       sinks.onAgentExited = undefined

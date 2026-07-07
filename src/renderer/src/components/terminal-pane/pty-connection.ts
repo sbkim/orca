@@ -92,6 +92,7 @@ import { isLocalNativeWindowsConpty } from '@/lib/pane-manager/windows-pty-compa
 import { recordTerminalOutput } from '@/lib/pane-manager/pane-scroll'
 import {
   captureTerminalWriteScrollIntent,
+  enforceTerminalCurrentScrollIntent,
   enforceTerminalWriteScrollIntent
 } from '@/lib/pane-manager/terminal-scroll-intent'
 import { createBrowserUuid } from '@/lib/browser-uuid'
@@ -5112,15 +5113,24 @@ export function connectPanePty(
       })
     }
 
-    function applyMainBufferSnapshot(snapshot: {
-      data: string
-      cols: number
-      rows: number
-      seq?: number
-      alternateScreen?: boolean
-      pendingEscapeTailAnsi?: string
-    }): void {
-      const scrollIntent = captureTerminalWriteScrollIntent(pane.terminal)
+    function applyMainBufferSnapshot(
+      snapshot: {
+        data: string
+        cols: number
+        rows: number
+        seq?: number
+        alternateScreen?: boolean
+        pendingEscapeTailAnsi?: string
+      },
+      opts?: { restoreDurableScrollIntent?: boolean }
+    ): void {
+      // Why: an eviction remount replays into a FRESH xterm whose pre-replay
+      // buffer is empty — capturing it would pin the viewport to row 0 and
+      // overwrite the durable (leaf-keyed) scroll intent the pre-eviction pane
+      // recorded (#7472). Re-apply the durable intent after replay instead.
+      const scrollIntent = opts?.restoreDurableScrollIntent
+        ? null
+        : captureTerminalWriteScrollIntent(pane.terminal)
       const colsBeforeReplay = pane.terminal.cols
       const rowsBeforeReplay = pane.terminal.rows
       const hasSnapshotDimensions =
@@ -5158,7 +5168,21 @@ export function connectPanePty(
         writeReplayData('\x1b[?1049h\x1b[2J\x1b[H')
       }
       writeReplayData(snapshot.data)
-      writeReplayData(POST_REPLAY_LIVE_SNAPSHOT_RESET)
+      if (opts?.restoreDurableScrollIntent) {
+        // Why: xterm parses writes asynchronously — when this function returns
+        // the fresh remounted buffer is still empty, so a synchronous enforce
+        // would clamp the durable viewport to row 0 AND overwrite the durable
+        // (leaf-keyed) intent with that empty-buffer state. Enforce only after
+        // xterm has parsed the full replay (write callbacks are FIFO, so the
+        // reset chunk parsing implies the snapshot body is in the buffer).
+        void writeReplayDataAsync(POST_REPLAY_LIVE_SNAPSHOT_RESET).then(() => {
+          if (!disposed) {
+            enforceTerminalCurrentScrollIntent(pane.terminal)
+          }
+        })
+      } else {
+        writeReplayData(POST_REPLAY_LIVE_SNAPSHOT_RESET)
+      }
       if (snapshot.pendingEscapeTailAnsi) {
         // Why last: the snapshot was serialized while the emulator sat mid-escape;
         // re-arm the dangling sequence as the FINAL replay write (any later ESC —
@@ -5188,7 +5212,10 @@ export function connectPanePty(
       }
       // Why: snapshot replay clears and rebuilds xterm state; re-apply the
       // user's scroll intent once so hidden catch-up cannot repin the viewport.
-      enforceTerminalWriteScrollIntent(pane.terminal, scrollIntent)
+      // (The durable-restore path enforces in the replay parse callback above.)
+      if (!opts?.restoreDurableScrollIntent) {
+        enforceTerminalWriteScrollIntent(pane.terminal, scrollIntent)
+      }
     }
 
     function requestHiddenOutputRestoreIfNeeded(opts?: { bypassScheduler?: boolean }): boolean {
@@ -5333,7 +5360,9 @@ export function connectPanePty(
           }
           reportEvictionRemountReplayOutcome('ok')
           hiddenOutputRestoreDeferredRetryAttempts = 0
-          applyMainBufferSnapshot(snapshot)
+          applyMainBufferSnapshot(snapshot, {
+            restoreDurableScrollIntent: evictionRemountSnapshotClaim
+          })
           const needsFreshSnapshot = hiddenOutputRestoreFreshSnapshotNeeded
           hiddenOutputRestoreFreshSnapshotNeeded = false
           if (drainPendingLiveChunksAfterSnapshot(snapshot.seq) && !needsFreshSnapshot) {
@@ -5982,6 +6011,10 @@ export function connectPanePty(
                   }
                   deps.clearExitedPanePtyLayoutBinding(pane.id, pendingSessionId)
                   deps.clearTabPtyId(deps.tabId, pendingSessionId)
+                  // STA-1282 gate #5: an expired SSH-deferred reattach on a claimed
+                  // remount lost its parked history — charge the fail-open counter,
+                  // matching the direct-deferred and in-handler failure paths.
+                  reportEvictionRemountReplayOutcome('error')
                   startFreshColdRestoreAgentResume(coldRestoreStartup, {
                     forceBlankRestoredViewport: true
                   })
@@ -6004,6 +6037,10 @@ export function connectPanePty(
                 if (disposed) {
                   return
                 }
+                // STA-1282 gate #5: a threw SSH-deferred reattach on a claimed remount
+                // lost its parked history — both fresh-restart branches below replace
+                // the parked PTY, so charge the fail-open counter once.
+                reportEvictionRemountReplayOutcome('error')
                 if (isSshSessionExpiredError(err)) {
                   deps.clearExitedPanePtyLayoutBinding(pane.id, pendingSessionId)
                   deps.clearTabPtyId(deps.tabId, pendingSessionId)
@@ -6157,6 +6194,10 @@ export function connectPanePty(
             }
             deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)
             deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
+            // STA-1282 gate #5: an expired reattach on a claimed remount lost its
+            // parked history (fresh shell replaces it) — charge the fail-open
+            // counter as a structural failure, matching handleReattachResult.
+            reportEvictionRemountReplayOutcome('error')
             startFreshColdRestoreAgentResume(coldRestoreStartup, {
               forceBlankRestoredViewport: true
             })
@@ -6184,8 +6225,19 @@ export function connectPanePty(
             ptyId: deferredReattachSessionId,
             reason: message
           })
+          // Why: bail on a dispose-before-adoption like the sibling reattach-failure
+          // paths — the deferred claim was never finalized (parked entry intact and
+          // reapable), and a fresh spawn here would orphan a PTY for a torn-down pane
+          // AND drop the parked history while under-counting the fail-open failure.
+          if (disposed) {
+            return
+          }
           deps.clearExitedPanePtyLayoutBinding(pane.id, deferredReattachSessionId)
           deps.clearTabPtyId(deps.tabId, deferredReattachSessionId)
+          // STA-1282 gate #5: a reattach that threw on a claimed remount lost its
+          // parked history — both fresh-restart branches below replace the parked
+          // PTY, so charge the fail-open counter once as a structural failure.
+          reportEvictionRemountReplayOutcome('error')
           if (connectionId && isSshSessionExpiredError(err)) {
             startFreshColdRestoreAgentResume(coldRestoreStartup, {
               forceBlankRestoredViewport: true
@@ -6239,6 +6291,10 @@ export function connectPanePty(
       } catch (err) {
         reportError(err instanceof Error ? err.message : String(err))
         deps.clearTabPtyId(deps.tabId, attachPtyId)
+        // STA-1282 gate #5: if a claimed eviction remount adopted this live PTY and
+        // attach threw, the fresh spawn loses the parked history — charge the
+        // fail-open counter (a no-op unless this remount was an eviction claim).
+        reportEvictionRemountReplayOutcome('error')
         startFreshSpawn()
       }
     } else {
@@ -6419,6 +6475,10 @@ export function connectPanePty(
         ) {
           return
         }
+        // Why: keep the per-pane runtime title fresh while parked (the live
+        // handler does the same at bind) so the jump palette / split spinner do
+        // not freeze on a stale title until the pane is remounted (STA-1282).
+        deps.setRuntimePaneTitle(deps.tabId, pane.id, paneTitle)
         if (drivesTabTitleWhileParked) {
           deps.updateTabTitle(deps.tabId, paneTitle)
         }
@@ -6426,20 +6486,68 @@ export function connectPanePty(
           agentCompletionCoordinator.observeTitle(rawTitle)
         }
       },
+      onBell: () => {
+        // Why: BEL is the only attention signal for TUIs without hook
+        // integration (e.g. a permission prompt); a hidden mounted pane raises
+        // these unread marks today, so a parked pane must too. The pane-level
+        // marker and the OS-notification timers are torn down with the pane —
+        // only the durable tab/worktree marks are raised here.
+        deps.markWorktreeUnread(deps.worktreeId)
+        deps.markTerminalTabUnread(deps.tabId)
+      },
       // Remote-runtime status is renderer-owned; retain it while parked.
       ...(shouldOwnAgentStatusInRenderer
         ? {
             onAgentStatus: (payload) => {
+              // Match the live handler: drop Codex auto-approval synthetic status
+              // and normalize the agent type so a parked pane never resurfaces the
+              // suppressed status noise (#6230) or mislabels its agent (#5270).
+              if (
+                shouldSuppressCodexAutoApprovalStatus(payload, {
+                  paneKey: cacheKey,
+                  tabId: deps.tabId,
+                  ...(launchToken ? { launchToken } : {})
+                })
+              ) {
+                return
+              }
               const state = useAppStore.getState()
+              const authoritativePaneAgent = getAuthoritativePaneAgent()
+              const agentType = resolveCompatibleAgentTypeForOwner(
+                payload.agentType,
+                authoritativePaneAgent
+              )
+              const statusPayload =
+                agentType === payload.agentType ? payload : { ...payload, agentType }
+              // Why: pair the status with the current runtime title (kept fresh
+              // while parked, above) exactly like the live handler, so consumers of
+              // the stored terminalTitle (hover/fallback rows, runtime/mobile
+              // projection) do not read a stale title while the pane is parked.
+              const title = state.runtimePaneTitlesByTabId?.[deps.tabId]?.[pane.id]
+              const resolvedStatusTitle = resolveAgentStatusTerminalTitle(statusPayload, title)
+              const statusTitle = resolvedStatusTitle
+                ? normalizeCompatibleAgentTitleForOwner(
+                    resolvedStatusTitle,
+                    agentType ?? authoritativePaneAgent
+                  )
+                : resolvedStatusTitle
               if (launchToken) {
-                state.setAgentStatus(cacheKey, payload, undefined, undefined, undefined, {
+                state.setAgentStatus(cacheKey, statusPayload, statusTitle, undefined, undefined, {
                   launchToken
                 })
               } else {
-                state.setAgentStatus(cacheKey, payload)
+                state.setAgentStatus(cacheKey, statusPayload, statusTitle)
               }
               if (syncAgentTaskCompleteTrackingEnabled()) {
-                agentCompletionCoordinator.observeHookStatus(payload)
+                // Why: enrich with the stored stateStartedAt like the live handler so
+                // repeated identical done-snapshots keep a stable completion identity
+                // and cannot double-schedule the quiet-window completion while parked.
+                const storedStatus = useAppStore.getState().agentStatusByPaneKey[cacheKey]
+                const notificationPayload =
+                  typeof storedStatus?.stateStartedAt === 'number'
+                    ? { ...statusPayload, stateStartedAt: storedStatus.stateStartedAt }
+                    : statusPayload
+                agentCompletionCoordinator.observeHookStatus(notificationPayload)
               }
             }
           }
@@ -6447,8 +6555,22 @@ export function connectPanePty(
       onPtyExit: (exitedPtyId) => {
         // Re-pointed exit observer: a real exit (or hibernation kill) while
         // parked updates store state and drops the registry entry (gate #8).
+        // Why: mirror the live exit path's store cleanup so a parked exit does not
+        // leak the suppressed-exit flag (hibernation kill) or leave a stale runtime
+        // title / prompt cache timer that only clears on the next remount.
+        deps.consumeSuppressedPtyExit(exitedPtyId)
+        deps.clearRuntimePaneTitle(deps.tabId, pane.id)
         deps.clearTabPtyId(deps.tabId, exitedPtyId)
+        deps.setCacheTimerStartedAt(cacheKey, null)
         useAppStore.getState().removeAgentStatus(cacheKey)
+        // Why: match the live exit path — a dead PTY has no foreground agent.
+        // Without this, a parked pane that exits and later respawns inherits a
+        // stale agent tab icon (the remount probe never clears on a stale agent).
+        useAppStore.getState().clearPaneForegroundAgent(cacheKey)
+        // Why: republish the runtime graph (CLI/mobile terminal bindings) like the
+        // live exit path so it stops advertising this dead PTY immediately instead
+        // of waiting for an unrelated spawn/exit/layout event.
+        scheduleRuntimeGraphSync()
         forgetEvictedPaneOnExit(cacheKey)
       }
     }
@@ -6601,6 +6723,11 @@ export function connectPanePty(
       // a fresh lifecycle re-syncs from the mirror. Accepted for the experimental
       // phase — the pane is not visible, and agent completion/title/status/exit ARE
       // retained by the parked feed (unlike this, they are gated on !parked below).
+      // Known sub-gap: an agent that exits while parked (shell survives) leaves a
+      // stale paneForegroundAgent entry the remount probe cannot clear — clearing
+      // needs 133;D prompt proof, which visible-pty reads deliberately never
+      // supply (a probe can catch an agent's transient tool subshell and would
+      // false-clear a live icon). Self-heals on the next command boundary.
       commandLifecycle.dispose()
       paneForegroundAgentTracker.dispose()
       // Why: STA-1282 — when parking, the completion coordinator is handed to

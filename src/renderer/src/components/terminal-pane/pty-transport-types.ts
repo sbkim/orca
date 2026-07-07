@@ -113,6 +113,9 @@ export type PtyTransport = {
  *  re-pointed exit observer that clears store/registry state on a real exit. */
 export type ParkedPtySinks = {
   onTitleChange?: (title: string, rawTitle: string) => void
+  /** BEL is the attention signal for TUIs without hook integration — a parked
+   *  pane must still raise the tab/worktree unread marks. */
+  onBell?: () => void
   onAgentStatus?: (payload: ParsedAgentStatusPayload) => void
   onPtyExit?: (id: string) => void
 }

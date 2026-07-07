@@ -31,9 +31,9 @@ describe('terminal-pane-eviction settings hydration', () => {
   })
 
   it('rejects a non-finite persisted budget and falls back to default', () => {
-    expect(resolveTerminalPaneEvictionWarmBudget({ terminalPaneEvictionWarmBudget: NaN })).toBe(
-      TERMINAL_PANE_EVICTION_WARM_BUDGET_DEFAULT
-    )
+    expect(
+      resolveTerminalPaneEvictionWarmBudget({ terminalPaneEvictionWarmBudget: Number.NaN })
+    ).toBe(TERMINAL_PANE_EVICTION_WARM_BUDGET_DEFAULT)
   })
 
   it('defaults the dwell when absent and clamps minutes 1-120', () => {

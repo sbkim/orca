@@ -633,7 +633,7 @@ export function createRemoteRuntimePtyTransport(
       viewportBatcher.flush()
       storedCallbacks = {}
       sinks.onTitleChange = parkedSinks.onTitleChange
-      sinks.onBell = undefined
+      sinks.onBell = parkedSinks.onBell
       sinks.onAgentBecameIdle = undefined
       sinks.onAgentBecameWorking = undefined
       sinks.onAgentExited = undefined

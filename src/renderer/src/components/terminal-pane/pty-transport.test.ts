@@ -188,8 +188,9 @@ describe('createIpcPtyTransport', () => {
     const { createIpcPtyTransport } = await import('./pty-transport')
     const onTitleChange = vi.fn()
     const onPtyExit = vi.fn()
+    const onBell = vi.fn()
     const onDataCallback = vi.fn()
-    const transport = createIpcPtyTransport({ onTitleChange, onPtyExit })
+    const transport = createIpcPtyTransport({ onTitleChange, onPtyExit, onBell })
 
     await transport.connect({ url: '', callbacks: { onData: onDataCallback } })
 
@@ -201,12 +202,13 @@ describe('createIpcPtyTransport', () => {
     onTitleChange.mockClear()
     onDataCallback.mockClear()
 
-    // Evict: park re-points title/exit to the parked registry feed. The PTY and
-    // its data handler stay alive (still parsing OSC titles), but nothing writes
-    // to the torn-down xterm anymore (storedCallbacks cleared).
+    // Evict: park re-points title/bell/exit to the parked registry feed. The PTY
+    // and its data handler stay alive (still parsing OSC titles), but nothing
+    // writes to the torn-down xterm anymore (storedCallbacks cleared).
     const parkedTitle = vi.fn()
     const parkedExit = vi.fn()
-    transport.park?.({ onTitleChange: parkedTitle, onPtyExit: parkedExit })
+    const parkedBell = vi.fn()
+    transport.park?.({ onTitleChange: parkedTitle, onPtyExit: parkedExit, onBell: parkedBell })
 
     onData?.({ id: 'pty-1', data: '\x1b]0;parked-title\x07more' })
     expect(onDataCallback).not.toHaveBeenCalled()
@@ -215,6 +217,13 @@ describe('createIpcPtyTransport', () => {
     expect(parkedTitle).toHaveBeenCalledWith('parked-title', 'parked-title')
     // …and the original (unmounted) pane's feed is silent.
     expect(onTitleChange).not.toHaveBeenCalled()
+
+    // A standalone BEL while parked is an attention signal (unread marks) and
+    // must route to the parked bell sink, never the original pane's.
+    onData?.({ id: 'pty-1', data: 'ready\x07' })
+    await flushPtySideEffects()
+    expect(parkedBell).toHaveBeenCalled()
+    expect(onBell).not.toHaveBeenCalled()
 
     // A real exit while parked routes to the parked exit observer (gate #8 hook),
     // never the original pane's observer.

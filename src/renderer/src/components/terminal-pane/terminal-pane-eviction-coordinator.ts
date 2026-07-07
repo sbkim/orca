@@ -20,6 +20,7 @@ import { computePaneMountPolicy, nextDwellExpiryAt } from './pane-mount-policy'
 import type { PaneMountClassification, PaneMountPolicyInput } from './pane-mount-policy'
 import {
   evictedPaneCount,
+  isTabParked,
   onEvictionSelfDisable,
   reconcileEvictedPanes
 } from './evicted-pane-registry'
@@ -127,6 +128,10 @@ function pruneClosedManagedTabs(state: StoreState): void {
       lastVisibleAt.delete(tabId)
       visibleTabIds.delete(tabId)
       cancelTeardown(tabId)
+      // Why: drop the per-tab generation and any stale eviction signal too, so a
+      // closed tab leaves no residual coordinator state for the session.
+      generationByTab.delete(tabId)
+      evictingTabIds.delete(tabId)
     }
   }
   // Why: a tab closed while visible never reports hidden, so prune stale visible
@@ -138,6 +143,10 @@ function pruneClosedManagedTabs(state: StoreState): void {
       if (!liveTabIds.has(tabId)) {
         visibleTabIds.delete(tabId)
         lastVisibleAt.delete(tabId)
+        // Why: a tab closed while visible is never in managedTabs, so drop its
+        // generation + eviction-signal here too (the managed loop above cannot).
+        generationByTab.delete(tabId)
+        evictingTabIds.delete(tabId)
       }
     }
   }
@@ -346,10 +355,44 @@ export function noteTerminalPaneVisibility(
     bumpGeneration(tabId)
     cancelTeardown(tabId)
     managedTabs.delete(tabId)
+    // Why: a teardown that fired while this tab was already re-revealed can leave a
+    // stale eviction signal; clear it on re-warm so a later close/reparent of the
+    // tab is not misread as an eviction (park instead of destroy/detach).
+    evictingTabIds.delete(tabId)
   } else {
     visibleTabIds.delete(tabId)
     managedTabs.set(tabId, { worktreeId })
   }
+  scheduleRecompute()
+}
+
+/** STA-1282 enable-time seam. Flag-off mounts every pane, so at the instant the
+ *  experiment flips ON the warm map is empty and the mount gate would mass-
+ *  DETACH every hidden mounted pane (status/title/exit feeds dark until each is
+ *  revisited) instead of parking it. The settings toggle calls this just BEFORE
+ *  the enabling settings write: bring every currently-mounted (non-parked) tab
+ *  under management as warm-now and push the mount map synchronously, so the
+ *  enable render never sees an empty warm set. The next recompute then evicts
+ *  beyond-budget panes through the normal idle teardown, which parks them with
+ *  their feeds retained. */
+export function seedTerminalPaneEvictionWarmSetOnEnable(): void {
+  ensureInitialized()
+  const state = useAppStore.getState()
+  const now = Date.now()
+  for (const [worktreeId, tabs] of Object.entries(state.tabsByWorktree)) {
+    // Same scope exclusion as the visibility reporter path.
+    if (worktreeId === FLOATING_TERMINAL_WORKTREE_ID) {
+      continue
+    }
+    for (const tab of tabs) {
+      if (isTabParked(tab.id) || visibleTabIds.has(tab.id) || managedTabs.has(tab.id)) {
+        continue
+      }
+      managedTabs.set(tab.id, { worktreeId })
+      lastVisibleAt.set(tab.id, now)
+    }
+  }
+  pushMountMap()
   scheduleRecompute()
 }
 
