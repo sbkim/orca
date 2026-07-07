@@ -1,6 +1,8 @@
 import type { Repo } from '../shared/types'
 import { resolveLocalGitUsernameDetailed } from './git/git-username'
 
+export const MAX_REPO_GIT_USERNAME_ATTEMPTED_LOCATIONS = 2048
+
 type RepoUsernameStore = {
   getRepos(): Repo[]
   setResolvedRepoGitUsername(id: string, username: string): boolean
@@ -21,21 +23,51 @@ function getRepoLocationKey(repo: Pick<Repo, 'path' | 'connectionId'>): string {
   return `${repo.connectionId ?? 'local'}\0${repo.path}`
 }
 
+function pruneAttemptedLocations(liveLocationKeys: ReadonlySet<string>): void {
+  for (const locationKey of attemptedLocations) {
+    if (!liveLocationKeys.has(locationKey)) {
+      attemptedLocations.delete(locationKey)
+    }
+  }
+  while (attemptedLocations.size > MAX_REPO_GIT_USERNAME_ATTEMPTED_LOCATIONS) {
+    const oldestLocationKey = attemptedLocations.values().next().value
+    if (oldestLocationKey === undefined) {
+      break
+    }
+    attemptedLocations.delete(oldestLocationKey)
+  }
+}
+
+function rememberAttemptedLocation(locationKey: string): void {
+  attemptedLocations.delete(locationKey)
+  attemptedLocations.add(locationKey)
+  while (attemptedLocations.size > MAX_REPO_GIT_USERNAME_ATTEMPTED_LOCATIONS) {
+    const oldestLocationKey = attemptedLocations.values().next().value
+    if (oldestLocationKey === undefined) {
+      break
+    }
+    attemptedLocations.delete(oldestLocationKey)
+  }
+}
+
 async function enrichRepoGitUsernamesInBackground(
   store: RepoUsernameStore,
   options: EnrichmentOptions
 ): Promise<void> {
-  const candidates = store.getRepos().filter(
-    (repo) =>
-      repo.kind !== 'folder' &&
-      // Why: SSH repo paths are remote; local git cannot inspect them. The
-      // SSH username path (getSshGitUsername) stays caller-driven.
-      !repo.connectionId &&
-      !attemptedLocations.has(getRepoLocationKey(repo))
+  const repos = store.getRepos()
+  // Why: SSH repo paths are remote; local git cannot inspect them. The SSH
+  // username path (getSshGitUsername) stays caller-driven.
+  const localGitRepos = repos.filter((repo) => repo.kind !== 'folder' && !repo.connectionId)
+  const liveLocationKeys = new Set(localGitRepos.map((repo) => getRepoLocationKey(repo)))
+  // Why: the attempted set intentionally suppresses subprocesses for active
+  // repos, but removed local repo paths should not be retained forever.
+  pruneAttemptedLocations(liveLocationKeys)
+  const candidates = localGitRepos.filter(
+    (repo) => !attemptedLocations.has(getRepoLocationKey(repo))
   )
   let changed = false
   for (const repo of candidates) {
-    attemptedLocations.add(getRepoLocationKey(repo))
+    rememberAttemptedLocation(getRepoLocationKey(repo))
     const { username, authoritative } = await resolveLocalGitUsernameDetailed(repo.path)
     // Why: a non-authoritative '' means a probe timed out and says nothing
     // about the account — keep the persisted value. An authoritative result
@@ -92,4 +124,12 @@ export function resetRepoGitUsernameEnrichmentForTests(): void {
   attemptedLocations.clear()
   enrichmentInFlight = null
   rerunRequested = false
+}
+
+export function getRepoGitUsernameAttemptedLocationCountForTests(): number {
+  return attemptedLocations.size
+}
+
+export function hasRepoGitUsernameAttemptedLocationForTests(repo: Repo): boolean {
+  return attemptedLocations.has(getRepoLocationKey(repo))
 }

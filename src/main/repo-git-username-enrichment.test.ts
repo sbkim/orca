@@ -9,8 +9,11 @@ vi.mock('./git/git-username', () => ({
 }))
 
 import {
+  MAX_REPO_GIT_USERNAME_ATTEMPTED_LOCATIONS,
   enrichRepoGitUsernames,
   flushRepoGitUsernameEnrichmentForTests,
+  getRepoGitUsernameAttemptedLocationCountForTests,
+  hasRepoGitUsernameAttemptedLocationForTests,
   resetRepoGitUsernameEnrichmentForTests
 } from './repo-git-username-enrichment'
 
@@ -80,6 +83,55 @@ describe('enrichRepoGitUsernames', () => {
     await flushRepoGitUsernameEnrichmentForTests()
 
     expect(resolveLocalGitUsernameDetailedMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('prunes attempted locations for removed repos', async () => {
+    const oldRepo = makeRepo({ id: 'old', path: 'C:/repos/old' })
+    const newRepo = makeRepo({ id: 'new', path: 'C:/repos/new' })
+    const repos = [oldRepo]
+    const store = makeStore(repos)
+
+    enrichRepoGitUsernames(store)
+    await flushRepoGitUsernameEnrichmentForTests()
+
+    expect(getRepoGitUsernameAttemptedLocationCountForTests()).toBe(1)
+    expect(hasRepoGitUsernameAttemptedLocationForTests(oldRepo)).toBe(true)
+
+    repos.splice(0, repos.length, newRepo)
+    enrichRepoGitUsernames(store)
+    await flushRepoGitUsernameEnrichmentForTests()
+
+    expect(getRepoGitUsernameAttemptedLocationCountForTests()).toBe(1)
+    expect(hasRepoGitUsernameAttemptedLocationForTests(oldRepo)).toBe(false)
+    expect(hasRepoGitUsernameAttemptedLocationForTests(newRepo)).toBe(true)
+    expect(resolveLocalGitUsernameDetailedMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('caps attempted locations while retaining active recent repos', async () => {
+    const repos = Array.from(
+      { length: MAX_REPO_GIT_USERNAME_ATTEMPTED_LOCATIONS - 1 },
+      (_, index) => makeRepo({ id: `repo-${index}`, path: `C:/repos/repo-${index}` })
+    )
+    const keepRepo = makeRepo({ id: 'keep', path: 'C:/repos/keep' })
+    repos.push(keepRepo)
+    const store = makeStore(repos)
+
+    enrichRepoGitUsernames(store)
+    await flushRepoGitUsernameEnrichmentForTests()
+    const newRepo = makeRepo({ id: 'new', path: 'C:/repos/new' })
+    repos.push(newRepo)
+    enrichRepoGitUsernames(store)
+    await flushRepoGitUsernameEnrichmentForTests()
+
+    expect(getRepoGitUsernameAttemptedLocationCountForTests()).toBe(
+      MAX_REPO_GIT_USERNAME_ATTEMPTED_LOCATIONS
+    )
+    expect(hasRepoGitUsernameAttemptedLocationForTests(repos[0]!)).toBe(false)
+    expect(hasRepoGitUsernameAttemptedLocationForTests(keepRepo)).toBe(true)
+    expect(hasRepoGitUsernameAttemptedLocationForTests(newRepo)).toBe(true)
+    expect(resolveLocalGitUsernameDetailedMock).toHaveBeenCalledTimes(
+      MAX_REPO_GIT_USERNAME_ATTEMPTED_LOCATIONS + 1
+    )
   })
 
   it('keeps persisted usernames on a non-authoritative empty resolution', async () => {
