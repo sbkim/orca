@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
-import { basename, dirname, join, relative, sep } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { app } from 'electron'
 import { parseDaemonPidFile, startTimeMatches } from './daemon-health'
 
@@ -25,18 +25,19 @@ import { parseDaemonPidFile, startTimeMatches } from './daemon-health'
  * the daemon's whole file closure to a version-keyed userData dir and forking
  * from that copy takes its image + loaded modules out of the installer's reach.
  *
- * The copy keeps the ELECTRON binary run as node (not stock node.exe): a copied
- * Orca.exe is byte-identical, so run-as-node behavior — no console flashing,
- * asar-correct — matches the in-dir fork exactly. The win-unpacked layout is
- * mirrored verbatim so require('node-pty') and node-pty's native loader resolve
- * the relocated tree identically to the packaged app.
+ * The copy keeps the ELECTRON binary run as node (not stock node.exe): a copy
+ * of Orca.exe (renamed to a distinct image name) is byte-identical, so
+ * run-as-node behavior — no console flashing, asar-correct — matches the in-dir
+ * fork exactly. The win-unpacked layout is mirrored verbatim so
+ * require('node-pty') and node-pty's native loader resolve the relocated tree
+ * identically to the packaged app.
  *
  * Fail-open everywhere: any failure returns null and the caller forks the
  * install-dir host — the pre-relocation behavior, byte-identical off win32.
  */
 
 export type RelocatedDaemonHost = {
-  /** The copied Orca.exe to fork the daemon from (run as node). */
+  /** The relocated host exe to fork the daemon from (run as node). */
   execPath: string
   /** The copied daemon-entry.js, mirrored under the relocated resources tree. */
   entryPath: string
@@ -44,6 +45,12 @@ export type RelocatedDaemonHost = {
 
 const HOST_SUBDIR = 'daemon-host'
 const MARKER_NAME = '.materialized.json'
+
+// The relocated host exe is a copy of Orca.exe renamed to a distinct image
+// name. The NSIS updater's name-based kill (`taskkill /IM Orca.exe`) matches by
+// image name, so a distinct name spares the daemon from that branch, while the
+// userData path (outside $INSTDIR) spares it from the path-based branch.
+const DAEMON_HOST_EXE_NAME = 'orca-terminal-daemon.exe'
 
 // V8 snapshots + ICU data the Electron bootstrap reads even under
 // ELECTRON_RUN_AS_NODE; siblings of Orca.exe in win-unpacked.
@@ -134,8 +141,11 @@ export function buildDaemonHostManifest(
   const { appDir, execPath, resourcesPath, entrySourcePath, entryRelPath } = sources
   const ops: CopyOp[] = []
 
-  // Electron host binary + runtime data blobs at the dest root.
-  ops.push({ sourcePath: execPath, destRel: basename(execPath), kind: 'file' })
+  // Electron host binary + runtime data blobs at the dest root. The exe is
+  // renamed to a distinct image name so the NSIS updater's name-based
+  // `taskkill /IM Orca.exe` can't match it; the blobs/DLLs beside it are read by
+  // the Electron bootstrap by fixed names, so they keep their original names.
+  ops.push({ sourcePath: execPath, destRel: DAEMON_HOST_EXE_NAME, kind: 'file' })
   for (const name of RUNTIME_DATA_FILES) {
     ops.push({ sourcePath: join(appDir, name), destRel: name, kind: 'file', optional: true })
   }
@@ -225,7 +235,7 @@ export function getRelocatedDaemonHost(): RelocatedDaemonHost | null {
   if (!marker || marker.version !== version) {
     return null
   }
-  const execPath = join(dest, basename(sources.execPath))
+  const execPath = join(dest, DAEMON_HOST_EXE_NAME)
   const entryPath = destPath(dest, marker.entryRelPath)
   if (!existsSync(execPath) || !existsSync(entryPath)) {
     return null
