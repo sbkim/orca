@@ -118,15 +118,15 @@ describe('PortScanner', () => {
     await vi.advanceTimersByTimeAsync(BASE)
     expect(request).toHaveBeenCalledTimes(2)
 
-    // t=36s: unchanged -> next wait doubles to 48s.
+    // t=36s: unchanged -> next wait caps at 30s (not 48s).
     await vi.advanceTimersByTimeAsync(BASE)
     expect(request).toHaveBeenCalledTimes(3)
 
-    // t=83.999s: still waiting.
-    await vi.advanceTimersByTimeAsync(4 * BASE - 1)
+    // t=65.999s: still waiting.
+    await vi.advanceTimersByTimeAsync(MAX - 1)
     expect(request).toHaveBeenCalledTimes(3)
 
-    // t=84s: unchanged -> next wait caps at 60s (not 96s).
+    // t=66s: unchanged -> next wait remains capped at 30s.
     await vi.advanceTimersByTimeAsync(1)
     expect(request).toHaveBeenCalledTimes(4)
 

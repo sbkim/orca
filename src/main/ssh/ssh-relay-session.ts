@@ -52,7 +52,7 @@ import {
 import { registerSshGitProvider, unregisterSshGitProvider } from '../providers/ssh-git-dispatch'
 import { notifyRemoteWorkspaceHandlers } from '../ipc/remote-workspace-events'
 import { PortScanner } from './ssh-port-scanner'
-import { onMainWindowBecameVisible } from '../window/main-window-visibility'
+import { isMainWindowVisible, onMainWindowBecameVisible } from '../window/main-window-visibility'
 import type { SshPortForwardManager } from './ssh-port-forward'
 import type { SshConnection } from './ssh-connection'
 import { joinRemotePath, isWindowsRemoteHost, type RemoteHostPlatform } from './ssh-remote-platform'
@@ -987,10 +987,7 @@ export class SshRelaySession {
     // ticks entirely while no window can show the results (hidden to tray or
     // minimized overnight) and rescans immediately when the window returns.
     const scanner = new PortScanner({
-      isWindowVisible: () => {
-        const win = this.getMainWindow()
-        return win !== null && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
-      },
+      isWindowVisible: () => isMainWindowVisible(this.getMainWindow()),
       onWindowBecameVisible: onMainWindowBecameVisible
     })
     this.portScanner = scanner

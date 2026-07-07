@@ -7,8 +7,9 @@ import type { DetectedPort } from '../../shared/ssh-types'
 // cadence users already accept.
 export const SSH_PORT_SCAN_BASE_INTERVAL_MS = 12_000
 // Why: idle backoff cap — an unchanged port set doubles the interval up to
-// this bound, so a quiet remote costs one scan per minute instead of twenty.
-export const SSH_PORT_SCAN_MAX_INTERVAL_MS = 60_000
+// this bound, so a quiet remote costs two scans per minute instead of twenty
+// without exceeding the existing workspace-port scanner's visible cadence.
+export const SSH_PORT_SCAN_MAX_INTERVAL_MS = 30_000
 
 export type PortScannerWindowVisibility = {
   isWindowVisible: () => boolean
