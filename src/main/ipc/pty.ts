@@ -62,6 +62,7 @@ import { parseAppSshPtyId, toAppSshPtyId, toRelaySshPtyId } from '../providers/s
 import { createPtySpawnTiming } from './pty-spawn-timing'
 import { mintPtySessionId, isSafePtySessionId } from '../daemon/pty-session-id'
 import { addNodePtyRecoveryHint } from '../daemon/node-pty-error-hints'
+import { recordDaemonStreamBacklogEvent } from '../daemon/daemon-stream-backlog-probe'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 import type { ClaudeAccountSelectionTarget } from '../claude-accounts/runtime-selection'
 import { CLAUDE_AUTH_ENV_VARS, hasClaudeAuthEnvConflict } from '../claude-accounts/environment'
@@ -1096,6 +1097,7 @@ export function clearProviderPtyState(id: string): void {
   // shutdown, SSH exit/connection teardown) — hidden/interest gate bits must
   // not outlive the PTY or a reused map entry could silently gate a new one.
   clearHiddenRendererPtyDeliveryState(id)
+  clearBackgroundedDeliverySyncForPty(id)
   // Why: the Phase-5 ConPTY DA1 spawn record must not leak onto a reused id.
   clearNativeWindowsConptyPty(id)
   const paneKey = ptyPaneKey.get(id)
@@ -1173,6 +1175,7 @@ export function setPtyOwnership(id: string, connectionId: string | null): void {
 // duplicate listeners that forward every event twice.
 let localDataUnsub: (() => void) | null = null
 let localExitUnsub: (() => void) | null = null
+let localBackgroundStreamUnsub: (() => void) | null = null
 let didFinishLoadHandler: (() => void) | null = null
 let didFinishLoadWebContents: WebContents | null = null
 let rendererLifecycleResetWebContents: WebContents | null = null
@@ -1189,6 +1192,9 @@ let rendererGateResetWebContents: WebContents | null = null
 // renderer lifecycle events are handled at module scope. This indirection lets
 // the lifecycle reset zero the closure-owned delivery gate.
 let resetRendererInFlightDeliveryGate: () => void = () => {}
+// Why: the backgrounded-delivery dedupe map lives in the registerPtyHandlers
+// closure but teardown funnels through module-scope clearProviderPtyState.
+let clearBackgroundedDeliverySyncForPty: (id: string) => void = () => {}
 
 // Why: the "Restart daemon" path needs to re-bind provider→renderer listeners
 // against the freshly-created adapter after replaceDaemonProvider swaps the
@@ -1367,8 +1373,10 @@ function clearRendererGateResetHandlers(): void {
 export function unbindLocalProviderListeners(): void {
   localDataUnsub?.()
   localExitUnsub?.()
+  localBackgroundStreamUnsub?.()
   localDataUnsub = null
   localExitUnsub = null
+  localBackgroundStreamUnsub = null
 }
 
 // ─── IPC Registration ───────────────────────────────────────────────
@@ -1591,6 +1599,56 @@ export function registerPtyHandlers(
       return
     }
     producerFlowControl.update(id, pendingData.get(id)?.data.length ?? 0)
+  }
+
+  // Why this exists: hidden ptys are exempt from pendingData flow control
+  // (their bytes are dropped after model ingestion, so pendingData never
+  // grows), which let background agents run 100MB+ ahead of main in the
+  // daemon's stream-socket buffer and bury the visible pane's echo. The
+  // provider transport keep-tail thins backgrounded ptys' monitoring stream
+  // under backlog; this sync tells it which ptys qualify.
+  // Why keyed on the visibility registry (NOT gate marks or gate-effective
+  // shouldDrop): both of those flap during pane parking — the parked watcher
+  // and the unmounting pane share one un-ref-counted hidden bit, and eager
+  // pre-mount buffers toggle delivery interest — and a flap un-thins a
+  // flooding pane mid-burst. reportPanePtyVisibility is the stable,
+  // churn-free "does any visible view show this pty" signal. Remote view
+  // subscribers (mobile/web live terminals) consume raw bytes from main's
+  // fan-out, so their presence vetoes thinning outright. Dedupe keeps
+  // visibility-sync churn off the wire; `?? false` also swallows the initial
+  // not-background state.
+  const backgroundedDeliverySyncByPty = new Map<string, boolean>()
+  function syncPtyBackgroundedDelivery(id: string, caller: string): void {
+    const background =
+      rendererPtyIsKnownHidden(id) && !(runtime?.hasRemoteTerminalViewSubscriber(id) ?? false)
+    if ((backgroundedDeliverySyncByPty.get(id) ?? false) === background) {
+      return
+    }
+    const provider = tryGetProviderForPty(id)
+    if (!provider?.setPtyBackgrounded) {
+      return
+    }
+    recordDaemonStreamBacklogEvent('mainBackgroundSync', {
+      sessionIdSuffix: id.slice(-10),
+      background,
+      caller,
+      known: rendererVisibilityKnownPtys.has(id),
+      visible: visibleRendererPtys.has(id)
+    })
+    backgroundedDeliverySyncByPty.set(id, background)
+    provider.setPtyBackgrounded(id, background)
+  }
+  clearBackgroundedDeliverySyncForPty = (id: string) => {
+    backgroundedDeliverySyncByPty.delete(id)
+  }
+  if (runtime) {
+    runtime.onRemoteTerminalViewPresenceChanged = (id) =>
+      syncPtyBackgroundedDelivery(id, 'remote-view')
+  }
+  function resyncBackgroundedDeliveriesAfterGateReset(): void {
+    for (const id of backgroundedDeliverySyncByPty.keys()) {
+      syncPtyBackgroundedDelivery(id, 'gate-reset')
+    }
   }
 
   function getRendererInFlightCharsForPty(id: string): number {
@@ -2335,6 +2393,34 @@ export function registerPtyHandlers(
   const bindProviderListeners = (): void => {
     localDataUnsub?.()
     localExitUnsub?.()
+    localBackgroundStreamUnsub?.()
+
+    // Keep-tail thinning facts from the daemon, in byte order with onData.
+    // The marker flips scan authority for the four transient-fact scanners;
+    // a gap resets main's cross-chunk parse state and forces the renderer to
+    // restore from the model snapshot (same seq-guard path as hidden drops)
+    // in case any view — eager buffer included — was receiving bytes.
+    localBackgroundStreamUnsub =
+      localProvider.onBackgroundStreamEvent?.((payload) => {
+        if (payload.kind === 'backgroundMarker') {
+          runtime?.setPtyTransientFactDelegation(
+            payload.id,
+            payload.background,
+            payload.scanSeedAnsi
+          )
+          return
+        }
+        if (payload.kind === 'dataGap') {
+          runtime?.notePtyDataGap(payload.id)
+          sendModelRestoreNeededMarker(
+            payload.id,
+            'hidden-drop',
+            runtime?.getPtyOutputSequence(payload.id)
+          )
+          return
+        }
+        runtime?.emitDaemonPtyTransientFact(payload.id, payload.fact)
+      }) ?? null
 
     // Why: LocalPtyProvider routes data to the runtime via configure().onData,
     // but daemon-backed providers don't have configure(). Without this, daemon
@@ -2556,8 +2642,17 @@ export function registerPtyHandlers(
   // memory is preserved — each pane's first sync re-marks/unmarks and the
   // unmark path re-emits the restore marker for unrestored drops.
   clearRendererGateResetHandlers()
-  rendererGateResetLoadHandler = () => resetRendererScopedHiddenPtyDeliveryState()
-  rendererGateResetGoneHandler = () => resetRendererScopedHiddenPtyDeliveryState()
+  rendererGateResetLoadHandler = () => {
+    resetRendererScopedHiddenPtyDeliveryState()
+    // Why: the daemon pacer must not keep throttling ptys whose hidden marks
+    // died with the renderer; the fresh renderer's first visibility sync
+    // re-marks the ones that are still hidden.
+    resyncBackgroundedDeliveriesAfterGateReset()
+  }
+  rendererGateResetGoneHandler = () => {
+    resetRendererScopedHiddenPtyDeliveryState()
+    resyncBackgroundedDeliveriesAfterGateReset()
+  }
   rendererGateResetWebContents = mainWindow.webContents
   mainWindow.webContents.on('did-finish-load', rendererGateResetLoadHandler)
   mainWindow.webContents.on('render-process-gone', rendererGateResetGoneHandler)
@@ -3755,6 +3850,10 @@ export function registerPtyHandlers(
             // Defense: never strand a mark on an id the provider renamed.
             unmarkHiddenRendererPty(preSpawnHiddenMarkId)
           }
+          // Why after ptyOwnership.set: the provider lookup routes by
+          // ownership, and a hidden-spawned agent should be paceable from its
+          // first flood, not from its first visibility transition.
+          syncPtyBackgroundedDelivery(result.id, 'spawn')
         }
         // Why: Phase-5 ConPTY DA1 — record the native-Windows-local-PTY
         // determination from the spawn record before the headless seed below,
@@ -4381,6 +4480,7 @@ export function registerPtyHandlers(
     } else {
       visibleRendererPtys.delete(args.id)
     }
+    syncPtyBackgroundedDelivery(args.id, 'visibility-report')
   })
 
   ipcMain.removeAllListeners('pty:setHiddenRendererPty')
@@ -4411,9 +4511,11 @@ export function registerPtyHandlers(
         }
         recordPtyRendererDeliveryPressure()
       }
+      syncPtyBackgroundedDelivery(args.id, 'gate-mark')
       return
     }
     const { droppedWhileHidden } = unmarkHiddenRendererPty(args.id)
+    syncPtyBackgroundedDelivery(args.id, 'gate-unmark')
     // Why: a renderer reload or remount can replace the view that latched
     // restore-needed from the first-drop marker. Re-emit on unhide so the
     // (possibly fresh) visible view still pulls the model snapshot covering
@@ -4444,6 +4546,8 @@ export function registerPtyHandlers(
     // Why: explicit delivery-interest signal from renderer sidecars / eager
     // pre-mount buffers — any interest suppresses the hidden-delivery gate so
     // raw-byte consumers keep receiving while the view is hidden or parked.
+    // Deliberately NOT synced to the daemon backlog pacer: interest consumers
+    // tolerate paced data, and interest churn must not un-pace a flood.
     setRendererPtyDeliveryInterest(args.id, args.interested === true)
   })
 

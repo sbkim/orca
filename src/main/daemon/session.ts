@@ -292,6 +292,13 @@ export class Session {
     return this.emulator.getSnapshot()
   }
 
+  getPartialEscapeTailAnsi(): string {
+    if (this._disposed) {
+      return ''
+    }
+    return this.emulator.partialEscapeTailAnsi
+  }
+
   // Why: the size the PTY actually applied (emulator dims, which Session.resize
   // advances atomically with the subprocess), so the renderer can detect a
   // resize that was dropped here (exited/disposed/invalid) instead of trusting

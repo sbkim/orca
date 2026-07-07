@@ -1,6 +1,7 @@
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import type {
   IPtyProvider,
+  PtyBackgroundStreamEvent,
   PtyProcessInfo,
   PtySpawnOptions,
   PtySpawnResult
@@ -101,6 +102,10 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     this.providerFor(id).resumeProducer?.(id)
   }
 
+  setPtyBackgrounded(id: string, background: boolean): void {
+    this.providerFor(id).setPtyBackgrounded?.(id, background)
+  }
+
   async shutdown(id: string, opts: { immediate?: boolean; keepHistory?: boolean }): Promise<void> {
     await this.providerFor(id).shutdown(id, opts)
     if (!opts.keepHistory) {
@@ -169,6 +174,17 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
       const idx = this.dataListeners.indexOf(callback)
       if (idx !== -1) {
         this.dataListeners.splice(idx, 1)
+      }
+    }
+  }
+
+  onBackgroundStreamEvent(callback: (payload: PtyBackgroundStreamEvent) => void): () => void {
+    const unsubscribes = this.allProviders().flatMap(
+      (provider) => provider.onBackgroundStreamEvent?.(callback) ?? []
+    )
+    return () => {
+      for (const unsubscribe of unsubscribes) {
+        unsubscribe()
       }
     }
   }

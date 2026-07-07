@@ -692,7 +692,12 @@ import {
 } from './terminal-view-attribute-store'
 import { killAllProcessesForWorktree } from './worktree-teardown'
 import { MOBILE_SUBSCRIBE_SCROLLBACK_ROWS } from './scrollback-limits'
-import type { IFilesystemProvider, IPtyProvider, PtyProcessInfo } from '../providers/types'
+import type {
+  IFilesystemProvider,
+  IPtyProvider,
+  PtyProcessInfo,
+  PtyTransientFact
+} from '../providers/types'
 import { getSshFilesystemProvider } from '../providers/ssh-filesystem-dispatch'
 import {
   assertFolderWorkspacePathUsable,
@@ -5653,6 +5658,64 @@ export class OrcaRuntimeService {
     }
   }
 
+  /** Scan-authority handoff for a backgrounded PTY (daemon keep-tail
+   *  thinning): while delegated, the daemon relays bell/133/pr-link/2031
+   *  facts itself and the delivered bytes may be gapped — feeding them to
+   *  main's transient scanners would mint phantom or duplicate facts. Title
+   *  processing stays main-side either way. */
+  setPtyTransientFactDelegation(ptyId: string, delegated: boolean, scanSeedAnsi?: string): void {
+    const entry = this.getOrCreatePtyTitleTrackerEntry(ptyId)
+    entry.tracker.setTransientFactScanningSuppressed(delegated)
+    if (!delegated && scanSeedAnsi) {
+      // Prime the freshly reset scanner carry with the emulator's dangling
+      // incomplete escape at the handoff position — a sequence split across
+      // the un-background toggle must not mint a phantom bell or lose its
+      // fact. titleScanData:'' keeps titles out (they were never suppressed).
+      entry.tracker.handleChunk(scanSeedAnsi, { titleScanData: '' })
+    }
+  }
+
+  /** A transient fact the daemon detected while it held scan authority —
+   *  emitted through the same fact channel as byte-scanned facts. Arrives
+   *  between chunks, so recordTerminalSideEffectFact emits it immediately. */
+  emitDaemonPtyTransientFact(ptyId: string, fact: PtyTransientFact): void {
+    switch (fact.kind) {
+      case 'bell':
+        this.recordTerminalSideEffectFact(ptyId, { kind: 'bell' })
+        return
+      case 'command-finished':
+        this.recordTerminalSideEffectFact(ptyId, {
+          kind: 'command-finished',
+          exitCode: fact.exitCode
+        })
+        return
+      case 'pr-link':
+        this.recordTerminalSideEffectFact(ptyId, { kind: 'pr-link', link: fact.link })
+        return
+      case '2031-subscribe':
+        this.recordTerminalSideEffectFact(ptyId, { kind: '2031-subscribe' })
+    }
+  }
+
+  /** The daemon keep-tail dropped this PTY's oldest undelivered output; the
+   *  next delivered chunk is discontinuous. Reset every cross-chunk parse
+   *  carry so a half-open escape from before the gap cannot corrupt what
+   *  follows, and drop the mobile headless mirror — it rebuilds from the
+   *  delivered tail / snapshot seeds instead of parsing a gapped stream. */
+  notePtyDataGap(ptyId: string): void {
+    const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
+    if (pty) {
+      pty.tailPendingAnsi = ''
+    }
+    for (const leaf of this.getLeavesForPty(ptyId)) {
+      leaf.tailPendingAnsi = ''
+    }
+    this.oscTitleScanTailByPtyId.delete(ptyId)
+    this.osc7ScanTailByPtyId.delete(ptyId)
+    this.agentStatusOscProcessorsByPtyId.delete(ptyId)
+    this.disposeHeadlessTerminal(ptyId)
+  }
+
   /** Record one derived side-effect fact: batched per chunk while applying
    *  bytes, emitted immediately for between-chunk facts (stale-title timer). */
   private recordTerminalSideEffectFact(ptyId: string, fact: TerminalSideEffectFact): void {
@@ -6143,6 +6206,20 @@ export class OrcaRuntimeService {
     return addListenerToMap(this.dataListeners, ptyId, listener)
   }
 
+  /** Set by pty IPC: fires when a PTY gains/loses remote view subscribers so
+   *  the daemon background mark (keep-tail stream thinning) can resync — a
+   *  live mobile/web view consumes raw bytes and must never be thinned, even
+   *  while the desktop pane is hidden. */
+  onRemoteTerminalViewPresenceChanged: ((ptyId: string) => void) | null = null
+
+  private notifyRemoteTerminalViewPresenceChanged(ptyId: string): void {
+    try {
+      this.onRemoteTerminalViewPresenceChanged?.(ptyId)
+    } catch (err) {
+      console.error('[runtime] remote view presence listener threw', { ptyId, err })
+    }
+  }
+
   /** Registered by terminal-RPC subscribe/multiplex streams: while a remote
    *  view subscriber is attached its xterm answers queries with view
    *  authority and the model responder must stay silent. Returns an
@@ -6152,6 +6229,7 @@ export class OrcaRuntimeService {
       ptyId,
       (this.remoteTerminalViewSubscriberCounts.get(ptyId) ?? 0) + 1
     )
+    this.notifyRemoteTerminalViewPresenceChanged(ptyId)
     let released = false
     return () => {
       if (released) {
@@ -6164,6 +6242,7 @@ export class OrcaRuntimeService {
       } else {
         this.remoteTerminalViewSubscriberCounts.set(ptyId, next)
       }
+      this.notifyRemoteTerminalViewPresenceChanged(ptyId)
     }
   }
 
@@ -7540,6 +7619,7 @@ export class OrcaRuntimeService {
           ? { cols: subscriber.previousCols, rows: subscriber.previousRows }
           : null
       inner.delete(clientId)
+      this.notifyRemoteTerminalViewPresenceChanged(ptyId)
       if (inner.size > 0) {
         ptysWithSurvivingPeers.push(ptyId)
       } else {
@@ -8317,6 +8397,20 @@ export class OrcaRuntimeService {
     clientId: string,
     viewport?: { cols: number; rows: number }
   ): Promise<boolean> {
+    try {
+      return await this.handleMobileSubscribeInternal(ptyId, clientId, viewport)
+    } finally {
+      // Every subscribe path mutates mobileSubscribers — resync the daemon
+      // background mark once, whatever branch returned.
+      this.notifyRemoteTerminalViewPresenceChanged(ptyId)
+    }
+  }
+
+  private async handleMobileSubscribeInternal(
+    ptyId: string,
+    clientId: string,
+    viewport?: { cols: number; rows: number }
+  ): Promise<boolean> {
     const mode = this.getMobileDisplayMode(ptyId)
 
     // Cancel pending restore timer for this ptyId — any new subscriber
@@ -8488,6 +8582,7 @@ export class OrcaRuntimeService {
     const wasResizedToPhone = subscriber.wasResizedToPhone
 
     inner.delete(clientId)
+    this.notifyRemoteTerminalViewPresenceChanged(ptyId)
 
     if (inner.size > 0) {
       // Why: if the leaving client was the only one with a non-null restore

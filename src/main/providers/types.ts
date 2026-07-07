@@ -21,8 +21,22 @@ import type { CommitMessageDraftContext } from '../../shared/commit-message-gene
 import type { WorkspaceSpaceDirectoryScanResult } from '../../shared/workspace-space-types'
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
+import type { TerminalGitHubPRLink } from '../../shared/terminal-github-pr-link-detector'
 
 // ─── PTY Provider ───────────────────────────────────────────────────
+
+/** Notification-bearing fact a thinning transport detected while it held
+ *  scan authority for a backgrounded PTY (see onBackgroundStreamEvent). */
+export type PtyTransientFact =
+  | { kind: 'bell' }
+  | { kind: 'command-finished'; exitCode: number | null }
+  | { kind: 'pr-link'; link: TerminalGitHubPRLink }
+  | { kind: '2031-subscribe' }
+
+export type PtyBackgroundStreamEvent =
+  | { id: string; kind: 'backgroundMarker'; background: boolean; scanSeedAnsi?: string }
+  | { id: string; kind: 'dataGap'; droppedChars: number }
+  | { id: string; kind: 'transientFact'; fact: PtyTransientFact }
 
 export type PtySpawnOptions = {
   cols: number
@@ -134,6 +148,20 @@ export type IPtyProvider = {
    */
   pauseProducer?: (id: string) => void
   resumeProducer?: (id: string) => void
+  /**
+   * Hidden-delivery hint: the renderer has no visible view for this PTY, so
+   * the provider's transport may keep-tail thin this PTY's monitoring stream
+   * under backlog (bytes nobody is watching must not bury a visible pane's
+   * echo). Best-effort and optional, like pauseProducer.
+   */
+  setPtyBackgrounded?: (id: string, background: boolean) => void
+  /**
+   * Facts a thinning transport interleaves with onData, in byte order:
+   * scan-authority handoff markers, keep-tail gaps, and the transient facts
+   * (bell/command-finished/pr-link/2031) it detected in bytes it was allowed
+   * to drop. Only transports that thin implement it.
+   */
+  onBackgroundStreamEvent?: (callback: (payload: PtyBackgroundStreamEvent) => void) => () => void
   /**
    * The size the PTY has ACTUALLY applied, not the last size requested.
    * resize() is fire-and-forget for remote providers (daemon/SSH `notify`),

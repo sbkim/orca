@@ -176,3 +176,47 @@ describe('createTerminalTitleTracker synthetic-frame isolation', () => {
     ])
   })
 })
+
+describe('createTerminalTitleTracker transient-fact scanning suppression', () => {
+  it('skips bell/133/pr-link/2031 while suppressed but keeps title processing', () => {
+    const { events, tracker } = createRecordingTracker()
+
+    tracker.setTransientFactScanningSuppressed(true)
+    tracker.handleChunk(
+      `${ESC}]0;zsh${BEL}${ESC}]133;D;0${BEL}ding${BEL}https://github.com/acme/orca/pull/42\r\n${ESC}[?2031h`
+    )
+
+    expect(events).toEqual([['title', 'zsh']])
+  })
+
+  it('resets cross-chunk carry on un-suppress so a pre-gap half-open OSC cannot swallow bells', () => {
+    const { events, tracker } = createRecordingTracker()
+
+    // The OSC terminator (and everything after) is lost in a delivery gap
+    // while scanning is suppressed.
+    tracker.handleChunk(`${ESC}]0;my long title without terminator`)
+    tracker.setTransientFactScanningSuppressed(true)
+    tracker.setTransientFactScanningSuppressed(false)
+    // Post-gap: a real standalone bell. A stale "inside OSC" state would
+    // swallow it.
+    tracker.handleChunk(`done${BEL}`)
+
+    expect(events).toEqual([['bell']])
+  })
+
+  it('a handoff scan seed re-primes a split sequence so its fact fires once, without a phantom bell', () => {
+    const { events, tracker } = createRecordingTracker()
+
+    // The 133 intro was consumed before scan authority moved away; the carry
+    // is reset on un-suppress. The transport hands back the emulator's
+    // partial escape tail as a seed, so the continuation completes normally:
+    // one command-finished, and its terminator BEL is NOT a standalone bell.
+    tracker.handleChunk(`out${ESC}]133;D;`)
+    tracker.setTransientFactScanningSuppressed(true)
+    tracker.setTransientFactScanningSuppressed(false)
+    tracker.handleChunk(`${ESC}]133;D;`, { titleScanData: '' })
+    tracker.handleChunk(`130${BEL}`)
+
+    expect(events).toEqual([['finished', 130]])
+  })
+})

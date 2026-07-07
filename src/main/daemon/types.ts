@@ -160,6 +160,18 @@ export type ResumePtyRequest = {
   }
 }
 
+// Why not a protocol bump: notifications with unknown types are swallowed by
+// older daemons (handleRequest suppresses errors for notify ids), so this
+// degrades to no-pacing against an adopted pre-upgrade daemon.
+export type SetSessionBackgroundRequest = {
+  id: string
+  type: 'setSessionBackground'
+  payload: {
+    sessionId: string
+    background: boolean
+  }
+}
+
 export type KillRequest = {
   id: string
   type: 'kill'
@@ -305,6 +317,7 @@ export type DaemonRequest =
   | ResizeRequest
   | PausePtyRequest
   | ResumePtyRequest
+  | SetSessionBackgroundRequest
   | KillRequest
   | SignalRequest
   | ListSessionsRequest
@@ -378,30 +391,9 @@ export type DaemonSessionInfo = SessionInfo & {
   protocolVersion: number
 }
 
-// ─── Events (Daemon → Client, on stream socket) ────────────────────
-
-export type DataEvent = {
-  type: 'event'
-  event: 'data'
-  sessionId: string
-  payload: { data: string }
-}
-
-export type ExitEvent = {
-  type: 'event'
-  event: 'exit'
-  sessionId: string
-  payload: { code: number }
-}
-
-export type TerminalErrorEvent = {
-  type: 'event'
-  event: 'terminalError'
-  sessionId: string
-  payload: { message: string }
-}
-
-export type DaemonEvent = DataEvent | ExitEvent | TerminalErrorEvent
+// Stream-socket event shapes live in daemon-stream-events.ts; re-exported so
+// existing importers keep one types entry point.
+export * from './daemon-stream-events'
 
 // ─── Binary Frame Protocol (Daemon ↔ PTY Subprocess) ────────────────
 //

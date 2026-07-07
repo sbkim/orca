@@ -348,6 +348,15 @@ export class HeadlessEmulator {
     return this.terminal.buffer.active.type === 'alternate'
   }
 
+  /** The dangling incomplete escape at the current stream position (empty
+   *  when none). Scan-authority handoffs seed the other side's fact scanners
+   *  with it so a sequence split across the handoff neither mints a phantom
+   *  bell (unseen OSC terminator) nor loses its fact. Contains no complete
+   *  sequence by construction, so seeding can never double-fire. */
+  get partialEscapeTailAnsi(): string {
+    return this.partialEscapeTail
+  }
+
   /** Why: PSReadLine's Ctrl+L repaint is only safe at an empty prompt — with
    *  pending input it re-renders at a cached buffer row that ConPTY's fixed
    *  viewport doesn't track, painting the input well below the prompt. The

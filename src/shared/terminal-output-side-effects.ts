@@ -100,6 +100,15 @@ export type TerminalTitleTracker = {
   seedInitialTitle: (rawTitle: string) => void
   /** Last title surfaced through onTitle, after normalization. */
   getLastNormalizedTitle: () => string | null
+  /**
+   * While suppressed, handleChunk skips the four transient-fact scanners
+   * (bell/133/pr-link/2031) — a thinning transport holds scan authority for
+   * this PTY and relays their facts itself; feeding the (possibly gapped)
+   * delivered bytes here would mint phantom or duplicate facts. Title
+   * processing is unaffected. Un-suppressing resets the scanners' cross-chunk
+   * carry: their last-fed byte predates the gap.
+   */
+  setTransientFactScanningSuppressed: (suppressed: boolean) => void
   /** Cancel the stale-title timer and clear accumulated tracker state. */
   dispose: () => void
 }
@@ -124,7 +133,8 @@ export function createTerminalTitleTracker(
   const commandFinishedScanner = onCommandFinished
     ? createOsc133CommandFinishedScanner(onCommandFinished)
     : null
-  const prLinkDetector = onPrLink ? createTerminalGitHubPRLinkDetector() : null
+  let prLinkDetector = onPrLink ? createTerminalGitHubPRLinkDetector() : null
+  let transientFactScanningSuppressed = false
   // Why: a DECSET 2031 subscribe can be split across PTY chunks; carry a
   // bounded tail between chunks so split sequences still match.
   let mode2031ScanTail = ''
@@ -180,10 +190,12 @@ export function createTerminalTitleTracker(
     // Why: the bell detector must consume EVERY chunk so OSC sequences that
     // span chunk boundaries keep their escape state, even when the chunk has
     // no title. The fact itself is surfaced after the chunk's titles, the
-    // renderer drain's order (payloads → titles → bell).
-    const containsBell = bellDetector
-      ? bellDetector.chunkContainsBell(data, { containsOscIntroducer })
-      : false
+    // renderer drain's order (payloads → titles → bell). While suppressed it
+    // must consume NONE: the delivered bytes may be gapped.
+    const containsBell =
+      bellDetector && !transientFactScanningSuppressed
+        ? bellDetector.chunkContainsBell(data, { containsOscIntroducer })
+        : false
     // Why: feed EVERY OSC title in the chunk in byte order, never just the
     // last one. node-pty plus the main-process batch window commonly coalesce
     // multiple title updates into a single payload; a last-title reader drops
@@ -227,17 +239,19 @@ export function createTerminalTitleTracker(
     // 2031-subscribe → bell. The bell stays last (the renderer drain's
     // order); the byte scanners keep their own cross-chunk carry so split
     // sequences/URLs still resolve.
-    commandFinishedScanner?.scan(data)
-    if (prLinkDetector) {
-      for (const link of prLinkDetector(data)) {
-        onPrLink?.(link)
+    if (!transientFactScanningSuppressed) {
+      commandFinishedScanner?.scan(data)
+      if (prLinkDetector) {
+        for (const link of prLinkDetector(data)) {
+          onPrLink?.(link)
+        }
       }
-    }
-    if (onMode2031Subscribe) {
-      const mode2031Scan = scanMode2031Sequences(mode2031ScanTail, data)
-      mode2031ScanTail = mode2031Scan.tail
-      if (mode2031Scan.subscribe) {
-        onMode2031Subscribe()
+      if (onMode2031Subscribe) {
+        const mode2031Scan = scanMode2031Sequences(mode2031ScanTail, data)
+        mode2031ScanTail = mode2031Scan.tail
+        if (mode2031Scan.subscribe) {
+          onMode2031Subscribe()
+        }
       }
     }
     if (containsBell) {
@@ -282,6 +296,25 @@ export function createTerminalTitleTracker(
       agentTracker?.seedTitle(rawTitle)
     },
     getLastNormalizedTitle: () => lastEmittedTitle,
+    setTransientFactScanningSuppressed(suppressed: boolean): void {
+      if (suppressed === transientFactScanningSuppressed) {
+        return
+      }
+      transientFactScanningSuppressed = suppressed
+      if (!suppressed) {
+        // Cross-chunk carry predates the suppressed (gapped) span — a stale
+        // half-open OSC would swallow real bells; a stale 133/2031 tail or
+        // URL fragment would mint phantom facts. The PR-link dedup memory is
+        // lost with the recreate; a re-printed link may re-fire (consumers
+        // treat pr-link as a latest-association update).
+        bellDetector?.reset()
+        commandFinishedScanner?.reset()
+        mode2031ScanTail = ''
+        if (prLinkDetector) {
+          prLinkDetector = createTerminalGitHubPRLinkDetector()
+        }
+      }
+    },
     dispose(): void {
       clearStaleTitleTimer()
       agentTracker?.reset()

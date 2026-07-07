@@ -284,6 +284,16 @@ export class TerminalHost {
     return session.getSnapshot()
   }
 
+  // Why: scan-authority handoff seed (null-not-throw like getSnapshot) — the
+  // emulator's dangling incomplete escape at the current stream position.
+  getPartialEscapeTailAnsi(sessionId: string): string {
+    const session = this.sessions.get(sessionId)
+    if (!session || !session.isAlive) {
+      return ''
+    }
+    return session.getPartialEscapeTailAnsi()
+  }
+
   // Why: read-only readback of the size the PTY actually applied (null-not-throw
   // like getSnapshot). The renderer compares this against xterm to detect a
   // resize that was dropped/coerced daemon-side and re-assert it.

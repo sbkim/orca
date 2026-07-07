@@ -134,6 +134,69 @@ Three cooperating layers, innermost first:
   (drops impossible); for daemon ptys the pause notify has ~20-30ms socket
   latency, so wire-speed bursts can still cross the 2MB cap (known follow-up:
   daemon-side self-pacing watermark).
+- **Shallow stream-socket write gate + per-session fairness**
+  (`daemon-stream-data-batcher.ts`, 128KB gate / 64KB safe-split slices /
+  4KB small-session bypass / 32MB write-through valve; kill switch
+  `ORCA_DAEMON_SHALLOW_SOCKET_GATE=0`): the stream socket is one FIFO for
+  every session — bytes already written can never be overtaken, so a deep
+  user-space buffer buries a visible pane's echo behind other panes' bulk
+  (measured 192MB / 6+s under 12 flooding hidden agents). Bulk writes stop at
+  the gate and hold in the batcher, where the interactive flushSession path
+  and the deterministic small-session bypass still jump them; socket `drain`
+  refills. This layer alone bounds echo latency by the shallow depth.
+- **Background keep-tail stream thinning + daemon fact authority**
+  (`daemon-stream-keep-tail-drop.ts` 1MB cap / 512KB keep-tail,
+  `daemon-background-transient-facts.ts`; kill switch
+  `ORCA_DAEMON_BACKGROUND_STREAM_DROP=0`): hidden-gated ptys are exempt from
+  pendingData flow control (main drops their bytes after ingestion), which
+  let N background agents run unbounded ahead of main. Main mirrors the
+  hidden-delivery gate to the daemon via the wire-tolerated
+  `setSessionBackground` notification (v19; old daemons swallow it, old
+  mains never send it) — but a live remote view subscriber (mobile/web)
+  vetoes backgrounding (`hasRemoteTerminalViewSubscriber`). Backgrounded
+  sessions' queued output is keep-tail dropped (oldest bytes replaced by an
+  in-order `dataGap` event; reply-eliciting query bytes salvaged out so
+  hidden programs never hang on DSR/DA replies); producers are NEVER paused,
+  so reveal stays instant with zero catch-up. Un-background neither discards
+  nor force-flushes the queued tail — restore paths read MAIN's model
+  (hidden-output recovery buffer), so a discarded tail loses a finished
+  program's last output forever (caught by the ACK-backpressure e2e), and a
+  16-pane force-flush dumps ~12MB onto the socket ahead of the reveal's own
+  bytes; the ordered drain loop delivers it within the budget below. Two
+  aggregate bounds make that budget real: (1) a GLOBAL background keep
+  budget (~2MB): per-session keep-tails shrink (512KB → floor 64KB) as more
+  backgrounded sessions hold queued data, and tighten retroactively when the
+  count grows — without this, N sub-cap sessions queue N×cap and a worktree
+  switch waits seconds behind the aggregate (measured 9MB → 2.5s hidden
+  restore vs the 1.5s budget, probe-verified drain overlap); (2) a
+  kernel-flush refill sentinel: a held flush pass arms one ~90B empty data
+  event whose write callback re-flushes when the kernel accepts the
+  in-flight bytes — without it, held bulk advances one gate-depth per
+  'drain' (user-space empty) per event-loop turn (~8MB/s ceiling on a busy
+  daemon). NOTE: an empty `socket.write('')`'s callback fires immediately
+  even with megabytes buffered (verified) — the sentinel must be a real
+  protocol no-op line. Notifications are
+  structurally lossless: while backgrounded, the DAEMON runs the same shared
+  scanners main uses (`terminal-output-side-effects.ts`: bell / OSC 133
+  command-finished / pr-link / DECSET 2031) over every byte BEFORE drop
+  decisions and relays facts as in-order `transientFact` events; ordered
+  `sessionBackgroundMarker` events hand scan authority back and forth
+  (main suppresses just those four scanners in between), and the emulator's
+  `partialEscapeTailAnsi` seeds each side's fresh scanner carry so a
+  sequence split across the handoff neither phantom-fires nor goes missing.
+  Titles/agent-status stay main-side (they converge from the kept tail and
+  fuse with synthetic spinner frames). On `dataGap`, main resets its
+  cross-chunk parse carries, drops the mobile headless mirror (rebuilds from
+  tail/seeds), and sends the model-restore-needed marker so any
+  renderer-side buffer heals from the snapshot. Visible ptys are never
+  touched by this layer. Backlog observability:
+  `ORCA_DAEMON_STREAM_BACKLOG_FILE=<path>` JSONL
+  (`daemon-stream-backlog-probe.ts`; events incl. `backgroundKeepTailDrop`,
+  `setSessionBackground`, `mainBackgroundSync`, `heldWriteThrough`).
+  Causation A/B (`bench:multi-workspace-typing`): realistic steady rates
+  (8×192KB/s) don't reproduce even fix-off; burst rates on a loaded machine
+  do (8×512KB/s + 12 CPU spinners: fix-off p50 293ms/p90 647ms → fix-on p50
+  29ms); extreme 12×1MB/s: fix-off p50 6,146ms → 29ms.
 
 ### 5. Flood resilience (why bulk output can't wedge or lie anymore)
 
@@ -202,6 +265,15 @@ found by differential fuzzing; four fixed, one tolerated:
 - Rig: `tools/benchmarks/terminal-pipeline-bench.mjs` — DSR idle + DSR under
   1MB/s agent-TUI load + DSR-fenced throughput on 4 fixtures. Run _inside_ the
   terminal under test.
+- Multi-workspace typing rig: `pnpm bench:multi-workspace-typing -- --panes 12
+--rate-kbps 1024 --keys 32 --cadence-ms 250 [--cpu-workers 8] --label <build>`
+  — real keystrokes (CDP) into a visible pane while N hidden-worktree panes
+  replay paced agent-TUI streams through real daemon ptys; decomposes each key
+  into input-half (keydown→pty, sidecar timestamps) and echo-half
+  (pty→screen). JSON in `tools/benchmarks/results/`. Noise band at 4×256KB/s:
+  p50 10-15ms, p90 ≤50ms. The latency signature lives in echo-half; renderer
+  timer drift staying ~15ms while echo-half grows means the backlog is
+  upstream of the renderer (daemon socket / main ingest).
 - **Bench at 10MB** (`--size-mb 10`). The ACK-at-parse bug shipped because dev
   benches used 3MB and never tripped the cap.
 - Load-controlled A/B only: alternate builds within one session; dev carries ~2×
@@ -259,6 +331,20 @@ Conflict pattern, established over ~6 syncs:
 5. Peel PRs to main: throughput fixes → batch+MessageChannel → flow control →
    term-speed-2 last. PR #7214 is the integration overview; #7260 (wake/ACK)
    is open against main separately.
+6. Pre-existing hidden-gate races found while building background thinning
+   (all pre-date this branch's work; the thinning keys off the visibility
+   registry specifically to sidestep them, but they still weaken the gate):
+   (a) pane PARK races the un-ref-counted `setHiddenRendererPty` bit — the
+   parked byte-watcher and the unmounting pane share one boolean, so a park
+   can leave the pty un-gated; (b) the renderer briefly reports
+   `visible=true` for ALL hidden-worktree panes during park/switch churn
+   windows (`pty:setRendererPtyVisible` reports observed via
+   `mainBackgroundSync` probe events with caller='visibility-report');
+   (c) eager pre-mount buffers (`registerEagerPtyBuffer`) hold delivery
+   interest that defeats `shouldDropHiddenRendererPtyData` for parked panes —
+   hidden bytes flow to a buffer nobody may ever replay. Fix direction:
+   ref-count the hidden mark, make park not emit transient visible reports,
+   and give eager buffers a gate-exempt interest class.
 
 ## Guardrails for future agents
 

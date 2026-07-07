@@ -21,6 +21,7 @@ import {
 } from './types'
 import type {
   IPtyProvider,
+  PtyBackgroundStreamEvent,
   PtyProcessInfo,
   PtySpawnOptions,
   PtySpawnResult
@@ -73,6 +74,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   private respawnPromise: Promise<void> | null = null
   private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
+  private backgroundStreamListeners: ((payload: PtyBackgroundStreamEvent) => void)[] = []
   private removeEventListener: (() => void) | null = null
   private initialCwds = new Map<string, string>()
   // Why: React re-renders and StrictMode double-mounts can call createOrAttach
@@ -106,6 +108,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // must never see them, so gating makes them silent no-ops there.
   private supportsProducerFlowControl: boolean
   private pausedProducerSessionIds = new Set<string>()
+  // Why tracked here: the daemon's background set (keep-tail stream thinning
+  // + transient-fact scan authority) dies with the daemon process/socket;
+  // re-sync it on a fresh connection so hidden panes stay thinned.
+  private backgroundedSessionIds = new Set<string>()
   // Why: a daemon that survives a socket drop can still hold a pause whose
   // resume died with the connection. Owe those sessions a resume on the next
   // connect; the daemon's 5s failsafe covers the window in between.
@@ -380,6 +386,21 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
     this.pausedProducerSessionIds.delete(id)
     this.client.notify('resumePty', { sessionId: id })
+  }
+
+  // Why fire-and-forget (like pausePty): a delivery hint for the daemon's
+  // keep-tail stream thinning. A pre-thinning v19 daemon swallows the unknown
+  // notification, degrading to today's unthinned behavior.
+  setPtyBackgrounded(id: string, background: boolean): void {
+    if (!this.supportsProducerFlowControl) {
+      return
+    }
+    if (background) {
+      this.backgroundedSessionIds.add(id)
+    } else {
+      this.backgroundedSessionIds.delete(id)
+    }
+    this.client.notify('setSessionBackground', { sessionId: id, background })
   }
 
   async shutdown(id: string, opts: { immediate?: boolean; keepHistory?: boolean }): Promise<void> {
@@ -674,6 +695,16 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
   }
 
+  onBackgroundStreamEvent(callback: (payload: PtyBackgroundStreamEvent) => void): () => void {
+    this.backgroundStreamListeners.push(callback)
+    return () => {
+      const idx = this.backgroundStreamListeners.indexOf(callback)
+      if (idx !== -1) {
+        this.backgroundStreamListeners.splice(idx, 1)
+      }
+    }
+  }
+
   onReplay(_callback: (payload: { id: string; data: string }) => void): () => void {
     return () => {}
   }
@@ -745,9 +776,24 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   private async ensureConnected(): Promise<void> {
     await this.client.ensureConnected()
+    // Why sampled before setupEventRouting: routing is (re)installed exactly
+    // once per connection, so "no listener yet" identifies a fresh connect —
+    // the only time the daemon-side backgrounded set needs a resync (it is
+    // process state that died with the previous daemon/socket).
+    const isFreshConnection = this.removeEventListener === null
     this.setupEventRouting()
     this.scheduleCheckpointTimer()
     this.flushOwedProducerResumes()
+    if (isFreshConnection) {
+      this.resyncBackgroundedSessions()
+    }
+  }
+
+  private resyncBackgroundedSessions(): void {
+    for (const id of this.backgroundedSessionIds) {
+      // Harmless no-op for sessions the daemon doesn't know (yet).
+      this.client.notify('setSessionBackground', { sessionId: id, background: true })
+    }
   }
 
   private flushOwedProducerResumes(): void {
@@ -1073,6 +1119,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
   }
 
+  private emitBackgroundStreamEvent(payload: PtyBackgroundStreamEvent): void {
+    // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
+    for (const listener of [...this.backgroundStreamListeners]) {
+      listener(payload)
+    }
+  }
+
   private async doRespawn(message = '[daemon] Daemon died — respawning'): Promise<void> {
     console.warn(message)
     this.removeEventListener?.()
@@ -1098,13 +1151,36 @@ export class DaemonPtyAdapter implements IPtyProvider {
         for (const listener of [...this.dataListeners]) {
           listener({ id: event.sessionId, data: event.payload.data })
         }
+      } else if (event.event === 'sessionBackgroundMarker') {
+        this.emitBackgroundStreamEvent({
+          id: event.sessionId,
+          kind: 'backgroundMarker',
+          background: event.payload.background,
+          ...(event.payload.scanSeedAnsi !== undefined
+            ? { scanSeedAnsi: event.payload.scanSeedAnsi }
+            : {})
+        })
+      } else if (event.event === 'dataGap') {
+        this.emitBackgroundStreamEvent({
+          id: event.sessionId,
+          kind: 'dataGap',
+          droppedChars: event.payload.droppedChars
+        })
+      } else if (event.event === 'transientFact') {
+        this.emitBackgroundStreamEvent({
+          id: event.sessionId,
+          kind: 'transientFact',
+          fact: event.payload
+        })
       } else if (event.event === 'exit') {
         this.activeSessionIds.delete(event.sessionId)
         this.dirtySessionVersions.delete(event.sessionId)
         // Why: an exited session must not be owed a resume on reconnect — a
-        // reused sessionId would receive a stray resumePty.
+        // reused sessionId would receive a stray resumePty. Same for the
+        // background set: a reused id must start un-thinned.
         this.pausedProducerSessionIds.delete(event.sessionId)
         this.producerResumesOwedOnReconnect.delete(event.sessionId)
+        this.backgroundedSessionIds.delete(event.sessionId)
         if (!this.sleepRestoreSessionIds.has(event.sessionId)) {
           this.coldRestoreCache.delete(event.sessionId)
         }
