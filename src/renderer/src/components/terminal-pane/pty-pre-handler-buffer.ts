@@ -14,14 +14,14 @@ const preHandlerPtyExit = new Map<string, number>()
 // the pane registers its handler. Hold that tiny race window instead of ACKing
 // and dropping the first setup-script bytes.
 const PRE_HANDLER_PTY_DATA_MAX_BYTES = 512 * 1024
-const PRE_HANDLER_PTY_DATA_MAX_PTYS = 64
+export const PRE_HANDLER_PTY_MAX_PTYS = 64
 
 export function bufferPreHandlerPtyData(ptyId: string, data: string, meta?: PtyDataMeta): void {
   const chunk = clampUtf8Tail(data, PRE_HANDLER_PTY_DATA_MAX_BYTES)
   if (!chunk.data) {
     return
   }
-  if (!preHandlerPtyData.has(ptyId) && preHandlerPtyData.size >= PRE_HANDLER_PTY_DATA_MAX_PTYS) {
+  if (!preHandlerPtyData.has(ptyId) && preHandlerPtyData.size >= PRE_HANDLER_PTY_MAX_PTYS) {
     const oldestPtyId = preHandlerPtyData.keys().next().value
     if (typeof oldestPtyId === 'string') {
       preHandlerPtyData.delete(oldestPtyId)
@@ -59,6 +59,15 @@ export function drainPreHandlerPtyData(
 }
 
 export function bufferPreHandlerPtyExit(ptyId: string, code: number): void {
+  // Why: an early exit for a PTY whose pane never mounts should be bounded just
+  // like early data, otherwise failed pre-handler PTY ids accumulate.
+  if (!preHandlerPtyExit.has(ptyId) && preHandlerPtyExit.size >= PRE_HANDLER_PTY_MAX_PTYS) {
+    const oldestPtyId = preHandlerPtyExit.keys().next().value
+    if (typeof oldestPtyId === 'string') {
+      preHandlerPtyExit.delete(oldestPtyId)
+    }
+  }
+  preHandlerPtyExit.delete(ptyId)
   preHandlerPtyExit.set(ptyId, code)
 }
 
@@ -78,4 +87,13 @@ export function clearPreHandlerPtyData(ptyId: string): void {
 export function clearPreHandlerPtyState(ptyId: string): void {
   preHandlerPtyData.delete(ptyId)
   preHandlerPtyExit.delete(ptyId)
+}
+
+export function resetPreHandlerPtyStateForTests(): void {
+  preHandlerPtyData.clear()
+  preHandlerPtyExit.clear()
+}
+
+export function getPreHandlerPtyStateCountsForTests(): { data: number; exits: number } {
+  return { data: preHandlerPtyData.size, exits: preHandlerPtyExit.size }
 }
