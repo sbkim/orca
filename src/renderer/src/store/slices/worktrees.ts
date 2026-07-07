@@ -47,6 +47,10 @@ import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-deliver
 import { branchName } from '@/lib/git-utils'
 import { markInputQuietSchedulerInput, scheduleAfterInputQuiet } from '@/lib/input-quiet-scheduler'
 import { clearSessionCommitDraftForWorktree } from '@/lib/source-control-commit-draft-session'
+import {
+  forgetHugeRepoWarningDismissalsForWorktrees,
+  migrateHugeRepoWarningDismissal
+} from '@/lib/source-control-huge-repo-warning-dismissals'
 import { showLocalBaseRefUpdateSuggestionToast } from '@/components/sidebar/local-base-ref-suggestion-toast'
 import { showPreservedBranchToast } from '@/components/sidebar/preserved-branch-toast'
 import { translate } from '@/i18n/i18n'
@@ -1882,6 +1886,9 @@ function buildWorktreeRenameState(
 function buildWorktreePurgeState(s: AppState, worktreeIds: string[]): Partial<AppState> {
   const worktreeIdSet = new Set(worktreeIds)
   pruneHostedReviewLinkMutationGenerations(worktreeIdSet)
+  // Why: every authoritative and explicit purge converges here, including
+  // fetchAllWorktrees; centralizing prevents a deleted path inheriting UI state.
+  forgetHugeRepoWarningDismissalsForWorktrees(worktreeIdSet)
 
   // Collect every tab id (and removed file id) we are about to orphan.
   const doomedTabIds = new Set<string>()
@@ -3226,6 +3233,10 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
               },
               { timeoutMs: 60_000 }
             ))
+
+      // Why: invalidate stale probes as soon as deletion is authoritative, so
+      // an old toast cannot mutate a same-path replacement during UI teardown.
+      forgetHugeRepoWarningDismissalsForWorktrees([worktreeId])
 
       const worktreeDisplayName = worktreeBeforeRemoval?.displayName?.trim()
       if (worktreeDisplayName) {
@@ -4784,6 +4795,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     if (oldWorktreeId === newWorktreeId) {
       return
     }
+    // Why: invalidate pre-rename toast actions before publishing the new path,
+    // while carrying the dismissal forward for the same logical worktree.
+    migrateHugeRepoWarningDismissal(oldWorktreeId, newWorktreeId)
     set((s) => buildWorktreeRenameState(s, oldWorktreeId, newWorktreeId))
     migrateHostedReviewLinkMutationGeneration(oldWorktreeId, newWorktreeId)
   }
