@@ -170,8 +170,10 @@ function probeNotificationDelivery(store: Store): Promise<NotificationDeliveryPr
       }
     }
 
-    function onFailed(_event: unknown, error?: string): void {
-      logNativeNotificationFailure('delivery probe', error)
+    function onFailed(_event: unknown, _error?: string): void {
+      // Why: a rejected probe is an expected outcome (denied permission), not
+      // an anomaly — logging it would spam the console on every poll while
+      // the onboarding card waits for the user to allow notifications.
       settle('blocked')
       releaseProbe()
     }
