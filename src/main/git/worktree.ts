@@ -24,7 +24,7 @@ import {
 } from '../../shared/git-worktree-command-capabilities'
 import { getLocalGitCapabilityCache } from './git-capability-state'
 import { gitExecFileAsync, translateWslOutputPaths } from './runner'
-import { resolveGitDir } from './status'
+import { resolveGitDir, runWithGitReadCacheInvalidation } from './status'
 import { hasWorktreeBaseCommitRef } from './worktree-base-ref-probe'
 
 export type AddWorktreeResult = {
@@ -831,14 +831,16 @@ export async function addWorktree(
   options: AddWorktreeOptions = {}
 ): Promise<AddWorktreeResult> {
   try {
-    return await performAddWorktree(
-      repoPath,
-      worktreePath,
-      branch,
-      baseBranch,
-      refreshLocalBaseRef,
-      noCheckout,
-      options
+    return await runWithGitReadCacheInvalidation(() =>
+      performAddWorktree(
+        repoPath,
+        worktreePath,
+        branch,
+        baseBranch,
+        refreshLocalBaseRef,
+        noCheckout,
+        options
+      )
     )
   } finally {
     bumpWorktreeScanGeneration(repoPath)
@@ -1049,7 +1051,9 @@ export async function moveWorktree(
   newPath: string
 ): Promise<void> {
   try {
-    await gitExecFileAsync(['worktree', 'move', oldPath, newPath], { cwd: repoPath })
+    await runWithGitReadCacheInvalidation(() =>
+      gitExecFileAsync(['worktree', 'move', oldPath, newPath], { cwd: repoPath })
+    )
   } finally {
     bumpWorktreeScanGeneration(repoPath)
   }
@@ -1069,7 +1073,9 @@ export async function removeWorktree(
   options: RemoveWorktreeOptions = {}
 ): Promise<RemoveWorktreeResult> {
   try {
-    return await performRemoveWorktree(repoPath, worktreePath, force, options)
+    return await runWithGitReadCacheInvalidation(() =>
+      performRemoveWorktree(repoPath, worktreePath, force, options)
+    )
   } finally {
     bumpWorktreeScanGeneration(repoPath)
   }
