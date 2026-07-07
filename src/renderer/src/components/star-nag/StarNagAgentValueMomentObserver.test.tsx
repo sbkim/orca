@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 
-import { act } from 'react'
+import { act, Profiler } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentStatusEntry } from '../../../../shared/agent-status-types'
@@ -36,6 +36,25 @@ function renderObserver(): { root: Root; container: HTMLDivElement } {
     root.render(<StarNagAgentValueMomentObserver />)
   })
   return { root, container }
+}
+
+function renderObserverWithProfiler(): {
+  root: Root
+  container: HTMLDivElement
+  getRenderCount: () => number
+} {
+  const container = document.createElement('div')
+  document.body.appendChild(container)
+  const root = createRoot(container)
+  let renderCount = 0
+  act(() => {
+    root.render(
+      <Profiler id="star-nag-observer" onRender={() => (renderCount += 1)}>
+        <StarNagAgentValueMomentObserver />
+      </Profiler>
+    )
+  })
+  return { root, container, getRenderCount: () => renderCount }
 }
 
 function setAgentEntries(entries: Record<string, AgentStatusEntry>): void {
@@ -95,6 +114,29 @@ describe('StarNagAgentValueMomentObserver', () => {
 
     expect(agentValueMoment).toHaveBeenCalledTimes(1)
     expect(showAgentValueMoment).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not re-render on agent-status churn that does not bump the epoch', () => {
+    const rendered = renderObserverWithProfiler()
+    root = rendered.root
+    container = rendered.container
+    const initialRenders = rendered.getRenderCount()
+
+    // A still-working ping re-spreads agentStatusByPaneKey to a new object but
+    // does NOT bump agentStatusEpoch — the observer must ignore that churn.
+    act(() => {
+      useAppStore.setState((state) => ({
+        agentStatusByPaneKey: {
+          ...state.agentStatusByPaneKey,
+          pane: entry({ state: 'working', updatedAt: 2 })
+        }
+      }))
+    })
+    expect(rendered.getRenderCount()).toBe(initialRenders)
+
+    // A real transition bumps the epoch and must re-render.
+    setAgentEntries({ pane: entry({ state: 'working', updatedAt: 3 }) })
+    expect(rendered.getRenderCount()).toBeGreaterThan(initialRenders)
   })
 
   it('ignores interrupted or empty-prompt completions', () => {
