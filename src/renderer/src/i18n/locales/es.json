@@ -2771,6 +2771,13 @@
           "EditorFileTabCloseButton": {
             "4655cf570e": "Cerrar pestaña",
             "a768f428f1": "Cerrar pestaña"
+          },
+          "TerminalTabSplitMenuSection": {
+            "moveTabRight": "Move tab right",
+            "moveTabLeft": "Move tab left",
+            "moveTabDown": "Move tab down",
+            "moveTabUp": "Move tab up",
+            "split": "Split"
           }
         }
       },

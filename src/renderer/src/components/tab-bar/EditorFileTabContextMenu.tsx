@@ -1,4 +1,14 @@
-import { Copy, ExternalLink, Pencil, Pin, PinOff } from 'lucide-react'
+import {
+  Copy,
+  ExternalLink,
+  Eye,
+  ListX,
+  PanelRightClose,
+  Pencil,
+  Pin,
+  PinOff,
+  X
+} from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -107,6 +117,11 @@ export function EditorFileTabContextMenu({
           event.preventDefault()
         }}
       >
+        <TabWorkspaceLayoutMenuSection
+          unifiedTabId={unifiedTabId}
+          groupId={groupId}
+          trailingSeparator
+        />
         <DropdownMenuItem
           disabled={!canRename || isRenaming}
           onSelect={() => {
@@ -126,13 +141,14 @@ export function EditorFileTabContextMenu({
             ? translate('auto.components.tab.bar.EditorFileTabContextMenu.8e9d603a09', 'Unpin Tab')
             : translate('auto.components.tab.bar.EditorFileTabContextMenu.fdd29eb669', 'Pin Tab')}
         </DropdownMenuItem>
-        <TabWorkspaceLayoutMenuSection unifiedTabId={unifiedTabId} groupId={groupId} />
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => !isPinned && onClose()} disabled={isPinned}>
+          <X className="size-3.5" />
           {translate('auto.components.tab.bar.EditorFileTabContextMenu.1ba8492c5b', 'Close')}
           {closeShortcut ? <DropdownMenuShortcut>{closeShortcut}</DropdownMenuShortcut> : null}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onCloseAll}>
+          <ListX className="size-3.5" />
           {translate(
             'auto.components.tab.bar.EditorFileTabContextMenu.ba1369dd24',
             'Close All Editor Tabs'
@@ -142,6 +158,7 @@ export function EditorFileTabContextMenu({
           ) : null}
         </DropdownMenuItem>
         <DropdownMenuItem onSelect={onCloseToRight} disabled={!hasTabsToRight}>
+          <PanelRightClose className="size-3.5" />
           {translate(
             'auto.components.tab.bar.EditorFileTabContextMenu.e5ff31ccaf',
             'Close Tabs To The Right'
@@ -165,6 +182,7 @@ export function EditorFileTabContextMenu({
                 )
               }}
             >
+              <Eye className="size-3.5" />
               {translate(
                 'auto.components.tab.bar.EditorFileTabContextMenu.bfd5797ef4',
                 'Open Markdown Preview'
