@@ -630,6 +630,34 @@ describe('mobile presence lock — issue #7588 held-modal restore convergence', 
     expect(listenerEvents.slice(listenerBefore).some((e) => e.mode === 'desktop-fit')).toBe(false)
   })
 
+  // Scenario 5b: after a FAILED active-subscriber take-back, wasResizedToPhone
+  // must be re-armed so a later unsubscribe under a finite auto-restore setting
+  // still schedules its timer and eventually clears the override. Without the
+  // re-arm the flag would be stuck false and the phone-fit would strand.
+  it('failed take-back re-arms wasResizedToPhone so a later unsubscribe still auto-restores', async () => {
+    // Finite auto-restore (5s default from the rig store).
+    const { runtime, ptySizes, setResizeSucceeds } = createRuntime()
+
+    await runtime.handleMobileSubscribe('pty-1', 'phone-A', { cols: 45, rows: 20 })
+    expect(ptySizes.get('pty-1')).toEqual({ cols: 45, rows: 20 })
+
+    // Take-back fails → false, flag re-armed, mode rolled back to 'auto'.
+    setResizeSucceeds(false)
+    expect(await runtime.reclaimTerminalForDesktop('pty-1')).toBe(false)
+    expect(runtime.getTerminalFitOverride('pty-1')).not.toBeNull()
+
+    // Phone then leaves the terminal. Resize works again for the auto-restore.
+    setResizeSucceeds(true)
+    runtime.handleMobileUnsubscribe('pty-1', 'phone-A')
+    // Soft-leave grace, then the finite auto-restore timer.
+    await vi.advanceTimersByTimeAsync(300)
+    await vi.advanceTimersByTimeAsync(5_000)
+
+    // The scheduled auto-restore fired: override cleared, PTY back to desktop.
+    expect(runtime.getTerminalFitOverride('pty-1')).toBeNull()
+    expect(ptySizes.get('pty-1')).toEqual({ cols: 150, rows: 40 })
+  })
+
   // Scenario 6: a phone-initiated setDisplayMode('desktop') against a stale
   // held override converges through the shared applyMobileDisplayMode seam.
   it('phone-initiated setDisplayMode(desktop) against a stale held override converges', async () => {

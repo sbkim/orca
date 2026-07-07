@@ -8063,16 +8063,15 @@ export class OrcaRuntimeService {
     if (mode === 'desktop') {
       // Reset wasResizedToPhone on every fitted subscriber so a future
       // toggle back to auto re-issues the resize. applyLayout owns the
-      // actual PTY resize + override delete + renderer notify.
-      let anyWasResized = false
-      if (inner) {
-        for (const sub of inner.values()) {
-          if (sub.wasResizedToPhone) {
-            anyWasResized = true
-            sub.wasResizedToPhone = false
-          }
-        }
+      // actual PTY resize + override delete + renderer notify. Track which
+      // subscribers we cleared so a failed resize can re-arm them.
+      const clearedFitSubscribers = inner
+        ? [...inner.values()].filter((sub) => sub.wasResizedToPhone)
+        : []
+      for (const sub of clearedFitSubscribers) {
+        sub.wasResizedToPhone = false
       }
+      const anyWasResized = clearedFitSubscribers.length > 0
       // Why (#7588): also restore when a fit-override is still held but no
       // subscriber carries wasResizedToPhone — e.g. a null-viewport resubscribe
       // after an indefinite hold resets the flag yet leaves the override,
@@ -8081,11 +8080,20 @@ export class OrcaRuntimeService {
       // restore paths can never resolve to different dims for the same state.
       if (anyWasResized || this.terminalFitOverrides.has(ptyId)) {
         const restore = this.resolveDesktopRestoreTarget(ptyId)
-        await this.enqueueLayout(ptyId, {
+        const result = await this.enqueueLayout(ptyId, {
           kind: 'desktop',
           cols: restore.cols,
           rows: restore.rows
         })
+        // Why (#7588): a failed resize rolls the override back (still held), so
+        // re-arm the flags we cleared. Otherwise a later unsubscribe under a
+        // finite mobileAutoRestoreFitMs would see wasResizedToPhone=false, skip
+        // scheduling its auto-restore timer, and strand the held phone-fit.
+        if (!result.ok) {
+          for (const sub of clearedFitSubscribers) {
+            sub.wasResizedToPhone = true
+          }
+        }
       } else {
         // Nothing was fitted or held — emit a mode-change resize event so
         // the mobile client still learns the toggle landed.
