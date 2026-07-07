@@ -16,14 +16,16 @@ import { readRuntimeFileContent } from '@/runtime/runtime-file-client'
 import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
 import { canAutoSaveOpenFile } from './editor-autosave'
 import { getDiskBaselineSignature } from './diff-content-signature'
-import { trackExternalChangeConflictShown } from './editor-external-change-telemetry'
+import { markFileChangedOnDisk } from './editor-changed-on-disk-mark'
 
 type AppStoreApi = Pick<StoreApi<AppState>, 'getState' | 'subscribe'>
 
 // Why: SSH/runtime reads fail while the connection is still coming up after
-// launch. Retry fast for the first minute, then keep probing slowly forever —
-// giving up would either strand the tab's autosave suspension or lift it
-// unverified right as the transport comes back up.
+// launch. Retry fast for the first minute, then keep probing slowly —
+// giving up on a transport error would either strand the tab's autosave
+// suspension or lift it unverified right as the transport comes back up.
+// Only a definitive not-found (file deleted while the app was closed) ends
+// the loop early; see probeFileMissing.
 const VERIFY_RETRY_MS = 2_000
 const VERIFY_SLOW_RETRY_MS = 15_000
 const VERIFY_FAST_ATTEMPTS = 30
@@ -35,6 +37,27 @@ export function attachRestoredTabConflictScan(store: AppStoreApi): () => void {
   const attemptsByFileId = new Map<string, number>()
   const retryTimers = new Set<ReturnType<typeof setTimeout>>()
   let disposed = false
+
+  // Why: distinguishes "file was deleted while the app was closed" (a
+  // definitive not-found) from a transport still coming up. Only local/SSH
+  // paths can be probed — for runtime-owned files window.api.fs would stat
+  // the client-local path and misreport a remote file as gone.
+  const probeFileMissing = async (file: OpenFile): Promise<boolean> => {
+    const settings = settingsForRuntimeOwner(store.getState().settings, file.runtimeEnvironmentId)
+    if (settings?.activeRuntimeEnvironmentId?.trim()) {
+      return false
+    }
+    try {
+      const exists = await globalThis.window?.api?.fs?.pathExists?.({
+        filePath: file.filePath,
+        connectionId: getConnectionIdForFile(file.worktreeId, file.filePath) ?? undefined
+      })
+      return exists === false
+    } catch {
+      // Why: a failed probe can't disprove existence — keep retrying.
+      return false
+    }
+  }
 
   const verify = async (file: OpenFile): Promise<void> => {
     // Why: OpenFile ids are file paths — a marker left behind by an early
@@ -71,13 +94,34 @@ export function attachRestoredTabConflictScan(store: AppStoreApi): () => void {
         return
       }
       if (getDiskBaselineSignature(result.content) !== file.lastKnownDiskSignature) {
-        trackExternalChangeConflictShown(liveFile, {
+        markFileChangedOnDisk(store.getState(), liveFile, {
           connectionId: getConnectionIdForFile(file.worktreeId, file.filePath) ?? undefined,
           origin: 'restore'
         })
-        store.getState().setExternalMutation(file.id, 'changed')
       }
     } catch {
+      if (disposed) {
+        return
+      }
+      if (await probeFileMissing(file)) {
+        if (disposed) {
+          return
+        }
+        // Why: a definitive not-found IS ground truth — there is no newer
+        // disk content for a save to clobber, so verification is resolved.
+        // Converge to the live delete affordance (tombstone mark) instead of
+        // retrying forever with the tab's autosave silently suspended.
+        const liveFile = store.getState().openFiles.find((f) => f.id === file.id)
+        if (!liveFile) {
+          return
+        }
+        const wasPending = liveFile.pendingDiskBaselineVerification === true
+        store.getState().clearPendingDiskBaselineVerification(file.id)
+        if (wasPending && liveFile.isDirty && liveFile.externalMutation !== 'changed') {
+          store.getState().setExternalMutation(file.id, 'deleted')
+        }
+        return
+      }
       if (disposed) {
         return
       }

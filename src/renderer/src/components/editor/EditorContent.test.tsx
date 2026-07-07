@@ -75,8 +75,7 @@ describe('EditorContent', () => {
         handleDirtyStateHint={vi.fn()}
         handleSave={vi.fn()}
         handleSaveForFile={vi.fn()}
-        reloadFileContent={vi.fn()}
-        reloadDiffContent={vi.fn()}
+        reloadContent={vi.fn()}
       />
     )
 
@@ -117,8 +116,7 @@ describe('EditorContent', () => {
         handleDirtyStateHint={vi.fn()}
         handleSave={vi.fn()}
         handleSaveForFile={vi.fn()}
-        reloadFileContent={vi.fn()}
-        reloadDiffContent={vi.fn()}
+        reloadContent={vi.fn()}
       />
     )
 
@@ -163,8 +161,7 @@ describe('EditorContent', () => {
         handleDirtyStateHint={vi.fn()}
         handleSave={vi.fn()}
         handleSaveForFile={vi.fn()}
-        reloadFileContent={vi.fn()}
-        reloadDiffContent={vi.fn()}
+        reloadContent={vi.fn()}
       />
     )
 
@@ -211,8 +208,7 @@ describe('EditorContent', () => {
         handleDirtyStateHint={vi.fn()}
         handleSave={vi.fn()}
         handleSaveForFile={vi.fn()}
-        reloadFileContent={vi.fn()}
-        reloadDiffContent={vi.fn()}
+        reloadContent={vi.fn()}
       />
     )
 

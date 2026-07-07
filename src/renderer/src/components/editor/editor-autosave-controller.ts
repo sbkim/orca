@@ -16,6 +16,7 @@ import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
 import {
   canAutoSaveOpenFile,
   getOpenFilesForExternalFileChange,
+  isAutosaveSuspendedForFile,
   normalizeAutoSaveDelayMs,
   ORCA_EDITOR_EXTERNAL_FILE_CHANGE_EVENT,
   ORCA_EDITOR_FILE_SAVED_EVENT,
@@ -27,6 +28,7 @@ import {
   type EditorSaveFileDetail,
   type EditorSaveQuiesceDetail
 } from './editor-autosave'
+import { markFileChangedOnDisk } from './editor-changed-on-disk-mark'
 import { flushPendingEditorChange } from './editor-pending-flush'
 import {
   clearSelfWrite,
@@ -35,10 +37,7 @@ import {
   SELF_WRITE_REMOTE_TTL_MS
 } from './editor-self-write-registry'
 import { getDiskBaselineSignature } from './diff-content-signature'
-import {
-  trackExternalChangeConflictAction,
-  trackExternalChangeConflictShown
-} from './editor-external-change-telemetry'
+import { trackExternalChangeConflictAction } from './editor-external-change-telemetry'
 import {
   autosaveSubscriberInputsEqual,
   getAutosaveSubscriberInputs,
@@ -94,15 +93,9 @@ export function attachEditorAutosaveController(store: AppStoreApi): () => void {
           return
         }
 
-        // Why: autosave is suspended while the tab is marked changed-on-disk —
-        // an unattended timer must not resolve the conflict by overwriting the
-        // newer external content — and while a restored tab's baseline is
-        // still unverified (the conflict may simply not be marked YET).
-        // Explicit user saves proceed (the banner warned) and clear both.
-        if (
-          trigger === 'autosave' &&
-          (liveFile.externalMutation === 'changed' || liveFile.pendingDiskBaselineVerification)
-        ) {
+        // Why: explicit user saves proceed even while suspended (the banner
+        // warned) and clear both suspension flags below.
+        if (trigger === 'autosave' && isAutosaveSuspendedForFile(liveFile)) {
           return
         }
 
@@ -219,11 +212,9 @@ export function attachEditorAutosaveController(store: AppStoreApi): () => void {
         file &&
         file.isDirty &&
         canAutoSaveOpenFile(file) &&
-        // Why: a changed-on-disk mark suspends autosave until the user picks a
-        // side via the banner (or saves manually) — see the queueSave guard.
-        // Same for a restored tab whose disk baseline is not yet verified.
-        file.externalMutation !== 'changed' &&
-        !file.pendingDiskBaselineVerification &&
+        // Why: suspension holds until the user picks a side via the banner
+        // (or saves manually) — see the queueSave guard.
+        !isAutosaveSuspendedForFile(file) &&
         draft !== undefined
       if (!shouldKeepTimer) {
         clearAutoSaveTimer(fileId)
@@ -241,8 +232,7 @@ export function attachEditorAutosaveController(store: AppStoreApi): () => void {
         !file.isDirty ||
         draft === undefined ||
         !canAutoSaveOpenFile(file) ||
-        file.externalMutation === 'changed' ||
-        file.pendingDiskBaselineVerification
+        isAutosaveSuspendedForFile(file)
       ) {
         clearAutoSaveTimer(file.id)
         continue
@@ -443,23 +433,15 @@ export function attachEditorAutosaveController(store: AppStoreApi): () => void {
     const reloadingFiles = matchingFiles.filter((file) => !file.isDirty)
     for (const file of matchingFiles) {
       if (file.isDirty) {
-        // Why: canAutoSaveOpenFile is exactly the set of tabs that can hold
-        // unsaved edits (edit + unstaged diff) — the tabs the banner serves.
-        // The self-write check keeps this backstop from marking on the echo
-        // of Orca's own save (the combined-Changes reload notification routes
-        // through here and would otherwise bypass the watch hook's
+        // Why: the self-write check keeps this backstop from marking on the
+        // echo of Orca's own save (the combined-Changes reload notification
+        // routes through here and would otherwise bypass the watch hook's
         // echo verification).
-        if (
-          canAutoSaveOpenFile(file) &&
-          !hasRecentSelfWrite(file.filePath, file.runtimeEnvironmentId)
-        ) {
-          if (file.externalMutation !== 'changed') {
-            trackExternalChangeConflictShown(file, {
-              connectionId: getConnectionIdForFile(file.worktreeId, file.filePath) ?? undefined,
-              origin: 'live'
-            })
-          }
-          state.setExternalMutation(file.id, 'changed')
+        if (!hasRecentSelfWrite(file.filePath, file.runtimeEnvironmentId)) {
+          markFileChangedOnDisk(state, file, {
+            connectionId: getConnectionIdForFile(file.worktreeId, file.filePath) ?? undefined,
+            origin: 'live'
+          })
         }
         continue
       }

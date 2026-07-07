@@ -92,14 +92,13 @@ function EditorPanelInner({
     activeFile.mode === 'edit' &&
     canUseChangesModeForFile(activeFile) &&
     editorViewMode[activeFile.id] === 'changes'
-  const { fileContents, diffContents, reloadFileContent, reloadDiffContent } =
-    useEditorPanelContentState({
-      activeFile,
-      isChangesMode: requestedChangesMode,
-      openFiles,
-      gitStatusByWorktree,
-      editorViewMode
-    })
+  const { fileContents, diffContents, reloadContent } = useEditorPanelContentState({
+    activeFile,
+    isChangesMode: requestedChangesMode,
+    openFiles,
+    gitStatusByWorktree,
+    editorViewMode
+  })
   const isChangesMode =
     requestedChangesMode &&
     !!activeFile &&
@@ -378,8 +377,7 @@ function EditorPanelInner({
       onDirtyStateHint={handleDirtyStateHint}
       onSave={handleSave}
       onSaveForFile={handleSaveForFile}
-      onReloadFileContent={reloadFileContent}
-      onReloadDiffContent={reloadDiffContent}
+      onReloadContent={reloadContent}
       onCloseMarkdownTableOfContents={() =>
         setMarkdownTableOfContentsVisible(markdownDocumentStateFileId, false)
       }

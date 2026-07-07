@@ -29,7 +29,7 @@ import {
   type WorktreeFileChangeEventDetail
 } from './worktree-file-change-event'
 import { isGitRepoKind } from '../../../shared/repo-kind'
-import { trackExternalChangeConflictShown } from '@/components/editor/editor-external-change-telemetry'
+import { markFileChangedOnDisk } from '@/components/editor/editor-changed-on-disk-mark'
 
 // Why: atomic-write patterns (Claude Code's Edit tool, editors like vim,
 // VSCode) land as a short burst of `update` events — or `delete + create` on
@@ -686,17 +686,50 @@ export function createExternalWatchEventHandler(
   return { handleFsChanged, dispose }
 }
 
+const inFlightEchoVerificationReads = new Map<string, ReturnType<typeof readRuntimeFileContent>>()
+
+// Why: one save echo can arrive as a burst of watcher payloads (SSH poll +
+// event streams), and each verification is a full-file read — on remote
+// transports a network round-trip. Concurrent payloads for the same file
+// share the in-flight read instead of stacking duplicates.
+function readFileForEchoVerification(args: {
+  runtimeEnvironmentId: string | null | undefined
+  filePath: string
+  relativePath: string
+  worktreeId: string | null | undefined
+  connectionId: string | undefined
+}): ReturnType<typeof readRuntimeFileContent> {
+  const key = `${args.runtimeEnvironmentId ?? ''}::${args.connectionId ?? ''}::${args.filePath}`
+  let pending = inFlightEchoVerificationReads.get(key)
+  if (!pending) {
+    pending = readRuntimeFileContent({
+      settings: args.runtimeEnvironmentId
+        ? { activeRuntimeEnvironmentId: args.runtimeEnvironmentId }
+        : null,
+      filePath: args.filePath,
+      relativePath: args.relativePath,
+      worktreeId: args.worktreeId ?? undefined,
+      connectionId: args.connectionId
+    })
+    inFlightEchoVerificationReads.set(key, pending)
+    const release = (): void => {
+      if (inFlightEchoVerificationReads.get(key) === pending) {
+        inFlightEchoVerificationReads.delete(key)
+      }
+    }
+    pending.then(release, release)
+  }
+  return pending
+}
+
 function markTabsChangedOnDisk(fileIds: string[], connectionId: string | undefined): void {
   const state = useAppStore.getState()
   for (const fileId of fileIds) {
     const file = state.openFiles.find((f) => f.id === fileId)
     // Why: echo verification resolves async — a save or reload may already
-    // have resolved the conflict, so only still-dirty tabs get marked.
-    if (file && file.isDirty && canAutoSaveOpenFile(file)) {
-      if (file.externalMutation !== 'changed') {
-        trackExternalChangeConflictShown(file, { connectionId, origin: 'live' })
-      }
-      state.setExternalMutation(fileId, 'changed')
+    // have resolved the conflict; the helper only marks still-dirty tabs.
+    if (file) {
+      markFileChangedOnDisk(state, file, { connectionId, origin: 'live' })
     }
   }
 }
@@ -718,10 +751,8 @@ function scheduleChangedOnDiskMark(
     markTabsChangedOnDisk(fileIds, target.connectionId)
     return
   }
-  void readRuntimeFileContent({
-    settings: target.runtimeEnvironmentId
-      ? { activeRuntimeEnvironmentId: target.runtimeEnvironmentId }
-      : null,
+  void readFileForEchoVerification({
+    runtimeEnvironmentId: target.runtimeEnvironmentId,
     filePath: absolutePath,
     relativePath: notification.relativePath,
     worktreeId: notification.worktreeId,
@@ -754,8 +785,8 @@ function scheduleSelfWriteAwareExternalReload(
   // Why: a recent self-write stamp only proves the path changed recently; an
   // agent can write a newer version inside the same TTL. Compare disk content
   // with the saved text so we suppress only the echo of Orca's own write.
-  void readRuntimeFileContent({
-    settings: runtimeEnvironmentId ? { activeRuntimeEnvironmentId: runtimeEnvironmentId } : null,
+  void readFileForEchoVerification({
+    runtimeEnvironmentId,
     filePath: file.filePath,
     relativePath: file.relativePath,
     worktreeId: file.worktreeId,

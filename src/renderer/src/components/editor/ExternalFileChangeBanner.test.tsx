@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { OpenFile } from '@/store/slices/editor'
 
 const toastMock = vi.hoisted(() => vi.fn())
+const readRuntimeFileContentMock = vi.hoisted(() => vi.fn())
 vi.mock('sonner', () => ({
   toast: toastMock
 }))
@@ -11,12 +12,22 @@ vi.mock('@/store', () => ({
     getState: vi.fn()
   }
 }))
+vi.mock('@/runtime/runtime-file-client', () => ({
+  readRuntimeFileContent: readRuntimeFileContentMock
+}))
+vi.mock('@/runtime/runtime-rpc-client', () => ({
+  settingsForRuntimeOwner: () => null
+}))
+vi.mock('@/lib/connection-context', () => ({
+  getConnectionIdForFile: () => undefined
+}))
 
 import {
   ExternalFileChangeBanner,
   keepTabEditsOverExternalChange,
   reloadTabContentFromDisk
 } from './ExternalFileChangeBanner'
+import { getDiskBaselineSignature } from './diff-content-signature'
 import { useAppStore } from '@/store'
 
 const file = {
@@ -34,6 +45,7 @@ describe('ExternalFileChangeBanner', () => {
   const markFileDirty = vi.fn()
   const setExternalMutation = vi.fn()
   const setEditorDraft = vi.fn()
+  const setLastKnownDiskSignature = vi.fn()
 
   function mockStoreState(editorDrafts: Record<string, string>, openFiles: OpenFile[] = [file]) {
     vi.mocked(useAppStore.getState).mockReturnValue({
@@ -41,13 +53,16 @@ describe('ExternalFileChangeBanner', () => {
       markFileDirty,
       setExternalMutation,
       setEditorDraft,
+      setLastKnownDiskSignature,
       editorDrafts,
-      openFiles
+      openFiles,
+      settings: {}
     } as never)
   }
 
   beforeEach(() => {
     vi.clearAllMocks()
+    readRuntimeFileContentMock.mockResolvedValue({ content: 'disk content', isBinary: false })
     mockStoreState({})
   })
 
@@ -157,11 +172,60 @@ describe('ExternalFileChangeBanner', () => {
     expect(toastMock).not.toHaveBeenCalled()
   })
 
-  it('keep-my-edits only clears the changed-on-disk mark', () => {
-    keepTabEditsOverExternalChange('file-1')
+  it('undo restores the pre-reload disk signature with the draft', async () => {
+    // Why: the reload re-stamps the baseline to the new disk content; without
+    // restoring the old signature the restart scan sees disk == baseline and
+    // silently drops the conflict the undo just brought back.
+    mockStoreState({ 'file-1': 'discarded draft' }, [
+      { ...file, lastKnownDiskSignature: 'pre-reload-signature' } as OpenFile
+    ])
+
+    reloadTabContentFromDisk(file, vi.fn())
+
+    const options = toastMock.mock.calls[0][1] as {
+      action: { label: string; onClick: () => void }
+    }
+    vi.clearAllMocks()
+    mockStoreState({}, [{ ...file, isDirty: false, externalMutation: undefined } as OpenFile])
+
+    options.action.onClick()
+
+    expect(setLastKnownDiskSignature).toHaveBeenCalledWith('file-1', 'pre-reload-signature')
+  })
+
+  it('keep-my-edits clears the mark without touching the draft or dirty flag', () => {
+    keepTabEditsOverExternalChange(file)
 
     expect(setExternalMutation).toHaveBeenCalledWith('file-1', null)
     expect(clearEditorDraft).not.toHaveBeenCalled()
     expect(markFileDirty).not.toHaveBeenCalled()
+  })
+
+  it('keep-my-edits advances the disk baseline so the dismissal survives restart', async () => {
+    readRuntimeFileContentMock.mockResolvedValue({ content: 'agent content', isBinary: false })
+    mockStoreState({}, [{ ...file, externalMutation: undefined } as OpenFile])
+
+    keepTabEditsOverExternalChange(file)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(setLastKnownDiskSignature).toHaveBeenCalledWith(
+      'file-1',
+      getDiskBaselineSignature('agent content')
+    )
+  })
+
+  it('keep-my-edits does not stamp a baseline over a newer conflict', async () => {
+    // Why: if the file changed again before the read resolved, the fresh
+    // 'changed' mark owns the baseline — stamping would hide that conflict
+    // from the restart scan.
+    readRuntimeFileContentMock.mockResolvedValue({ content: 'even newer', isBinary: false })
+    mockStoreState({}, [{ ...file, externalMutation: 'changed' } as OpenFile])
+
+    keepTabEditsOverExternalChange(file)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(setLastKnownDiskSignature).not.toHaveBeenCalled()
   })
 })

@@ -140,8 +140,7 @@ export function EditorContent({
   handleDirtyStateHint,
   handleSave,
   handleSaveForFile,
-  reloadFileContent,
-  reloadDiffContent
+  reloadContent
 }: {
   activeFile: OpenFile
   viewStateScopeId: string
@@ -168,8 +167,7 @@ export function EditorContent({
   handleDirtyStateHint: (dirty: boolean) => void
   handleSave: (content: string) => Promise<void>
   handleSaveForFile: (file: OpenFile, content: string) => Promise<void>
-  reloadFileContent: (file: OpenFile) => void
-  reloadDiffContent: (file: OpenFile) => void
+  reloadContent: (file: OpenFile) => void
 }): React.JSX.Element {
   const editorViewStateKey =
     viewStateScopeId === activeFile.id
@@ -508,10 +506,7 @@ export function EditorContent({
     if (fc.loadError) {
       return (
         <div className={className}>
-          <FileLoadErrorView
-            message={fc.loadError}
-            onRetry={() => reloadFileContent(contentFile)}
-          />
+          <FileLoadErrorView message={fc.loadError} onRetry={() => reloadContent(contentFile)} />
         </div>
       )
     }
@@ -712,9 +707,7 @@ export function EditorContent({
       )
     }
     if (fc.loadError) {
-      return (
-        <FileLoadErrorView message={fc.loadError} onRetry={() => reloadFileContent(activeFile)} />
-      )
+      return <FileLoadErrorView message={fc.loadError} onRetry={() => reloadContent(activeFile)} />
     }
     if (fc.isBinary) {
       return (
@@ -761,9 +754,7 @@ export function EditorContent({
       )
     }
     if (fc.loadError) {
-      return (
-        <FileLoadErrorView message={fc.loadError} onRetry={() => reloadFileContent(activeFile)} />
-      )
+      return <FileLoadErrorView message={fc.loadError} onRetry={() => reloadContent(activeFile)} />
     }
     if (fc.isBinary) {
       if (fc.isImage) {
@@ -785,7 +776,7 @@ export function EditorContent({
         <ExternalFileChangeBanner
           file={activeFile}
           currentContent={editBuffers[activeFile.id] ?? fc.content}
-          reloadContent={reloadFileContent}
+          reloadContent={reloadContent}
         />
       ) : null
     if (isChangesMode) {
@@ -918,7 +909,7 @@ export function EditorContent({
       <ExternalFileChangeBanner
         file={activeFile}
         currentContent={modifiedDiffContent}
-        reloadContent={reloadDiffContent}
+        reloadContent={reloadContent}
       />
     ) : null
   if (isMarkdown && mdViewMode === 'preview' && dc.largeDiffRenderLimit?.limited !== true) {

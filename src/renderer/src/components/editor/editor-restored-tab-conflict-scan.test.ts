@@ -7,7 +7,8 @@ import { getDiskBaselineSignature } from './diff-content-signature'
 
 const mocks = vi.hoisted(() => ({
   readRuntimeFileContent: vi.fn(),
-  getConnectionIdForFile: vi.fn()
+  getConnectionIdForFile: vi.fn(),
+  pathExists: vi.fn()
 }))
 
 vi.mock('@/runtime/runtime-file-client', () => ({
@@ -59,10 +60,14 @@ describe('attachRestoredTabConflictScan', () => {
     mocks.readRuntimeFileContent.mockReset()
     mocks.getConnectionIdForFile.mockReset()
     mocks.getConnectionIdForFile.mockReturnValue(undefined)
+    mocks.pathExists.mockReset()
+    mocks.pathExists.mockResolvedValue(true)
+    vi.stubGlobal('window', { api: { fs: { pathExists: mocks.pathExists } } })
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.unstubAllGlobals()
   })
 
   it('marks a restored dirty tab whose file changed while the app was closed', async () => {
@@ -195,6 +200,51 @@ describe('attachRestoredTabConflictScan', () => {
       // Why: in-session drift is the live watcher's job; re-reading here would
       // turn the scan into a poller and skew the 'restore' telemetry origin.
       expect(mocks.readRuntimeFileContent).not.toHaveBeenCalled()
+    } finally {
+      detach()
+    }
+  })
+
+  it('resolves verification with a deleted mark when the file is definitively gone', async () => {
+    // Why: a file deleted while the app was closed can never verify — without
+    // a terminal state the retry loop keeps the tab's autosave silently
+    // suspended for the whole session.
+    mocks.readRuntimeFileContent.mockRejectedValue(new Error('ENOENT'))
+    mocks.pathExists.mockResolvedValue(false)
+    const store = createEditorStore()
+    openRestoredDirtyTab(store, '/repo/deleted.ts', 'original baseline')
+
+    const detach = attachRestoredTabConflictScan(store)
+    try {
+      await vi.advanceTimersByTimeAsync(10)
+      const tab = store.getState().openFiles[0]
+      expect(tab?.pendingDiskBaselineVerification).toBeUndefined()
+      expect(tab?.externalMutation).toBe('deleted')
+      // Why: the verification is resolved — no further retries may fire.
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(mocks.readRuntimeFileContent).toHaveBeenCalledTimes(1)
+    } finally {
+      detach()
+    }
+  })
+
+  it('keeps retrying with the suspension intact when the existence probe fails', async () => {
+    // Why: a transport that is down cannot disprove existence — lifting the
+    // suspension unverified would reopen the clobber window the moment the
+    // transport recovers.
+    mocks.readRuntimeFileContent.mockRejectedValue(new Error('connection not ready'))
+    mocks.pathExists.mockRejectedValue(new Error('connection not ready'))
+    const store = createEditorStore()
+    openRestoredDirtyTab(store, '/repo/unreachable.ts', 'original baseline')
+
+    const detach = attachRestoredTabConflictScan(store)
+    try {
+      await vi.advanceTimersByTimeAsync(10)
+      await vi.advanceTimersByTimeAsync(2_100)
+      const tab = store.getState().openFiles[0]
+      expect(tab?.pendingDiskBaselineVerification).toBe(true)
+      expect(tab?.externalMutation).toBeUndefined()
+      expect(mocks.readRuntimeFileContent.mock.calls.length).toBeGreaterThan(1)
     } finally {
       detach()
     }

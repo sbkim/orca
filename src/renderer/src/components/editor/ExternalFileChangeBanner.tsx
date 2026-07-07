@@ -2,10 +2,14 @@ import React, { useState } from 'react'
 import { TriangleAlert } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { getConnectionIdForFile } from '@/lib/connection-context'
+import { readRuntimeFileContent } from '@/runtime/runtime-file-client'
+import { settingsForRuntimeOwner } from '@/runtime/runtime-rpc-client'
 import { useAppStore } from '@/store'
 import { translate } from '@/i18n/i18n'
 import type { OpenFile } from '@/store/slices/editor'
 import { ExternalFileChangeCompareDialog } from './ExternalFileChangeCompareDialog'
+import { getDiskBaselineSignature } from './diff-content-signature'
 import { trackExternalChangeConflictAction } from './editor-external-change-telemetry'
 
 // Why: when an external process (usually an agent) rewrites a file while the
@@ -22,6 +26,9 @@ export function reloadTabContentFromDisk(
 ): void {
   const state = useAppStore.getState()
   const discardedDraft = state.editorDrafts[file.id]
+  const discardedDiskSignature = state.openFiles.find(
+    (openFile) => openFile.id === file.id
+  )?.lastKnownDiskSignature
   // Why: drop the draft before reloading — the buffer shadows loaded content
   // (editBuffers ?? fileContents), so a reload alone would keep showing the
   // stale unsaved text.
@@ -58,6 +65,12 @@ export function reloadTabContentFromDisk(
           // Why: the disk still differs from the restored draft, so the
           // conflict (and its autosave suspension) must come back with it.
           current.setExternalMutation(file.id, 'changed')
+          if (discardedDiskSignature !== undefined) {
+            // Why: the reload re-stamped the baseline to the new disk content;
+            // restoring the pre-reload signature with the draft keeps the
+            // restart scan re-deriving the conflict the undo just brought back.
+            current.setLastKnownDiskSignature(file.id, discardedDiskSignature)
+          }
           trackExternalChangeConflictAction(file, 'undo_reload')
         }
       }
@@ -65,8 +78,35 @@ export function reloadTabContentFromDisk(
   )
 }
 
-export function keepTabEditsOverExternalChange(fileId: string): void {
-  useAppStore.getState().setExternalMutation(fileId, null)
+export function keepTabEditsOverExternalChange(file: OpenFile): void {
+  const state = useAppStore.getState()
+  state.setExternalMutation(file.id, null)
+  // Why: the dismissal must survive restart — without advancing the baseline
+  // to the current disk content, the restored-tab conflict scan re-derives
+  // the dismissed conflict from the stale signature on every launch.
+  // Best-effort: a failed read leaves the old signature, which can only
+  // re-surface the banner — never lose data.
+  void readRuntimeFileContent({
+    settings: settingsForRuntimeOwner(state.settings, file.runtimeEnvironmentId),
+    filePath: file.filePath,
+    relativePath: file.relativePath,
+    worktreeId: file.worktreeId,
+    connectionId: getConnectionIdForFile(file.worktreeId, file.filePath) ?? undefined
+  })
+    .then((result) => {
+      if (result.isBinary) {
+        return
+      }
+      const current = useAppStore.getState()
+      const liveFile = current.openFiles.find((openFile) => openFile.id === file.id)
+      // Why: only stamp while the dismissal still stands — a save or a newer
+      // conflict marked in the interim owns the baseline.
+      if (!liveFile || liveFile.externalMutation === 'changed') {
+        return
+      }
+      current.setLastKnownDiskSignature(file.id, getDiskBaselineSignature(result.content))
+    })
+    .catch(() => undefined)
 }
 
 export function ExternalFileChangeBanner({
@@ -89,7 +129,7 @@ export function ExternalFileChangeBanner({
   }
   const handleKeepEdits = (): void => {
     trackExternalChangeConflictAction(file, 'keep')
-    keepTabEditsOverExternalChange(file.id)
+    keepTabEditsOverExternalChange(file)
   }
   const handleCompare = (): void => {
     trackExternalChangeConflictAction(file, 'compare')
@@ -136,14 +176,8 @@ export function ExternalFileChangeBanner({
           currentContent={currentContent}
           open={compareOpen}
           onOpenChange={setCompareOpen}
-          onReload={() => {
-            trackExternalChangeConflictAction(file, 'reload')
-            reloadTabContentFromDisk(file, reloadContent)
-          }}
-          onKeepEdits={() => {
-            trackExternalChangeConflictAction(file, 'keep')
-            keepTabEditsOverExternalChange(file.id)
-          }}
+          onReload={handleReload}
+          onKeepEdits={handleKeepEdits}
         />
       )}
     </div>

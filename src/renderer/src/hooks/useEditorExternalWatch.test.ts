@@ -620,6 +620,34 @@ describe('createExternalWatchEventHandler tombstone coalescing', () => {
     dispose()
   })
 
+  it('shares one echo-verification read across a burst of watcher payloads', async () => {
+    const dirtyFile = {
+      ...fileNotes,
+      isDirty: true
+    }
+    vi.mocked(useAppStore.getState).mockReturnValue({
+      openFiles: [dirtyFile],
+      setExternalMutation
+    } as never)
+    vi.mocked(getOpenFilesForExternalFileChange).mockReturnValue([dirtyFile] as never)
+    const readFile = vi.fn().mockResolvedValue({ content: 'agent content', isBinary: false })
+    vi.stubGlobal('window', { api: { fs: { readFile } } })
+    const { handleFsChanged, dispose } = createExternalWatchEventHandler(findTarget)
+
+    recordSelfWrite('/repo/notes.md', 'orca save')
+    // Why: SSH poll + event streams can deliver several payloads for one
+    // write; each verification is a full-file read, so a burst must share
+    // the in-flight read instead of stacking network round-trips.
+    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/notes.md' }]))
+    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/notes.md' }]))
+    handleFsChanged(payload([{ kind: 'update', absolutePath: '/repo/notes.md' }]))
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(readFile).toHaveBeenCalledTimes(1)
+    expect(setExternalMutation).toHaveBeenCalledWith('file-notes', 'changed')
+    dispose()
+  })
+
   it('marks a lone dirty unstaged-diff tab changed-on-disk', () => {
     const dirtyDiffTab = {
       id: 'diff-notes',
