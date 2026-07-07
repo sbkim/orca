@@ -69,9 +69,7 @@ export function installTerminalImeCompositionTracker(
       sawEmptyCompositionUpdate = true
       return
     }
-    if (event.data !== '') {
-      active = true
-    }
+    active = true
   }
   const handleCompositionEnd = (): void => {
     active = false

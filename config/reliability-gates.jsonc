@@ -1328,7 +1328,8 @@
           "file": "src/renderer/src/components/terminal-pane/terminal-ime-candidate-key-release-guard.test.ts",
           "assertions": [
             "suppressed candidate keydown arms only the matching keypress/keyup release guard",
-            "fresh keydowns, other keys, modified keys, and expired releases are not guarded"
+            "held-key repeat keydowns stay guarded until their keyup, even past expiry",
+            "fresh keydowns, other keys, modified keys, and expired keypresses are not guarded, and a fresh press drops a stale pending release"
           ]
         },
         {
@@ -1361,7 +1362,7 @@
           "command": "pnpm exec vitest run --config config/vitest.config.ts src/renderer/src/components/terminal-pane/terminal-ime-native-text-forwarder.test.ts src/renderer/src/components/terminal-pane/terminal-ime-input-source.test.ts src/renderer/src/components/terminal-pane/terminal-paste-runtime.test.ts src/renderer/src/components/terminal-pane/terminal-ime-composition-tracker.test.ts src/renderer/src/components/terminal-pane/terminal-ime-candidate-key-release-guard.test.ts src/renderer/src/components/terminal-pane/xterm-bypass-policy-non-mac.test.ts src/renderer/src/components/terminal-pane/xterm-bypass-policy.test.ts",
           "result": "passed",
           "durationSeconds": 0.7,
-          "summary": "7 test file(s) passed, 141 tests passed on the Linux/Sogou candidate-key branch."
+          "summary": "7 test file(s) passed, 144 tests passed on the Linux/Sogou candidate-key branch (includes held-key repeat guard coverage)."
         },
         {
           "date": "2026-07-07",

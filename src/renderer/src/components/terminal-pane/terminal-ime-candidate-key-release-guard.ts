@@ -57,7 +57,14 @@ export function shouldApplyTerminalImePendingCandidateKeyRelease(
   now: number
 ): boolean {
   if (event.type === 'keydown') {
-    return false
+    // Why: key auto-repeat outlives the 250ms window (Linux repeat delay is
+    // ~500ms), so a held selector's repeats stay owned by its pending release;
+    // a fresh press means the prior keyup was missed and the entry is stale.
+    return (
+      event.repeat === true &&
+      isTerminalImeCandidateSelectionKeyEvent(event) &&
+      releases.has(event.key)
+    )
   }
   if (event.type === 'keyup') {
     // Why: keyup modifier flags can reflect keys pressed after the original
@@ -78,7 +85,10 @@ export function clearTerminalImePendingCandidateKeyRelease(
   releases: TerminalImePendingCandidateKeyReleases,
   event: XtermBypassEvent
 ): void {
-  if (event.type === 'keyup') {
+  // Why: a non-repeat keydown is a new physical press, so any surviving entry
+  // for that key lost its keyup (focus change mid-hold) and must not guard the
+  // new press's repeats. Callers clear before arming.
+  if (event.type === 'keyup' || (event.type === 'keydown' && event.repeat !== true)) {
     releases.delete(event.key)
   }
 }

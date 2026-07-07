@@ -98,6 +98,50 @@ describe('terminal IME candidate key release guard', () => {
     ).toBe(true)
   })
 
+  it('guards held-key repeat keydowns while the release is pending, even past expiry', () => {
+    const releases = createTerminalImePendingCandidateKeyReleases()
+    armTerminalImePendingCandidateKeyRelease(releases, event({ key: '2' }), 10)
+    // Linux auto-repeat delay (~500ms) outlives the 250ms guard window; the
+    // held selector's repeats must stay suppressed until its keyup.
+    expect(
+      shouldApplyTerminalImePendingCandidateKeyRelease(
+        event({ key: '2', repeat: true }),
+        releases,
+        10 + TERMINAL_IME_CANDIDATE_GUARD_POST_COMPOSITION_MS + 500
+      )
+    ).toBe(true)
+  })
+
+  it('does not guard repeat keydowns without a pending release for that key', () => {
+    const releases = createTerminalImePendingCandidateKeyReleases()
+    armTerminalImePendingCandidateKeyRelease(releases, event({ key: '2' }), 10)
+    expect(
+      shouldApplyTerminalImePendingCandidateKeyRelease(
+        event({ key: '3', repeat: true }),
+        releases,
+        20
+      )
+    ).toBe(false)
+    expect(
+      shouldApplyTerminalImePendingCandidateKeyRelease(
+        event({ key: '2', repeat: true, ctrlKey: true }),
+        releases,
+        20
+      )
+    ).toBe(false)
+  })
+
+  it('clears a stale pending release on a fresh non-repeat keydown but not on repeats', () => {
+    const releases = createTerminalImePendingCandidateKeyReleases()
+    armTerminalImePendingCandidateKeyRelease(releases, event({ key: '2' }), 10)
+    clearTerminalImePendingCandidateKeyRelease(releases, event({ key: '2', repeat: true }))
+    expect(releases.has('2')).toBe(true)
+    // A new physical press means the prior keyup was missed (focus change
+    // mid-hold); its stale entry must not guard the new press's repeats.
+    clearTerminalImePendingCandidateKeyRelease(releases, event({ key: '2' }))
+    expect(releases.has('2')).toBe(false)
+  })
+
   it('guards a pending matching keyup even if modifier state changed after keydown', () => {
     const releases = createTerminalImePendingCandidateKeyReleases()
     armTerminalImePendingCandidateKeyRelease(releases, event({ key: '2' }), 10)

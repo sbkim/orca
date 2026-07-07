@@ -401,6 +401,10 @@ but it is not a replacement for real Ubuntu 22.04 + Sogou Pinyin soak evidence.
   `compositionend`.
 - Do not let Space/digit keyups leak after a swallowed candidate keydown under
   Kitty keyboard protocol.
+- A held selector's auto-repeat keydowns outlive the post-`compositionend`
+  window (Linux repeat delay ~500ms): repeats of a key with a pending release
+  stay suppressed until its keyup, and a fresh non-repeat keydown drops any
+  stale pending entry whose keyup was missed.
 - Keep the `229` keydown pass-through Linux-gated. Windows preedit behavior is
   only proven safe under the current suppression; widening needs its own
   Windows IME verification.

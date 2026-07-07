@@ -852,7 +852,13 @@ export function useTerminalPaneLifecycle({
         const pendingTerminalImeCandidateKeyReleases =
           createTerminalImePendingCandidateKeyReleases()
         const isMac = navigator.userAgent.includes('Mac')
-        const isLinux = !isMac && navigator.userAgent.includes('Linux')
+        // Why: Android/ChromeOS UAs also contain "Linux"; keep the Sogou/fcitx
+        // candidate-key policy scoped to desktop Linux so paired web clients on
+        // those platforms keep their previous IME behavior.
+        const isLinux =
+          !isMac &&
+          navigator.userAgent.includes('Linux') &&
+          !/Android|CrOS/.test(navigator.userAgent)
         const macNativeTextInputSourceTracker = isMac ? getMacNativeTextInputSourceTracker() : null
         const imeCompositionTracker = installTerminalImeCompositionTracker(pane.terminal.element)
         imeCompositionDisposablesRef.current.set(pane.id, imeCompositionTracker)
@@ -890,6 +896,9 @@ export function useTerminalPaneLifecycle({
             isLinux
           }
           if (shouldSuppressTerminalImeKeyboardEvent(e, imeKeyboardOptions)) {
+            // Why: clear before arm — a fresh keydown drops any stale pending
+            // release for its key before the new press arms its own.
+            clearTerminalImePendingCandidateKeyRelease(pendingTerminalImeCandidateKeyReleases, e)
             if (shouldPreventDefaultTerminalImeCandidateKey(e, imeKeyboardOptions)) {
               // Why: without preventDefault the suppressed candidate keydown
               // still fires a keypress and mutates the helper textarea.
@@ -900,7 +909,6 @@ export function useTerminalPaneLifecycle({
                 now
               )
             }
-            clearTerminalImePendingCandidateKeyRelease(pendingTerminalImeCandidateKeyReleases, e)
             return false
           }
           clearTerminalImePendingCandidateKeyRelease(pendingTerminalImeCandidateKeyReleases, e)
