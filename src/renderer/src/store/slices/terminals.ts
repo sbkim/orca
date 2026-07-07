@@ -39,8 +39,11 @@ import { WINDOWS_GIT_BASH_SHELL } from '../../../../shared/windows-terminal-shel
 import type { AgentStartedTelemetry } from '../../lib/worktree-activation'
 import { scheduleRuntimeGraphSync } from '@/runtime/sync-runtime-graph'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
+import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
+import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
 import { clearTransientTerminalState, emptyLayoutSnapshot } from './terminal-helpers'
-import { isClaudeAgent, detectAgentStatusFromTitle } from '@/lib/agent-status'
+import { isClaudeAgent } from '@/lib/agent-status'
+import { classifyTitleActivity } from '@/lib/pane-agent-evidence'
 import { buildOrphanTerminalCleanupPatch, getOrphanTerminalIds } from './terminal-orphan-helpers'
 import {
   dedupeTabOrder,
@@ -876,7 +879,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
         if (!tab.title || !isClaudeAgent(tab.title)) {
           continue
         }
-        const status = detectAgentStatusFromTitle(tab.title)
+        const status = classifyTitleActivity(tab.title)
         if (status === null || status === 'working') {
           continue
         }
@@ -1341,6 +1344,10 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
     // a fresh leafId at epoch 0), so drop the panes' hibernation output epochs to
     // keep that module-level map from growing for the renderer's whole lifetime.
     forgetAgentHibernationTabOutput(tabId)
+    // Why: same rationale for the tab's foreground last-seen timestamp and any
+    // consumed agent-startup delivery guards — retired tab ids never recur.
+    forgetForegroundTerminalTabs([tabId])
+    forgetAgentStartupDeliveriesForTabs([tabId])
     for (const tabs of Object.values(get().unifiedTabsByWorktree)) {
       const workspaceItem = tabs.find(
         (entry) => entry.contentType === 'terminal' && entry.entityId === tabId
@@ -1635,7 +1642,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // event fires. Bumping only on classification change keeps incidental
       // title noise (spinner frame, prompt suffix) from churning the sidebar.
       const classificationChanged =
-        detectAgentStatusFromTitle(prevTitle ?? '') !== detectAgentStatusFromTitle(title)
+        classifyTitleActivity(prevTitle ?? '') !== classifyTitleActivity(title)
       // Why: locate the owning worktree so we can suppress the sortEpoch
       // bump when the changing pane lives in the active worktree. Title
       // changes there are side-effects of the user's click (PTY remount on
@@ -1678,7 +1685,7 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       // Why: clearing a 'working'/'permission'-classified title back to none
       // changes the title-heuristic verdict for that pane, so the smart sort
       // needs a re-sort. See setRuntimePaneTitle for the rationale.
-      const hadClassification = detectAgentStatusFromTitle(prevTitle ?? '') !== null
+      const hadClassification = classifyTitleActivity(prevTitle ?? '') !== null
       // Why: same active-worktree gate as setRuntimePaneTitle — clears that
       // fire as a side-effect of a click-driven PTY teardown in the active
       // worktree must not re-rank the sidebar. Skip bumping when no owner is
@@ -3317,7 +3324,12 @@ export const createTerminalSlice: StateCreator<AppState, [], [], TerminalSlice> 
       const worktree = Object.values(get().worktreesByRepo)
         .flat()
         .find((entry) => entry.id === worktreeId)
-      const repo = worktree ? get().repos.find((entry) => entry.id === worktree.repoId) : null
+      // Why: SSH worktrees aren't in worktreesByRepo at cold start (relay
+      // discovery needs the connection). Fall back to the repo id embedded in
+      // the composite worktree id so their sessions still reach the deferred
+      // map — otherwise panes fresh-spawn into a missing PTY provider.
+      const repoId = worktree?.repoId ?? getRepoIdFromWorktreeId(worktreeId)
+      const repo = repoId ? get().repos.find((entry) => entry.id === repoId) : null
       if (!repo?.connectionId) {
         continue
       }

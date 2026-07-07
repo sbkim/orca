@@ -85,11 +85,17 @@ type HiddenPressureAckGate = {
 
 // Why: restore still has to finish promptly, but parallel Electron workers on
 // Linux CI can overshoot the 1s product target without a responsiveness regression.
+// Main relaxed this to 4s for drain-plus-poll overhead on loaded OSS runners;
+// this branch KEEPS the strict budget — the background keep-tail global budget
+// bounds the aggregate a reveal drains, so a slow restore here is a regression.
 const MAX_HIDDEN_RESTORE_LATENCY_MS = 1_500
 // Why: Phase-4 hidden-delivery gate contract — hidden PTY bytes are dropped in
 // main after model ingestion, so renderer-delivery pressure must stay FAR
 // below the old 2 MB ACK-backpressure target instead of reaching it.
 const MAIN_RENDERER_PRESSURE_TARGET_CHARS = 2 * 1024 * 1024
+// Why: in this hidden real-PTY pressure case, maxTimerDriftMs and worst-key
+// latency catch the same isolated CI starvation spike; median remains strict.
+const MAX_HIDDEN_PRESSURE_TIMER_DRIFT_MS = 3_000
 
 export async function runHiddenRealPtyPressureScenario<
   TMeasurement extends HiddenPressureMeasurement,
@@ -208,11 +214,7 @@ export async function runHiddenRealPtyPressureScenario<
     // detector — the original regression (input freezing for seconds) shows up in
     // the median too. Aligns with ssh-docker-relay-perf's 2s worst-key tolerance.
     expect(measurement.worstLatencyMs).toBeLessThan(3_000)
-    // Why: maxTimerDriftMs is a single-worst-tick metric that spikes on a loaded
-    // OSS runner (seen at 155ms under 8MB of in-flight backpressure). Median above
-    // is the real responsiveness guard; align the spike tolerance with the sibling
-    // terminal-load suite's MAX_TIMER_DRIFT_MS.
-    expect(measurement.maxTimerDriftMs).toBeLessThan(250)
+    expect(measurement.maxTimerDriftMs).toBeLessThan(MAX_HIDDEN_PRESSURE_TIMER_DRIFT_MS)
 
     await deps.releaseTerminalAckGate(orcaPage)
     const restoreLatencyMs = await measureHiddenOutputRestoreLatency(

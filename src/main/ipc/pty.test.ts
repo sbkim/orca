@@ -3381,6 +3381,54 @@ describe('registerPtyHandlers', () => {
     }
   })
 
+  // Why: the cap and its flag must never fire in the common case (renderer keeps
+  // up), so ordinary small output carries no droppedBacklog.
+  it('does not flag droppedBacklog for ordinary small output under the cap', async () => {
+    vi.useFakeTimers()
+    const runtime = {
+      setPtyController: vi.fn(),
+      registerPty: vi.fn(),
+      onPtySpawned: vi.fn(),
+      onPtyExit: vi.fn(),
+      onPtyData: vi.fn(() => 12),
+      createPreAllocatedTerminalHandle: vi.fn(() => 'terminal-handle-small'),
+      registerPreAllocatedHandleForPty: vi.fn()
+    }
+    try {
+      registerPtyHandlers(
+        mainWindow as never,
+        runtime as never,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { awaitLocalPtyStartup: () => Promise.resolve() }
+      )
+      const pendingSpawn = handlers.get('pty:spawn')!(null, {
+        cols: 80,
+        rows: 24,
+        sessionId: 'small-output-session'
+      }) as Promise<{ id: string }>
+      await Promise.resolve()
+      const daemon = installObservableDaemonTestProvider()
+      rebindLocalProviderListeners()
+      const result = await pendingSpawn
+
+      daemon.emitData(result.id, 'small output')
+      await vi.advanceTimersByTimeAsync(50)
+
+      const dataSends = mainWindow.webContents.send.mock.calls.filter(
+        (call) => call[0] === 'pty:data' && (call[1] as { id: string }).id === result.id
+      )
+      expect(dataSends.length).toBeGreaterThan(0)
+      for (const call of dataSends) {
+        expect((call[1] as { droppedBacklog?: boolean }).droppedBacklog).toBeUndefined()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('waits for the desktop startup barrier before runtime local spawns resolve the provider', async () => {
     const barrier = makeDeferred()
     const runtime = {
@@ -8380,6 +8428,7 @@ describe('registerPtyHandlers', () => {
         onPtyExit: vi.fn(),
         onPtyData: vi.fn(() => 42),
         getPtyOutputSequence: vi.fn(() => 42),
+        hasRemoteTerminalViewSubscriber: vi.fn(() => false),
         createPreAllocatedTerminalHandle: vi.fn(() => 'terminal-handle-1'),
         registerPreAllocatedHandleForPty: vi.fn()
       }
@@ -8797,6 +8846,7 @@ describe('registerPtyHandlers', () => {
         onPtyExit: vi.fn(),
         onPtyData: vi.fn(() => 42),
         getPtyOutputSequence: vi.fn(() => 42),
+        hasRemoteTerminalViewSubscriber: vi.fn(() => false),
         createPreAllocatedTerminalHandle: vi.fn(() => 'terminal-handle-1'),
         registerPreAllocatedHandleForPty: vi.fn()
       }
@@ -8853,6 +8903,7 @@ describe('registerPtyHandlers', () => {
         onPtyExit: vi.fn(),
         onPtyData: vi.fn(() => 42),
         getPtyOutputSequence: vi.fn(() => 42),
+        hasRemoteTerminalViewSubscriber: vi.fn(() => false),
         createPreAllocatedTerminalHandle: vi.fn(() => 'terminal-handle-1'),
         registerPreAllocatedHandleForPty: vi.fn()
       }
@@ -8916,6 +8967,7 @@ describe('registerPtyHandlers', () => {
         onPtyExit: vi.fn(),
         onPtyData: vi.fn(() => 42),
         getPtyOutputSequence: vi.fn(() => 42),
+        hasRemoteTerminalViewSubscriber: vi.fn(() => false),
         createPreAllocatedTerminalHandle: vi.fn(() => 'terminal-handle-1'),
         registerPreAllocatedHandleForPty: vi.fn()
       }
@@ -10332,6 +10384,7 @@ describe('registerPtyHandlers', () => {
         onPtyData: vi.fn(),
         preAllocateHandleForPty: vi.fn(() => null),
         getPtyOutputSequence: vi.fn(() => 2_472),
+        hasRemoteTerminalViewSubscriber: vi.fn(() => false),
         serializeHiddenOutputRecoveryBuffer: vi.fn().mockResolvedValue({
           data: 'snapshot\r\n',
           cols: 100,

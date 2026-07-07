@@ -157,6 +157,74 @@ describe('replay-guard', () => {
     expect(ref.current.has(1)).toBe(false)
   })
 
+  it('auto-releases the guard when xterm never fires the parse callback', () => {
+    // Repro of the cold-restore reattach lockout (main #7661):
+    // handleReattachResult replays three chunks into a just-mounted /
+    // offscreen pane whose terminal never flushes, so xterm's parse callback
+    // never runs and the counter would stay pinned at 3 — isPaneReplaying()
+    // stuck true drops EVERY keystroke. The probe-certified stall path (probe
+    // never parses either => wedged release) must free the guard.
+    vi.useFakeTimers()
+    try {
+      const ref = makeRef()
+      const { pane } = makeFakePane(1)
+      replayIntoTerminal(pane, ref, '\x1b[2J\x1b[3J\x1b[H', 400)
+      replayIntoTerminal(pane, ref, 'scrollback bytes', 400)
+      replayIntoTerminal(pane, ref, '--- session restored ---', 400)
+      expect(isPaneReplaying(ref, 1)).toBe(true)
+
+      // Never flush — the probe write never parses; the wedged release fires
+      // one stall window after the probe (400 + 400).
+      vi.advanceTimersByTime(1000)
+
+      expect(isPaneReplaying(ref, 1)).toBe(false)
+      expect(ref.current.has(1)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('parse completion cancels the stall probe without over-releasing', () => {
+    vi.useFakeTimers()
+    try {
+      const ref = makeRef()
+      const { pane, terminal } = makeFakePane(1)
+      replayIntoTerminal(pane, ref, 'a', 400)
+      replayIntoTerminal(pane, ref, 'b', 400)
+
+      terminal.flush()
+      expect(isPaneReplaying(ref, 1)).toBe(false)
+
+      // The already-cancelled stall timer must not fire and underflow the counter.
+      vi.advanceTimersByTime(1000)
+      expect(isPaneReplaying(ref, 1)).toBe(false)
+      expect(ref.current.has(1)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('async replay resolves even when the parse callback never fires', async () => {
+    vi.useFakeTimers()
+    try {
+      const ref = makeRef()
+      const { pane } = makeFakePane(1)
+      let resolved = false
+      const promise = replayIntoTerminalAsync(pane, ref, 'x', 400).then(() => {
+        resolved = true
+      })
+      expect(isPaneReplaying(ref, 1)).toBe(true)
+
+      await vi.advanceTimersByTimeAsync(1000)
+      await promise
+
+      expect(resolved).toBe(true)
+      expect(isPaneReplaying(ref, 1)).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('schedules a follow-up repaint for replayed cursor restores', () => {
     const scheduledFrames: FrameRequestCallback[] = []
     const originalRequestAnimationFrame = globalThis.requestAnimationFrame

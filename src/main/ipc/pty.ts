@@ -1504,6 +1504,11 @@ export function registerPtyHandlers(
     data: string
     startSeq?: number
     containsBackgroundOutput?: boolean
+    // Why droppedOutput (not main's droppedBacklog trim): this branch bounds
+    // the unsent backlog with the O(1) drop-to-sentinel + query-salvage +
+    // snapshot-restore mechanism below, which strictly supersedes main's
+    // #7630 keep-2MB-tail trim — carrying both would race two cap policies
+    // over the same buffer.
     droppedOutput?: true
   }
 
@@ -1552,7 +1557,9 @@ export function registerPtyHandlers(
   const PTY_RENDERER_TOTAL_IN_FLIGHT_HIGH_WATER_CHARS = 8 * 1024 * 1024
   // Why: while the renderer cannot receive (frozen, starved, mid-reload), a
   // chatty PTY used to grow its pendingData string without bound — main-process
-  // heap ballooning that a renderer reload cannot clear. Beyond this cap the
+  // heap ballooning that a renderer reload cannot clear (main's #7630 fixed the
+  // same Win/Linux background-throttled-renderer leak with a 2MB tail trim;
+  // this branch's sentinel mechanism supersedes it). Beyond this cap the
   // buffered bytes are dropped and the pane heals from the main-owned buffer
   // snapshot via the droppedOutput sentinel (renderer hidden-output restore).
   // Why read settings live: the cap scales with the user's scrollback setting
@@ -2339,15 +2346,25 @@ export function registerPtyHandlers(
     // tears down the terminal on pty:exit before the batch timer fires.
     const remaining = pendingData.get(payload.id)
     if (remaining) {
-      sendPtyDataToRenderer(
-        payload.id,
-        makePtyDataPayload(
+      if (remaining.droppedOutput === true) {
+        // Sentinel entry: only salvaged query bytes remain; keep the flag so
+        // the renderer knows the span was dropped (same as the flush loop).
+        sendPtyDataToRenderer(payload.id, {
+          id: payload.id,
+          data: remaining.data,
+          droppedOutput: true
+        })
+      } else {
+        sendPtyDataToRenderer(
           payload.id,
-          remaining.data,
-          remaining.startSeq,
-          remaining.containsBackgroundOutput
+          makePtyDataPayload(
+            payload.id,
+            remaining.data,
+            remaining.startSeq,
+            remaining.containsBackgroundOutput
+          )
         )
-      )
+      }
       pendingData.delete(payload.id)
     }
     // Why: exit drops this PTY's bookkeeping; resume (no-op on a dead PTY)
@@ -2514,7 +2531,8 @@ export function registerPtyHandlers(
           ...(typeof pending.startSeq === 'number'
             ? { seq: pending.startSeq + nextData.length, rawLength: nextData.length }
             : {}),
-          ...(pending.containsBackgroundOutput === true ? { background: true } : {})
+          ...(pending.containsBackgroundOutput === true ? { background: true } : {}),
+          ...(pending.droppedOutput === true ? { droppedOutput: true } : {})
         })
         return
       }

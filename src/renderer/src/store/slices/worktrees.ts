@@ -42,6 +42,8 @@ import { moveFocusToRendererBeforeFocusedWebviewHidden } from './browser-webview
 import { toast } from 'sonner'
 import { requestVirtualizedScrollAnchorRecord } from '@/hooks/requestVirtualizedScrollAnchorRecord'
 import { forgetAgentHibernationTabOutput } from '@/lib/agent-hibernation-output-activity'
+import { forgetForegroundTerminalTabs } from '@/lib/foreground-terminal-tabs'
+import { forgetAgentStartupDeliveriesForTabs } from '@/lib/agent-startup-delivery-guards'
 import { branchName } from '@/lib/git-utils'
 import { markInputQuietSchedulerInput, scheduleAfterInputQuiet } from '@/lib/input-quiet-scheduler'
 import { clearSessionCommitDraftForWorktree } from '@/lib/source-control-commit-draft-session'
@@ -1451,6 +1453,19 @@ export function resetHostedReviewLinkMutationGenerationForTests(): void {
   hostedReviewLinkWorktreeIdAliases.clear()
 }
 
+export function setDetachedHeadAutoDerivedDisplayNameForTests(
+  worktreeId: string,
+  displayName: string
+): void {
+  detachedHeadAutoDerivedDisplayNames.set(worktreeId, displayName)
+}
+
+export function getDetachedHeadAutoDerivedDisplayNameForTests(
+  worktreeId: string
+): string | undefined {
+  return detachedHeadAutoDerivedDisplayNames.get(worktreeId)
+}
+
 function hostedReviewLinksAreCleared(worktree: Worktree): boolean {
   return HOSTED_REVIEW_LINK_KEYS.every((key) => worktree[key] == null) && !worktree.pushTarget
 }
@@ -1814,12 +1829,22 @@ function buildWorktreePurgeState(s: AppState, worktreeIds: string[]): Partial<Ap
 
   // Collect every tab id (and removed file id) we are about to orphan.
   const doomedTabIds = new Set<string>()
+  // Why: some terminal/agent maps are keyed by ptyId, not tabId. Collect the
+  // doomed panes' ptyIds now (while ptyIdsByTabId is still populated) so this
+  // bulk path can evict them the same way shutdownWorktreeTerminals does on the
+  // single-removeWorktree path.
+  const doomedPtyIds = new Set<string>()
   const doomedBrowserWorkspaceIds = new Set<string>()
   const doomedPageIds = new Set<string>()
   const removedFileIds = new Set<string>()
   for (const id of worktreeIdSet) {
     for (const tab of s.tabsByWorktree[id] ?? []) {
       doomedTabIds.add(tab.id)
+      // Null-tolerant like the omit* helpers below: some callers pass partial
+      // state that omits this slice; the production store always inits it to {}.
+      for (const ptyId of s.ptyIdsByTabId?.[tab.id] ?? []) {
+        doomedPtyIds.add(ptyId)
+      }
       // Why: a removed worktree's panes are gone for good, so drop their
       // hibernation output epochs from that module-level map (mirrors the
       // hosted-review prune above). A future pane mints a fresh leafId at epoch 0.
@@ -1828,7 +1853,14 @@ function buildWorktreePurgeState(s: AppState, worktreeIds: string[]): Partial<Ap
     for (const workspace of s.browserTabsByWorktree[id] ?? []) {
       doomedBrowserWorkspaceIds.add(workspace.id)
     }
+    // Why: drop this worktree's auto-derived detached-HEAD display name so the
+    // module-level map doesn't retain removed worktrees for the whole session.
+    detachedHeadAutoDerivedDisplayNames.delete(id)
   }
+  // Why: same rationale for the doomed tabs' foreground last-seen timestamps and
+  // consumed agent-startup delivery guards — retired tab ids never recur.
+  forgetForegroundTerminalTabs(doomedTabIds)
+  forgetAgentStartupDeliveriesForTabs(doomedTabIds)
   // Why: the per-page browser maps are keyed by page id, not worktree/workspace id.
   // Collect every page owned by a doomed workspace so this bulk purge can evict
   // them. (The single removeWorktree path clears these via closeBrowserTab, but the
@@ -1898,6 +1930,17 @@ function buildWorktreePurgeState(s: AppState, worktreeIds: string[]): Partial<Ap
     for (const tabId of doomedTabIds) {
       if (tabId in out) {
         delete out[tabId]
+        changed = true
+      }
+    }
+    return changed ? out : obj
+  }
+  const omitByPtyId = <T>(obj: Record<string, T>): Record<string, T> => {
+    let changed = false
+    const out = { ...obj }
+    for (const ptyId of doomedPtyIds) {
+      if (ptyId in out) {
+        delete out[ptyId]
         changed = true
       }
     }
@@ -1996,6 +2039,21 @@ function buildWorktreePurgeState(s: AppState, worktreeIds: string[]): Partial<Ap
     // this path never runs terminal teardown, so nothing else evicts them.
     expandedPaneByTabId: omitByTabId(s.expandedPaneByTabId),
     canExpandPaneByTabId: omitByTabId(s.canExpandPaneByTabId),
+    // Why: these per-tab / per-pty terminal+agent maps are evicted on the single
+    // removeWorktree path (via closeTab / shutdownWorktreeTerminals) but this bulk
+    // reconcile / remove-project / hydration-stale path runs no terminal teardown,
+    // so without these lines each one strands an entry per tab/pane of every
+    // externally-removed worktree for the renderer's whole session. lastKnownRelay
+    // and the two ptyId maps retain an entry for a live pane's entire lifetime
+    // (highest value); the pending* one-shots are consumed at pane mount so usually
+    // already empty at removal, but strand when a tab's pane never mounted.
+    lastKnownRelayPtyIdByTabId: omitByTabId(s.lastKnownRelayPtyIdByTabId),
+    pendingInitialCwdByTabId: omitByTabId(s.pendingInitialCwdByTabId),
+    pendingIssueCommandSplitByTabId: omitByTabId(s.pendingIssueCommandSplitByTabId),
+    pendingSetupSplitByTabId: omitByTabId(s.pendingSetupSplitByTabId),
+    pendingStartupByTabId: omitByTabId(s.pendingStartupByTabId),
+    codexRestartNoticeByPtyId: omitByPtyId(s.codexRestartNoticeByPtyId),
+    migrationUnsupportedByPtyId: omitByPtyId(s.migrationUnsupportedByPtyId),
     // Why: these tab/pane-scoped agent-status, unread, and input maps are only
     // cleared on the single removeWorktree path (via shutdownWorktreeTerminals /
     // dropAgentStatusByWorktree / clearPaneForegroundAgentByWorktree, which read
@@ -3101,6 +3159,13 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
       await purgeOrphanedRuntimeSshProjects(get, destroyedRuntimeSshTargetIds)
       const tabs = get().tabsByWorktree[worktreeId] ?? []
       const tabIds = new Set(tabs.map((t) => t.id))
+
+      // Why: this path deletes tabsByWorktree wholesale (not via closeTab), so
+      // purge the module-level maps keyed by this worktree/its tabs here too —
+      // matching buildWorktreePurgeState so retired ids don't accumulate.
+      detachedHeadAutoDerivedDisplayNames.delete(worktreeId)
+      forgetForegroundTerminalTabs(tabIds)
+      forgetAgentStartupDeliveriesForTabs(tabIds)
 
       // Why: deletion is async (backend + terminal/browser teardown awaited
       // above), so snapshot the sidebar's current top-row anchor in the same
