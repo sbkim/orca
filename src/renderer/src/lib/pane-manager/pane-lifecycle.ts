@@ -17,6 +17,7 @@ import { attachTerminalMouseWheelMultiplier } from './pane-terminal-mouse-wheel'
 import { attachTerminalScrollIntentTracking } from './terminal-scroll-intent'
 import { attachDomRendererFocusClassSync } from './pane-dom-focus-class-sync'
 import { attachWebgl, cancelPendingWebglRefresh, disposeWebgl } from './pane-webgl-renderer'
+import { registerArabicShapingJoiner } from './terminal-arabic-shaping-joiner'
 import { resolveCursorAgentImeAnchor } from './terminal-ime-anchor'
 
 // ---------------------------------------------------------------------------
@@ -71,6 +72,11 @@ export function openTerminal(pane: ManagedPaneInternal): void {
   // restoreScrollbackBuffers, handleReattachResult) run after openTerminal,
   // so the activation must stay at this position.
   activateOrcaTerminalUnicodeProvider(terminal)
+
+  // Why: without run-joining, Arabic/Hebrew output renders as disconnected
+  // letters in reversed order (#5262). Registered up front so restored
+  // scrollback and reattach replays shape correctly, not just live output.
+  registerArabicShapingJoiner(terminal)
 
   // Why: the OS reads the focused textarea's screen rect at compositionstart to
   // decide where to display the IME candidate window. xterm positions that
