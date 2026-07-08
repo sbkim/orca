@@ -778,6 +778,39 @@ describe('SSH IPC handlers', () => {
     expect(runtime.onPtyExit).toHaveBeenCalledWith('remote-pty', 7)
   })
 
+  it('mirrors SSH state broadcasts onto the runtime client-event stream', async () => {
+    const runtime = {
+      onPtyData: vi.fn(),
+      onPtyExit: vi.fn(),
+      notifySshStateChanged: vi.fn()
+    }
+    registerSshHandlers(mockStore as never, () => mockWindow as never, runtime as never)
+    const target: SshTarget = {
+      id: 'ssh-1',
+      label: 'Server',
+      host: 'example.com',
+      port: 22,
+      username: 'deploy'
+    }
+    mockSshStore.getTarget.mockReturnValue(target)
+    mockConnectionManager.connect.mockResolvedValue({})
+    mockConnectionManager.getState.mockReturnValue({
+      targetId: 'ssh-1',
+      status: 'connected',
+      error: null,
+      reconnectAttempt: 0
+    })
+
+    await handlers.get('ssh:connect')!(null, { targetId: 'ssh-1' })
+
+    // Why: paired remote clients only learn SSH state through this hook —
+    // without it their reconnect overlays never clear (STA-1468).
+    expect(runtime.notifySshStateChanged).toHaveBeenCalledWith(
+      'ssh-1',
+      expect.objectContaining({ targetId: 'ssh-1', status: 'connected' })
+    )
+  })
+
   it('preserves active port forwards and live connections across handler re-registration', async () => {
     const target: SshTarget = {
       id: 'ssh-1',

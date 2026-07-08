@@ -90,6 +90,16 @@ export function getRegisteredSshState(targetId: string): SshConnectionState | un
   return registeredGetSshState?.(targetId)
 }
 
+/** Public targets for runtime RPC clients — same list the desktop renderer gets. */
+export function listRegisteredSshTargets(): SshTarget[] {
+  return sshStore?.listTargets() ?? []
+}
+
+/** Removed-target id → last known label, for ghost-host display on paired clients. */
+export function listRegisteredRemovedSshTargetLabels(): Record<string, string> {
+  return sshStore?.listRemovedTargetLabels() ?? {}
+}
+
 export async function disconnectRegisteredSshTarget(targetId: string): Promise<void> {
   if (!connectionManager) {
     return
@@ -235,13 +245,14 @@ function broadcastSshState(
   if (isRuntimeOwnedSshTargetId(targetId)) {
     return
   }
+  const enrichedState = withSshRemotePlatform(targetId, state)
   const win = getMainWindow()
   if (win && !win.isDestroyed()) {
-    win.webContents.send('ssh:state-changed', {
-      targetId,
-      state: withSshRemotePlatform(targetId, state)
-    })
+    win.webContents.send('ssh:state-changed', { targetId, state: enrichedState })
   }
+  // Why: paired remote clients have no ssh:state-changed IPC; without this
+  // their terminals keep a stale reconnect overlay after the host connects.
+  currentRuntime?.notifySshStateChanged?.(targetId, enrichedState)
 }
 
 function withSshRemotePlatform(targetId: string, state: SshConnectionState): SshConnectionState {

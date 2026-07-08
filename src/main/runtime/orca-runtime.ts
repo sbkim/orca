@@ -130,6 +130,7 @@ import { parseExecutionHostId, type ExecutionHostId } from '../../shared/executi
 import type { SleepingAgentLaunchConfig } from '../../shared/agent-session-resume'
 import type { RuntimeClientEvent } from '../../shared/runtime-client-events'
 import { toRuntimeActivateWorktreeEvent } from '../../shared/runtime-client-events'
+import type { SshConnectionState } from '../../shared/ssh-types'
 import type {
   LinearCurrentIssueContextHints,
   LinearAttachResult,
@@ -2804,6 +2805,12 @@ export class OrcaRuntimeService {
   private notifyReposChanged(): void {
     this.notifier?.reposChanged()
     this.emitClientEvent({ type: 'reposChanged' })
+  }
+
+  // Why: SSH state changes originate in main's ssh handlers, not in runtime
+  // methods, so they need a public entry point onto the client-event stream.
+  notifySshStateChanged(targetId: string, state: SshConnectionState): void {
+    this.emitClientEvent({ type: 'sshStateChanged', targetId, state })
   }
 
   private notifyActivateWorktree(
