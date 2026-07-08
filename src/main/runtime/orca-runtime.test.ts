@@ -60,6 +60,11 @@ import {
   TERMINAL_INPUT_MAX_BYTES,
   TERMINAL_INPUT_TOO_LARGE_ERROR
 } from '../../shared/terminal-input'
+import {
+  AGENT_PROMPT_BRACKETED_PASTE_END,
+  AGENT_PROMPT_BRACKETED_PASTE_START,
+  buildAgentPromptPasteBytes
+} from '../../shared/agent-prompt-injection'
 import { CLIPBOARD_TEXT_MEASURE_YIELD_CODE_UNITS } from '../../shared/clipboard-text'
 import {
   registerSshFilesystemProvider,
@@ -9298,6 +9303,110 @@ describe('OrcaRuntimeService', () => {
     expect(writes).toEqual(['continue', '\r'])
   })
 
+  it('sends agent prompts as bracketed paste before submit', async () => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      const prompt = 'line one\nline two\x1b[201~'
+
+      const sendPromise = runtime.sendTerminalAgentPrompt(handle, prompt)
+      await vi.runAllTimersAsync()
+      const result = await sendPromise
+
+      const pasted = [
+        AGENT_PROMPT_BRACKETED_PASTE_START,
+        'line one\nline two<ESC>[201~',
+        AGENT_PROMPT_BRACKETED_PASTE_END
+      ].join('')
+      expect(result).toMatchObject({
+        handle,
+        accepted: true,
+        bytesWritten: Buffer.byteLength(`${pasted}\r`, 'utf8')
+      })
+      expect(writes).toEqual([pasted, '\r'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('chunks large agent prompt paste frames before delayed submit', async () => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writes.push(data)
+          return true
+        },
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      const prompt = `${'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES)}\ntail`
+
+      const sendPromise = runtime.sendTerminalAgentPrompt(handle, prompt)
+      await vi.runAllTimersAsync()
+      const result = await sendPromise
+
+      const pasteWrites = writes.slice(0, -1)
+      expect(result.bytesWritten).toBe(
+        Buffer.byteLength(`${buildAgentPromptPasteBytes(prompt)}\r`, 'utf8')
+      )
+      expect(writes.at(-1)).toBe('\r')
+      expect(pasteWrites.length).toBeGreaterThan(1)
+      expect(pasteWrites.join('')).toBe(buildAgentPromptPasteBytes(prompt))
+      expect(pasteWrites[0]).toContain(AGENT_PROMPT_BRACKETED_PASTE_START)
+      expect(pasteWrites.at(-1)).toContain(AGENT_PROMPT_BRACKETED_PASTE_END)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('closes an incomplete agent prompt paste when a later chunk write fails', async () => {
+    vi.useFakeTimers()
+    try {
+      const writes: string[] = []
+      let writeCount = 0
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn: vi.fn().mockResolvedValue({ id: 'pty-bg' }),
+        write: (_ptyId, data) => {
+          writeCount += 1
+          writes.push(data)
+          return writeCount !== 2
+        },
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      const { handle } = await runtime.createTerminal(`path:${TEST_WORKTREE_PATH}`)
+      const prompt = 'x'.repeat(TERMINAL_INPUT_CHUNK_MAX_BYTES + 1)
+
+      const sendPromise = runtime.sendTerminalAgentPrompt(handle, prompt)
+      const sendRejection = expect(sendPromise).rejects.toThrow('terminal_not_writable')
+      await vi.runAllTimersAsync()
+
+      await sendRejection
+      expect(writes[0]).toContain(AGENT_PROMPT_BRACKETED_PASTE_START)
+      expect(writes.at(-1)).toBe(AGENT_PROMPT_BRACKETED_PASTE_END)
+      expect(writes).not.toContain('\r')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('chunks large terminal.send text before provider writes', async () => {
     const writes: string[] = []
     const runtime = new OrcaRuntimeService(store)
@@ -17952,6 +18061,413 @@ describe('OrcaRuntimeService', () => {
 
       expect(outcome.ok).toBe(false)
       expect(closeTerminal).toHaveBeenCalledWith('tab-ghost')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // Why: the five #7587 mobile-create tests need an identical full notifier where
+  // only closeTerminal is observed; one factory keeps notifier-interface changes
+  // in a single place.
+  function createMobileCreateTestNotifier(
+    closeTerminal: (tabId: string, paneRuntimeId?: number) => void
+  ) {
+    return {
+      focusTerminal: vi.fn(),
+      worktreesChanged: vi.fn(),
+      reposChanged: vi.fn(),
+      activateWorktree: vi.fn(),
+      createTerminal: vi.fn(),
+      revealTerminalSession: vi.fn(),
+      splitTerminal: vi.fn(),
+      renameTerminal: vi.fn(),
+      closeTerminal,
+      closeSessionTab: vi.fn(),
+      sleepWorktree: vi.fn(),
+      terminalFitOverrideChanged: vi.fn(),
+      terminalDriverChanged: vi.fn()
+    }
+  }
+
+  it('rolls back a mobile create when the materialize spawn fails and no live PTY backs the tab', async () => {
+    vi.useFakeTimers()
+    try {
+      const pendingLeafId = '99999999-9999-4999-8999-999999999999'
+      const closeTerminal = vi.fn()
+      // Why: the renderer publishes a handle-less shell surface (no ptyId) and the
+      // runtime materialize spawn then fails, so NO live PTY ever backs the tab.
+      // The catch must roll back — the #7587 rescue is gated on a live PTY, not on
+      // the mere presence of a surface, or a dead shell would resolve as success.
+      const spawn = vi.fn().mockRejectedValue(new Error('spawn failed'))
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setPtyController({
+        spawn,
+        write: () => true,
+        kill: () => true,
+        getForegroundProcess: async () => null
+      })
+      runtime.setNotifier(createMobileCreateTestNotifier(closeTerminal))
+      const webContents = { send: vi.fn() }
+      const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+        ipcMain.emit(
+          'terminal:tabCreateReply',
+          { sender: webContents },
+          { requestId: payload.requestId, tabId: 'tab-pending', title: 'Terminal' }
+        )
+      })
+      webContents.send = send
+      runtime.attachWindow(1)
+      runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+      electronMocks.BrowserWindow.fromId.mockReturnValue({
+        isDestroyed: () => false,
+        webContents
+      })
+
+      const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+        activate: true
+      })
+      const settled = create.then(
+        () => ({ ok: true as const }),
+        (error: Error) => ({ ok: false as const, error })
+      )
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+
+      // Only the tab shell publishes (no ptyId → never ready); no PTY ever binds.
+      runtime.syncWindowGraph(1, {
+        tabs: [],
+        leaves: [],
+        mobileSessionTabs: [
+          {
+            worktree: TEST_WORKTREE_ID,
+            publicationEpoch: 'renderer-pending',
+            snapshotVersion: 1,
+            activeGroupId: 'group-1',
+            activeTabId: `tab-pending::${pendingLeafId}`,
+            activeTabType: 'terminal',
+            tabs: [
+              {
+                type: 'terminal',
+                id: `tab-pending::${pendingLeafId}`,
+                parentTabId: 'tab-pending',
+                leafId: pendingLeafId,
+                title: 'Terminal',
+                isActive: true
+              }
+            ]
+          }
+        ]
+      })
+
+      // Ready-fallback (1s) expires → materialize runs → spawn rejects → catch.
+      await vi.advanceTimersByTimeAsync(2_000)
+      const outcome = await settled
+
+      expect(outcome.ok).toBe(false)
+      expect(closeTerminal).toHaveBeenCalledWith('tab-pending')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a mobile-created terminal alive when the renderer never publishes the surface', async () => {
+    vi.useFakeTimers()
+    try {
+      const leafId = '44444444-4444-4444-8444-444444444444'
+      const closeTerminal = vi.fn()
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setNotifier(createMobileCreateTestNotifier(closeTerminal))
+      // Why: reply with a tabId but NEVER sync a matching mobileSessionTabs graph,
+      // reproducing a throttled/hidden renderer that spawns the PTY yet stalls its
+      // graph-sync publication past the surface timeout (#7587).
+      const webContents = { send: vi.fn() }
+      const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+        ipcMain.emit(
+          'terminal:tabCreateReply',
+          { sender: webContents },
+          { requestId: payload.requestId, tabId: 'tab-alive', title: 'Terminal' }
+        )
+      })
+      webContents.send = send
+      runtime.attachWindow(1)
+      runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+      electronMocks.BrowserWindow.fromId.mockReturnValue({
+        isDestroyed: () => false,
+        webContents
+      })
+
+      const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+        activate: true
+      })
+      let settled = false
+      const settledCreate = create.finally(() => {
+        settled = true
+      })
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+
+      // The renderer's own PTY spawn registers with the tab binding — the same
+      // call the pty IPC layer now makes — without any mobileSessionTabs sync.
+      runtime.registerPty('pty-alive', TEST_WORKTREE_ID, null, {
+        tabId: 'tab-alive',
+        leafId
+      })
+
+      // Resolves promptly, well under MOBILE_TERMINAL_SURFACE_TIMEOUT_MS (10s).
+      await vi.advanceTimersByTimeAsync(50)
+      const result = await settledCreate
+
+      expect(settled).toBe(true)
+      expect(result.tab).toMatchObject({
+        type: 'terminal',
+        parentTabId: 'tab-alive',
+        leafId,
+        status: 'ready',
+        terminal: expect.stringMatching(/^term_/)
+      })
+      expect(closeTerminal).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a mobile-created terminal alive when the renderer PTY spawn races ahead of the reply', async () => {
+    vi.useFakeTimers()
+    try {
+      const leafId = '55555555-5555-4555-8555-555555555555'
+      const closeTerminal = vi.fn()
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setNotifier(createMobileCreateTestNotifier(closeTerminal))
+      // Why: the spawn and the tabCreate reply travel independent IPC channels;
+      // here the renderer registers the live PTY before it replies, so only the
+      // create's immediate pre-wait check can resolve it — asserting it settles
+      // well under the surface timeout pins that site, not the catch backstop.
+      const webContents = { send: vi.fn() }
+      const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+        runtime.registerPty('pty-early', TEST_WORKTREE_ID, null, {
+          tabId: 'tab-early',
+          leafId
+        })
+        ipcMain.emit(
+          'terminal:tabCreateReply',
+          { sender: webContents },
+          { requestId: payload.requestId, tabId: 'tab-early', title: 'Terminal' }
+        )
+      })
+      webContents.send = send
+      runtime.attachWindow(1)
+      runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+      electronMocks.BrowserWindow.fromId.mockReturnValue({
+        isDestroyed: () => false,
+        webContents
+      })
+
+      const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+        activate: true
+      })
+      let settled = false
+      const settledCreate = create.finally(() => {
+        settled = true
+      })
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+
+      // Resolves via the immediate pre-wait rescue, well under the 10s timeout;
+      // reverting that site would only resolve later through the catch path.
+      await vi.advanceTimersByTimeAsync(50)
+      expect(settled).toBe(true)
+      const result = await settledCreate
+
+      expect(result.tab).toMatchObject({
+        type: 'terminal',
+        parentTabId: 'tab-early',
+        leafId,
+        status: 'ready',
+        terminal: expect.stringMatching(/^term_/)
+      })
+      expect(closeTerminal).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a mobile-created terminal alive when the renderer snapshot is rejected by the version guard', async () => {
+    vi.useFakeTimers()
+    try {
+      const leafId = '66666666-6666-4666-8666-666666666666'
+      const closeTerminal = vi.fn()
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setNotifier(createMobileCreateTestNotifier(closeTerminal))
+      const webContents = { send: vi.fn() }
+      const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+        ipcMain.emit(
+          'terminal:tabCreateReply',
+          { sender: webContents },
+          { requestId: payload.requestId, tabId: 'tab-guard', title: 'Terminal' }
+        )
+      })
+      webContents.send = send
+      runtime.attachWindow(1)
+      electronMocks.BrowserWindow.fromId.mockReturnValue({
+        isDestroyed: () => false,
+        webContents
+      })
+      // Why: seed an inflated stored version under a stable epoch (no headless /
+      // serve-owned tabs, so the preserve-merge can't lift the version via
+      // Math.max) — this is the state prior renderer publications leave behind.
+      runtime.syncWindowGraph(1, {
+        tabs: [],
+        leaves: [],
+        mobileSessionTabs: [
+          {
+            worktree: TEST_WORKTREE_ID,
+            publicationEpoch: 'epoch-guard',
+            snapshotVersion: 50,
+            activeGroupId: 'group-guard',
+            activeTabId: null,
+            activeTabType: null,
+            tabs: []
+          }
+        ]
+      })
+
+      const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+        activate: true
+      })
+      let settled = false
+      const settledCreate = create.finally(() => {
+        settled = true
+      })
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+
+      // The renderer publishes the new tab, but with a stale (lower) version
+      // under the same epoch, so syncMobileSessionTabs rejects it and the surface
+      // never lands via graph-sync — the reporter's exact stall variant (#7587).
+      runtime.syncWindowGraph(1, {
+        tabs: [],
+        leaves: [],
+        mobileSessionTabs: [
+          {
+            worktree: TEST_WORKTREE_ID,
+            publicationEpoch: 'epoch-guard',
+            snapshotVersion: 1,
+            activeGroupId: 'group-guard',
+            activeTabId: `tab-guard::${leafId}`,
+            activeTabType: 'terminal',
+            tabs: [
+              {
+                type: 'terminal',
+                id: `tab-guard::${leafId}`,
+                parentTabId: 'tab-guard',
+                leafId,
+                title: 'Terminal',
+                isActive: true
+              }
+            ]
+          }
+        ]
+      })
+      await vi.advanceTimersByTimeAsync(50)
+      // The rejected renderer sync must not have resolved the create.
+      expect(settled).toBe(false)
+      // Prove the rejection: the stored snapshot still lacks the tab.
+      const beforeRescue = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+      expect(
+        beforeRescue.tabs.some((tab) => tab.type === 'terminal' && tab.parentTabId === 'tab-guard')
+      ).toBe(false)
+
+      // The renderer's own PTY spawn registers with the binding and rescues it.
+      runtime.registerPty('pty-guard', TEST_WORKTREE_ID, null, {
+        tabId: 'tab-guard',
+        leafId
+      })
+      await vi.advanceTimersByTimeAsync(50)
+      const result = await settledCreate
+
+      expect(settled).toBe(true)
+      expect(result.tab).toMatchObject({
+        type: 'terminal',
+        parentTabId: 'tab-guard',
+        leafId,
+        status: 'ready',
+        terminal: expect.stringMatching(/^term_/)
+      })
+      expect(closeTerminal).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a mobile-created terminal alive at the surface timeout when only a leaf-synced PTY backs the tab', async () => {
+    vi.useFakeTimers()
+    try {
+      const leafId = '77777777-7777-4777-8777-777777777777'
+      const closeTerminal = vi.fn()
+      const runtime = new OrcaRuntimeService(store)
+      runtime.setNotifier(createMobileCreateTestNotifier(closeTerminal))
+      // Why: the renderer pane identity can reach the runtime via leaf graph-sync
+      // (recordPtyWorktree) without registerPty, and leaf-sync never calls the
+      // pty-backed rescue; so when the mobileSessionTabs publication stalls past
+      // the surface timeout, only the catch-path rescue saves the live session —
+      // this pins the third #7587 rescue site, which the other tests never reach.
+      const webContents = { send: vi.fn() }
+      const send = vi.fn((_channel: string, payload: { requestId: string }) => {
+        ipcMain.emit(
+          'terminal:tabCreateReply',
+          { sender: webContents },
+          { requestId: payload.requestId, tabId: 'tab-catch', title: 'Terminal' }
+        )
+      })
+      webContents.send = send
+      runtime.attachWindow(1)
+      runtime.syncWindowGraph(1, { tabs: [], leaves: [] })
+      electronMocks.BrowserWindow.fromId.mockReturnValue({
+        isDestroyed: () => false,
+        webContents
+      })
+
+      const create = runtime.createMobileSessionTerminal(`id:${TEST_WORKTREE_ID}`, {
+        activate: true
+      })
+      let settled = false
+      const settledCreate = create.finally(() => {
+        settled = true
+      })
+      await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(1))
+
+      // Let the create clear its immediate pre-wait check (no live PTY yet) and
+      // park in waitForMobileTerminalSurface before any identity arrives.
+      await vi.advanceTimersByTimeAsync(50)
+
+      // Renderer pane identity arrives via leaf graph-sync — NOT registerPty — so
+      // no rescue fires here, and the mobileSessionTabs surface is never published.
+      runtime.syncWindowGraph(1, {
+        tabs: [],
+        leaves: [
+          {
+            tabId: 'tab-catch',
+            worktreeId: TEST_WORKTREE_ID,
+            leafId,
+            paneRuntimeId: 1,
+            ptyId: 'pty-catch'
+          }
+        ]
+      })
+
+      // Surface still unpublished, so the create is still pending.
+      expect(settled).toBe(false)
+
+      // Cross MOBILE_TERMINAL_SURFACE_TIMEOUT_MS (10s): the catch path must rescue
+      // from the live PTY instead of rolling the session back destructively.
+      await vi.advanceTimersByTimeAsync(11_000)
+      const result = await settledCreate
+
+      expect(settled).toBe(true)
+      expect(result.tab).toMatchObject({
+        type: 'terminal',
+        parentTabId: 'tab-catch',
+        leafId,
+        status: 'ready',
+        terminal: expect.stringMatching(/^term_/)
+      })
+      expect(closeTerminal).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }

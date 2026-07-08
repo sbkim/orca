@@ -224,4 +224,175 @@ describe('MobileFileExplorerPanel', () => {
     expect(renderedText(renderer)).toContain('README.md')
     expect(renderedText(renderer)).not.toContain('Waiting for desktop...')
   })
+
+  it('refreshes the root in the background after reconnect without blanking the tree', async () => {
+    const client = createMockClient({
+      '': [entry('src', true), entry('README.md')]
+    })
+    mockTransport.client = client
+
+    const renderer = await renderExplorer()
+    expect(renderedText(renderer)).toContain('README.md')
+
+    mockTransport.client = null
+    mockTransport.connectionState = 'disconnected'
+    await updateExplorer(renderer)
+
+    let resolveReload: ((response: RpcResponse) => void) | undefined
+    const reconnectedClient: MockClient = {
+      sendRequest: vi.fn(
+        () =>
+          new Promise<RpcResponse>((resolve) => {
+            resolveReload = resolve
+          })
+      )
+    }
+    mockTransport.client = reconnectedClient
+    mockTransport.connectionState = 'connected'
+    await updateExplorer(renderer)
+
+    expect(reconnectedClient.sendRequest).toHaveBeenCalledTimes(1)
+    expect(renderedText(renderer)).toContain('src')
+    expect(renderedText(renderer)).toContain('README.md')
+
+    await act(async () => {
+      resolveReload?.(ok([entry('src', true), entry('README.md'), entry('CHANGELOG.md')]))
+    })
+    expect(renderedText(renderer)).toContain('CHANGELOG.md')
+  })
+
+  it('keeps the cached tree when a post-reconnect root refresh fails', async () => {
+    const client = createMockClient({
+      '': [entry('src', true), entry('README.md')]
+    })
+    mockTransport.client = client
+
+    const renderer = await renderExplorer()
+    expect(renderedText(renderer)).toContain('README.md')
+
+    mockTransport.client = null
+    mockTransport.connectionState = 'disconnected'
+    await updateExplorer(renderer)
+
+    const failingClient: MockClient = {
+      sendRequest: vi.fn(async () => {
+        throw new Error('refresh failed')
+      })
+    }
+    mockTransport.client = failingClient
+    mockTransport.connectionState = 'connected'
+    await updateExplorer(renderer)
+
+    expect(failingClient.sendRequest).toHaveBeenCalledTimes(1)
+    expect(renderedText(renderer)).toContain('src')
+    expect(renderedText(renderer)).toContain('README.md')
+    expect(renderedText(renderer)).not.toContain('refresh failed')
+  })
+
+  it('falls back to the capped files.list against desktops without files.readDir', async () => {
+    const legacyClient: MockClient = {
+      sendRequest: vi.fn(async (method: string): Promise<RpcResponse> => {
+        if (method === 'files.readDir') {
+          return {
+            id: 'response-id',
+            ok: false,
+            error: {
+              code: 'forbidden',
+              message: "Method 'files.readDir' is not available to mobile clients"
+            },
+            _meta: { runtimeId: 'runtime-id' }
+          }
+        }
+        return {
+          id: 'response-id',
+          ok: true,
+          result: {
+            files: [
+              { relativePath: 'src/app.ts', basename: 'app.ts', kind: 'text' },
+              { relativePath: 'README.md', basename: 'README.md', kind: 'text' }
+            ],
+            totalCount: 2,
+            truncated: false
+          },
+          _meta: { runtimeId: 'runtime-id' }
+        }
+      })
+    }
+    mockTransport.client = legacyClient
+
+    const renderer = await renderExplorer()
+
+    expect(legacyClient.sendRequest).toHaveBeenCalledWith('files.list', {
+      worktree: 'id:worktree-a'
+    })
+    expect(renderedText(renderer)).toContain('src')
+    expect(renderedText(renderer)).toContain('README.md')
+
+    await pressByLabel(renderer, 'Open folder src')
+    expect(renderedText(renderer)).toContain('app.ts')
+    // Every directory comes from the synthesized cache: one readDir attempt
+    // plus one files.list call total, no per-directory RPCs afterwards.
+    expect(legacyClient.sendRequest).toHaveBeenCalledTimes(2)
+  })
+
+  it('surfaces the legacy cap note when the files.list fallback is truncated', async () => {
+    const legacyClient: MockClient = {
+      sendRequest: vi.fn(async (method: string): Promise<RpcResponse> => {
+        if (method === 'files.readDir') {
+          return {
+            id: 'response-id',
+            ok: false,
+            error: { code: 'method_not_found', message: 'Unknown method' },
+            _meta: { runtimeId: 'runtime-id' }
+          }
+        }
+        return {
+          id: 'response-id',
+          ok: true,
+          result: {
+            files: [{ relativePath: 'README.md', basename: 'README.md', kind: 'text' }],
+            totalCount: 6000,
+            truncated: true
+          },
+          _meta: { runtimeId: 'runtime-id' }
+        }
+      })
+    }
+    mockTransport.client = legacyClient
+
+    const renderer = await renderExplorer()
+
+    expect(renderedText(renderer)).toContain('README.md')
+    expect(renderedText(renderer)).toContain('Showing first 5000')
+  })
+
+  it('reports the files.list failure when the fallback itself fails', async () => {
+    const legacyClient: MockClient = {
+      sendRequest: vi.fn(async (method: string): Promise<RpcResponse> => {
+        if (method === 'files.readDir') {
+          return {
+            id: 'response-id',
+            ok: false,
+            error: {
+              code: 'forbidden',
+              message: "Method 'files.readDir' is not available to mobile clients"
+            },
+            _meta: { runtimeId: 'runtime-id' }
+          }
+        }
+        return {
+          id: 'response-id',
+          ok: false,
+          error: { code: 'internal', message: 'legacy list failed' },
+          _meta: { runtimeId: 'runtime-id' }
+        }
+      })
+    }
+    mockTransport.client = legacyClient
+
+    const renderer = await renderExplorer()
+
+    expect(renderedText(renderer)).toContain('legacy list failed')
+    expect(renderedText(renderer)).not.toContain('not available to mobile clients')
+  })
 })

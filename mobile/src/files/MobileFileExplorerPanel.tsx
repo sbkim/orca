@@ -28,6 +28,11 @@ import {
   resetDirectoryLoadRevisions,
   type DirectoryLoadRevisions
 } from './directory-load-revisions'
+import {
+  directoryCacheFromFileList,
+  isMobileMethodUnavailableError,
+  type LegacyFilesListResult
+} from './file-list-fallback'
 import { fileExplorerStyles as styles } from './mobile-file-explorer-styles'
 import { MobileFileExplorerRow } from './mobile-file-explorer-row'
 import { navigateToMobileFilePreview } from './mobile-file-preview-navigation'
@@ -53,6 +58,7 @@ export function MobileFileExplorerPanel(props: {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [legacyListTruncated, setLegacyListTruncated] = useState(false)
   const worktreeLabel = getWorktreeLabel(name, worktreeId)
 
   const loadDirectory = useCallback(
@@ -82,8 +88,14 @@ export function MobileFileExplorerPanel(props: {
         return
       }
 
+      const hadLoadedRoot =
+        rootLoad && (getDirectoryCacheState(directoryCacheRef.current, '')?.entries.length ?? 0) > 0
       if (rootLoad) {
-        setLoading(true)
+        // Why: a reconnect refresh must not blank an already browsable tree —
+        // the full-screen spinner unmounts the list and resets scroll.
+        if (!hadLoadedRoot) {
+          setLoading(true)
+        }
         setError(null)
       }
       setDirectoryCache((prev) => ({
@@ -100,6 +112,37 @@ export function MobileFileExplorerPanel(props: {
           relativePath
         })
         if (!response.ok) {
+          // Why: desktops that predate the files.readDir mobile allowlist
+          // entry still serve the capped files.list; fall back so the Files
+          // tab keeps working until the desktop updates.
+          if (
+            rootLoad &&
+            isMobileMethodUnavailableError(response.error?.code, response.error?.message)
+          ) {
+            const legacy = await client.sendRequest('files.list', {
+              worktree: `id:${worktreeId}`
+            })
+            if (legacy.ok) {
+              if (
+                !isCurrentDirectoryLoad(
+                  directoryLoadRevisionsRef.current,
+                  scopeRef.current,
+                  loadToken
+                )
+              ) {
+                return
+              }
+              const legacyResult = (legacy as RpcSuccess).result as LegacyFilesListResult
+              setDirectoryCache(directoryCacheFromFileList(legacyResult.files))
+              // Why: the capped list silently omits files past the cap — keep
+              // the legacy explorer's "Showing first 5000" note.
+              setLegacyListTruncated(legacyResult.truncated)
+              return
+            }
+            throw new Error(
+              legacy.error?.message || response.error?.message || 'Unable to load files'
+            )
+          }
           throw new Error(response.error?.message || 'Unable to load files')
         }
         if (
@@ -108,6 +151,9 @@ export function MobileFileExplorerPanel(props: {
           return
         }
         const entries = (response as RpcSuccess).result as MobileDirEntry[]
+        if (rootLoad) {
+          setLegacyListTruncated(false)
+        }
         setDirectoryCache((prev) => ({
           ...prev,
           [relativePath]: { entries }
@@ -120,7 +166,9 @@ export function MobileFileExplorerPanel(props: {
         }
         const message = err instanceof Error ? err.message : 'Unable to load files'
         if (rootLoad) {
-          setError(message)
+          // Why: a failed background refresh keeps the cached tree browsable;
+          // only a cold load surfaces the full-screen error.
+          setError(hadLoadedRoot ? null : message)
         } else {
           setDirectoryCache((prev) => ({
             ...prev,
@@ -151,6 +199,7 @@ export function MobileFileExplorerPanel(props: {
     setExpanded(new Set())
     setLoading(true)
     setError(null)
+    setLegacyListTruncated(false)
   }, [scope])
 
   useEffect(() => {
@@ -264,6 +313,7 @@ export function MobileFileExplorerPanel(props: {
         </Text>
         <Text style={styles.meta} numberOfLines={1}>
           {worktreeLabel}
+          {legacyListTruncated ? ' - Showing first 5000' : ''}
         </Text>
       </View>
     </View>
