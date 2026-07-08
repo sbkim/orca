@@ -16695,7 +16695,13 @@ describe('OrcaRuntimeService', () => {
       expect.objectContaining({ sessionId: 'serve-dead-pty', worktreeId: TEST_WORKTREE_ID })
     )
     expect(spawn.mock.calls[0]![0].command).toBeUndefined()
-    expect(activated.tabs[0]).toMatchObject({ type: 'terminal', status: 'ready' })
+    // Why: the disabled-agent fallback keeps the tab's agent identity; only the
+    // startup command is skipped.
+    expect(activated.tabs[0]).toMatchObject({
+      type: 'terminal',
+      status: 'ready',
+      launchAgent: 'claude'
+    })
   })
 
   it('collapses duplicate mobile terminal entries when renderer and headless leaf ids diverge for the same pty', async () => {
