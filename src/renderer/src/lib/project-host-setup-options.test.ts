@@ -157,6 +157,29 @@ describe('buildProjectHostSetupOptions', () => {
     expect(options.some((o) => String(o.hostId).includes('runtime-ssh-'))).toBe(false)
   })
 
+  it('omits hidden host categories from setup-needed choices', () => {
+    const runtimeSshHostId = 'ssh:runtime-ssh-orca-e37aa3a9' as ExecutionHostId
+    const ephemeralHostId = 'runtime:90d880b2-de1b-44be-b7b8-8e15274e184e' as ExecutionHostId
+
+    const options = buildProjectHostSetupOptions({
+      projectId: 'project-1',
+      eligibleRepos: [repo('local-repo')],
+      hosts: [
+        host('local'),
+        host(runtimeSshHostId),
+        host(ephemeralHostId, {
+          source: 'ephemeral-vm',
+          capabilities: FULL_HOST_MODEL_RUNTIME_CAPABILITIES
+        })
+      ],
+      projectHostSetups: [setup('local', 'project-1', 'local', 'local-repo')]
+    })
+
+    expect(options).toEqual([
+      expect.objectContaining({ id: 'local', kind: 'ready', label: LOCAL_HOST_LABEL })
+    ])
+  })
+
   it('omits setups that are not ready or cannot create through an eligible repo', () => {
     const options = buildProjectHostSetupOptions({
       projectId: 'project-1',

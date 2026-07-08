@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import NewWorkspaceComposerCard from './NewWorkspaceComposerCard'
 import type { NewWorkspaceProjectOption } from '@/lib/new-workspace-project-options'
+import type { ProjectHostSetupOption } from '@/lib/project-host-setup-options'
 
 vi.mock('@/store', () => ({
   useAppStore: (selector: (state: unknown) => unknown) =>
@@ -105,6 +106,27 @@ const sourceRepos = [
   }
 ]
 
+const localReadyHostOption: ProjectHostSetupOption = {
+  kind: 'ready',
+  id: 'setup-local',
+  projectId: 'project-group:platform',
+  hostId: 'local',
+  repoId: 'repo-a',
+  label: 'Local Mac',
+  detail: 'Orca',
+  path: '/Users/alice/orca'
+}
+
+const devboxNeedsSetupHostOption: ProjectHostSetupOption = {
+  kind: 'needs-setup',
+  id: 'needs-setup:ssh:devbox',
+  projectId: 'project-group:platform',
+  hostId: 'ssh:devbox',
+  label: 'Devbox',
+  detail: 'Project not set up on this host',
+  isAvailable: true
+}
+
 function renderCard(
   overrides: Partial<React.ComponentProps<typeof NewWorkspaceComposerCard>> = {}
 ) {
@@ -193,6 +215,18 @@ function changeInputValue(input: HTMLInputElement, value: string): void {
     valueSetter?.call(input, value)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
+}
+
+function openRunTargetPicker(container: HTMLElement): void {
+  const runTargetButton = container.querySelector<HTMLButtonElement>('button[role="combobox"]')
+  expect(runTargetButton).toBeTruthy()
+  act(() => runTargetButton?.click())
+}
+
+function findRunTargetItem(label: string): HTMLElement | undefined {
+  return [...document.body.querySelectorAll<HTMLElement>('[cmdk-item]')].find((item) =>
+    item.textContent?.includes(label)
+  )
 }
 
 let current: { container: HTMLDivElement; root: Root } | null = null
@@ -418,6 +452,49 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
         .querySelector('[aria-label="workspace name"]')
         ?.getAttribute('data-repo-backed-sources-disabled')
     ).toBe('false')
+  })
+
+  it('shows setup-needed hosts in the run target picker when one setup is ready', () => {
+    current = renderCard({
+      projectHostSetupOptions: [localReadyHostOption, devboxNeedsSetupHostOption],
+      selectedProjectHostSetupId: 'setup-local'
+    })
+
+    expect(current.container.textContent).toContain('Run on')
+    openRunTargetPicker(current.container)
+
+    const devboxItem = findRunTargetItem('Devbox')
+    expect(devboxItem?.textContent).toContain('Project not set up on this host')
+    expect(
+      devboxItem?.getAttribute('aria-disabled') === 'true' ||
+        devboxItem?.hasAttribute('data-disabled')
+    ).toBe(true)
+  })
+
+  it('hides the run target picker when only one setup is ready', () => {
+    current = renderCard({
+      projectHostSetupOptions: [localReadyHostOption],
+      selectedProjectHostSetupId: 'setup-local'
+    })
+
+    expect(current.container.textContent).not.toContain('Run on')
+    expect(current.container.querySelector<HTMLButtonElement>('button[role="combobox"]')).toBeNull()
+  })
+
+  it('does not select setup-needed run target rows', () => {
+    const hostChanges: string[] = []
+    current = renderCard({
+      projectHostSetupOptions: [localReadyHostOption, devboxNeedsSetupHostOption],
+      selectedProjectHostSetupId: 'setup-local',
+      onProjectHostSetupChange: (setupId) => hostChanges.push(setupId)
+    })
+
+    openRunTargetPicker(current.container)
+    const devboxItem = findRunTargetItem('Devbox')
+    expect(devboxItem).toBeTruthy()
+    act(() => devboxItem?.click())
+
+    expect(hostChanges).toEqual([])
   })
 
   it('shows VM recipes inside the run target picker', () => {

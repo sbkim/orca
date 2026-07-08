@@ -222,7 +222,7 @@ function getRecipeDestroyLabel(recipe: EphemeralVmRecipeOption): string {
 }
 
 type WorkspaceRunTargetComboboxProps = {
-  hostOptions: readonly ReadyProjectHostSetupOption[]
+  hostOptions: readonly ProjectHostSetupOption[]
   hostValue: string | null
   onHostChange?: (setupId: string) => void
   recipes: EphemeralVmRecipeOption[]
@@ -240,8 +240,15 @@ function WorkspaceRunTargetCombobox({
 }: WorkspaceRunTargetComboboxProps): React.JSX.Element {
   const [open, setOpen] = React.useState(false)
   const [vmRecipesOpen, setVmRecipesOpen] = React.useState(false)
+  const readyHostOptions = React.useMemo(
+    () =>
+      hostOptions.filter(
+        (option): option is ReadyProjectHostSetupOption => option.kind === 'ready'
+      ),
+    [hostOptions]
+  )
   const selectedHost =
-    hostOptions.find((option) => option.id === hostValue) ?? hostOptions[0] ?? null
+    readyHostOptions.find((option) => option.id === hostValue) ?? readyHostOptions[0] ?? null
   const selectedRecipe = recipes.find((recipe) => recipe.id === recipeValue) ?? null
   const selectedValue = selectedRecipe
     ? `recipe:${selectedRecipe.id}`
@@ -255,14 +262,14 @@ function WorkspaceRunTargetCombobox({
 
   const handleHostSelect = React.useCallback(
     (setupId: string): void => {
-      if (!hostOptions.some((candidate) => candidate.id === setupId)) {
+      if (!readyHostOptions.some((candidate) => candidate.id === setupId)) {
         return
       }
       onHostChange?.(setupId)
       onRecipeChange?.(null)
       setOpen(false)
     },
-    [hostOptions, onHostChange, onRecipeChange]
+    [onHostChange, onRecipeChange, readyHostOptions]
   )
 
   const handleRecipeSelect = React.useCallback(
@@ -322,28 +329,54 @@ function WorkspaceRunTargetCombobox({
                 'No run targets are ready for this project.'
               )}
             </CommandEmpty>
-            {hostOptions.map((option) => (
-              <CommandItem
-                key={option.id}
-                value={`host:${option.id}`}
-                onSelect={() => handleHostSelect(option.id)}
-                className="items-center gap-2 px-3 py-2"
-              >
-                <Check
-                  className={cn(
-                    'size-4 text-foreground',
-                    !selectedRecipe && option.id === selectedHost?.id ? 'opacity-100' : 'opacity-0'
-                  )}
-                />
-                <Server className="size-3.5 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm">{option.label}</div>
-                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                    {option.path}
+            {hostOptions.map((option) =>
+              option.kind === 'ready' ? (
+                <CommandItem
+                  key={option.id}
+                  value={`host:${option.id}`}
+                  onSelect={() => handleHostSelect(option.id)}
+                  className="items-center gap-2 px-3 py-2"
+                >
+                  <Check
+                    className={cn(
+                      'size-4 text-foreground',
+                      !selectedRecipe && option.id === selectedHost?.id
+                        ? 'opacity-100'
+                        : 'opacity-0'
+                    )}
+                  />
+                  <Server className="size-3.5 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm">{option.label}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      {option.path}
+                    </div>
                   </div>
-                </div>
-              </CommandItem>
-            ))}
+                </CommandItem>
+              ) : (
+                // Why: setup-on-host is a follow-up; this row only explains why the host cannot
+                // run the workspace yet.
+                <CommandItem
+                  key={option.id}
+                  value={option.id}
+                  disabled
+                  className="items-center gap-2 px-3 py-2"
+                >
+                  <Check className="size-4 opacity-0" />
+                  {option.isAvailable ? (
+                    <Server className="size-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <AlertTriangle className="size-3.5 shrink-0 text-muted-foreground" />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm">{option.label}</div>
+                    <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                      {option.detail}
+                    </div>
+                  </div>
+                </CommandItem>
+              )
+            )}
             {recipes.length > 0 ? (
               <Popover open={vmRecipesOpen} onOpenChange={setVmRecipesOpen}>
                 <PopoverTrigger asChild>
@@ -768,6 +801,16 @@ export default function NewWorkspaceComposerCard({
     () => projectHostSetupOptions.filter((option) => option.kind === 'ready'),
     [projectHostSetupOptions]
   )
+  const needsSetupProjectHostSetupOptions = React.useMemo(
+    () => projectHostSetupOptions.filter((option) => option.kind === 'needs-setup'),
+    [projectHostSetupOptions]
+  )
+  // Why: one ready host plus another host that needs setup should be discoverable, while
+  // the single-ready-only case remains compact.
+  const shouldShowRunTargetPicker =
+    readyProjectHostSetupOptions.length > 1 ||
+    ephemeralVmRecipes.length > 0 ||
+    (readyProjectHostSetupOptions.length > 0 && needsSetupProjectHostSetupOptions.length > 0)
   const handleProjectHostSetupChange = React.useCallback(
     (setupId: string): void => {
       onProjectHostSetupChange?.(setupId)
@@ -861,13 +904,13 @@ export default function NewWorkspaceComposerCard({
                 )}
             </p>
           ) : null}
-          {readyProjectHostSetupOptions.length > 1 || ephemeralVmRecipes.length > 0 ? (
+          {shouldShowRunTargetPicker ? (
             <div className="space-y-1">
               <label className="block min-w-0 truncate text-xs font-medium text-muted-foreground">
                 {translate('auto.components.NewWorkspaceComposerCard.runOn', 'Run on')}
               </label>
               <WorkspaceRunTargetCombobox
-                hostOptions={readyProjectHostSetupOptions}
+                hostOptions={projectHostSetupOptions}
                 hostValue={selectedProjectHostSetupId ?? null}
                 onHostChange={handleProjectHostSetupChange}
                 recipes={ephemeralVmRecipes}
