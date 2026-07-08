@@ -83,6 +83,7 @@ import { attachMobileMarkdownBridge } from '@/runtime/mobile-markdown-bridge'
 import { closeMobileSessionTabInStore } from '@/runtime/mobile-session-tab-close'
 import { createWorktreeChangeRefreshQueue } from './worktree-change-refresh-queue'
 import { subscribeRuntimeClientEvents } from '@/runtime/runtime-client-events'
+import { isPairedWebClientWindow } from '@/lib/desktop-window-chrome'
 import { createRuntimeProjectRefreshScheduler } from './runtime-project-refresh-scheduler'
 import { createRuntimeClientEventsSync } from './runtime-client-events-sync'
 import { detectLanguage } from '@/lib/language-detect'
@@ -963,9 +964,24 @@ export function useIpcEvents(): void {
       }
     })
 
+    // Assigned later in this effect, next to the ssh.onStateChanged wiring;
+    // events can't fire before that because subscriptions attach asynchronously.
+    let handleSshStateChangedEvent: ((data: { targetId: string; state: unknown }) => void) | null =
+      null
+
     const handleRuntimeClientEvent = (environmentId: string, event: RuntimeClientEvent): void => {
       if (event.type === 'reposChanged') {
         runtimeProjectRefreshScheduler.request(environmentId)
+        return
+      }
+      if (event.type === 'sshStateChanged') {
+        // Why: only a paired web client routes its ssh.* API to the host that
+        // emitted this event, so only there can the store mirror host SSH state
+        // (STA-1468). Desktop clients own a local SSH surface a foreign
+        // runtime's targets would pollute, so they ignore it.
+        if (isPairedWebClientWindow()) {
+          handleSshStateChangedEvent?.({ targetId: event.targetId, state: event.state })
+        }
         return
       }
       if (event.type === 'worktreesChanged') {
@@ -2667,49 +2683,49 @@ export function useIpcEvents(): void {
     let sshTargetStateEventId = 0
     const latestSshTargetStateEventByTargetId = new Map<string, number>()
 
-    unsubs.push(
-      window.api.ssh.onStateChanged((data: { targetId: string; state: unknown }) => {
-        const store = useAppStore.getState()
-        const state = data.state as SshConnectionState
-        const stateEventId = ++sshTargetStateEventId
-        latestSshTargetStateEventByTargetId.set(data.targetId, stateEventId)
-        if (!store.sshTargetLabels.has(data.targetId)) {
-          // Why: targets added after boot aren't in the labels map, while
-          // removed targets can still race a final disconnect event. Confirm
-          // with main before mutating renderer state for an unknown target id.
-          window.api.ssh
-            .listTargets()
-            // Why: this refresh is now a deletion guard, not just a label fetch.
-            // Retry once so a transient IPC failure does not drop a real added-target event.
-            .catch(() => window.api.ssh.listTargets())
-            .then((targets) => {
-              if (latestSshTargetStateEventByTargetId.get(data.targetId) !== stateEventId) {
-                return
-              }
+    handleSshStateChangedEvent = (data: { targetId: string; state: unknown }): void => {
+      const store = useAppStore.getState()
+      const state = data.state as SshConnectionState
+      const stateEventId = ++sshTargetStateEventId
+      latestSshTargetStateEventByTargetId.set(data.targetId, stateEventId)
+      if (!store.sshTargetLabels.has(data.targetId)) {
+        // Why: targets added after boot aren't in the labels map, while
+        // removed targets can still race a final disconnect event. Confirm
+        // with main before mutating renderer state for an unknown target id.
+        window.api.ssh
+          .listTargets()
+          // Why: this refresh is now a deletion guard, not just a label fetch.
+          // Retry once so a transient IPC failure does not drop a real added-target event.
+          .catch(() => window.api.ssh.listTargets())
+          .then((targets) => {
+            if (latestSshTargetStateEventByTargetId.get(data.targetId) !== stateEventId) {
+              return
+            }
+            latestSshTargetStateEventByTargetId.delete(data.targetId)
+            const latestStore = useAppStore.getState()
+            if (!targets.some((target) => target.id === data.targetId)) {
+              // Why: disconnect/state events can race after target removal.
+              // Treat absence from main's target list as deletion, not a new target.
+              latestStore.clearRemovedSshTargetState(data.targetId)
+              return
+            }
+            latestStore.setSshTargetsMetadata(targets)
+            applySshConnectionStateChange(data.targetId, state)
+          })
+          .catch(() => {
+            if (latestSshTargetStateEventByTargetId.get(data.targetId) === stateEventId) {
               latestSshTargetStateEventByTargetId.delete(data.targetId)
-              const latestStore = useAppStore.getState()
-              if (!targets.some((target) => target.id === data.targetId)) {
-                // Why: disconnect/state events can race after target removal.
-                // Treat absence from main's target list as deletion, not a new target.
-                latestStore.clearRemovedSshTargetState(data.targetId)
-                return
-              }
-              latestStore.setSshTargetsMetadata(targets)
               applySshConnectionStateChange(data.targetId, state)
-            })
-            .catch(() => {
-              if (latestSshTargetStateEventByTargetId.get(data.targetId) === stateEventId) {
-                latestSshTargetStateEventByTargetId.delete(data.targetId)
-                applySshConnectionStateChange(data.targetId, state)
-              }
-            })
-          return
-        }
+            }
+          })
+        return
+      }
 
-        latestSshTargetStateEventByTargetId.delete(data.targetId)
-        applySshConnectionStateChange(data.targetId, state)
-      })
-    )
+      latestSshTargetStateEventByTargetId.delete(data.targetId)
+      applySshConnectionStateChange(data.targetId, state)
+    }
+
+    unsubs.push(window.api.ssh.onStateChanged(handleSshStateChangedEvent))
 
     let remoteWorkspaceClientId: string | null = null
     let remoteWorkspaceClientIdPromise: Promise<string | null> | null = null
