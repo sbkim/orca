@@ -6232,6 +6232,32 @@ export class OrcaRuntimeService {
     return { ptyId: leaf.ptyId }
   }
 
+  // Why: remote clients hold handles across transport reconnects. A handle
+  // minted for a concrete PTY must never silently adopt a different PTY that
+  // later occupies the same pane — that misroutes keystrokes (#7718). Handles
+  // still awaiting their first PTY (ptyId null) may adopt it, which preserves
+  // the mobile pre-spawn subscribe flow.
+  resolveLiveLeafForHandle(handle: string): { ptyId: string | null } | null {
+    const record = this.handles.get(handle)
+    if (!record) {
+      return null
+    }
+    if (record.tabId.startsWith('pty:')) {
+      return { ptyId: record.ptyId }
+    }
+    const leaf = this.leaves.get(this.getLeafKey(record.tabId, record.leafId))
+    if (!leaf) {
+      return null
+    }
+    if (
+      record.ptyId !== null &&
+      (leaf.ptyId !== record.ptyId || leaf.ptyGeneration !== record.ptyGeneration)
+    ) {
+      throw new Error('terminal_handle_stale')
+    }
+    return { ptyId: leaf.ptyId }
+  }
+
   async resolveTerminalCwd(handle: string): Promise<string | null> {
     const ptyId = this.resolveLeafForHandle(handle)?.ptyId
     if (!ptyId) {
