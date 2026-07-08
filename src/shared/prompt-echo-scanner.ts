@@ -41,7 +41,6 @@ export function foldTerminalTextForEchoMatch(raw: string): string {
 const FOLDED_PLACEHOLDER_PATTERNS = [/pastedcontent\d+chars/, /pastedtext\d+/]
 
 const SAMPLE_LENGTH = 24
-const MIN_SAMPLE_LENGTH = 8
 // Why: refold the whole raw ring on every chunk instead of delta-folding —
 // escape sequences straddling chunk seams make incremental folds misalign,
 // and the scanner only lives for the few seconds after one paste, so the
@@ -58,10 +57,13 @@ export function createPromptEchoScanner(pastedContent: string): PromptEchoScanne
   const folded = foldTerminalTextForEchoMatch(pastedContent)
   const head = folded.slice(0, SAMPLE_LENGTH)
   const tail = folded.length > SAMPLE_LENGTH ? folded.slice(-SAMPLE_LENGTH) : ''
-  // Why: content that folds to almost nothing (punctuation-only prompts)
-  // cannot be matched reliably — treat any post-paste render as echo rather
-  // than blocking delivery on an impossible match.
-  const unmatchable = head.length < MIN_SAMPLE_LENGTH
+  // Why: only content that folds to nothing (punctuation/whitespace-only
+  // prompts) is genuinely impossible to match — treat any post-paste render as
+  // echo there rather than blocking delivery forever. Short-but-nonempty
+  // prompts (e.g. "fix ci") must still match on the head sample below so a
+  // swallow screen that renders none of their characters withholds the submit
+  // (#7466); firing on an arbitrary redraw would resubmit the exact bug.
+  const unmatchable = folded.length === 0
 
   let rawRing = ''
   let echoed = false

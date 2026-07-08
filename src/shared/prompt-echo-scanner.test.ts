@@ -81,7 +81,7 @@ describe('createPromptEchoScanner', () => {
     expect(scanner.observe('unrelated')).toBe(true)
   })
 
-  it('treats content that folds below the minimum sample as echoed on any render', () => {
+  it('treats punctuation-only content that folds to nothing as echoed on any render', () => {
     const scanner = createPromptEchoScanner('!?— \n')
     expect(scanner.observe('any repaint at all')).toBe(true)
   })
@@ -89,5 +89,18 @@ describe('createPromptEchoScanner', () => {
   it('does not fire before any output arrives for unmatchable content', () => {
     const scanner = createPromptEchoScanner('!?— \n')
     expect(scanner.observe('')).toBe(false)
+  })
+
+  it('does not fire a short prompt on a swallow-screen redraw that renders none of it', () => {
+    // #7466: "fix ci" folds to 5 chars — it must still match on its head
+    // sample, not fall back to "any render", or the submit lands on the
+    // swallowing screen exactly as before this fix.
+    const scanner = createPromptEchoScanner('fix ci')
+    expect(scanner.observe(CODEX_TRUST_SWALLOW_REDRAW)).toBe(false)
+  })
+
+  it('fires a short prompt once its characters actually render', () => {
+    const scanner = createPromptEchoScanner('fix ci')
+    expect(scanner.observe('\x1b[11;3Hfix\x1b[11;7Hci')).toBe(true)
   })
 })
