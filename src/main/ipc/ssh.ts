@@ -442,6 +442,24 @@ function registerAdvertisedUrlRefresh(getMainWindow: () => BrowserWindow | null)
   })
 }
 
+// Why: macOS can resume the process before the network stack is back up, so
+// a failed first probe gets one retry before the link is declared dead (#7773).
+const RESUME_PROBE_TIMEOUT_MS = 5_000
+const RESUME_PROBE_ATTEMPTS = 2
+
+async function isRelayLinkAliveAfterResume(session: SshRelaySession): Promise<boolean> {
+  const mux = session.getMux()
+  if (!mux || mux.isDisposed()) {
+    return false
+  }
+  for (let attempt = 0; attempt < RESUME_PROBE_ATTEMPTS; attempt++) {
+    if (await mux.probeLiveness(RESUME_PROBE_TIMEOUT_MS)) {
+      return true
+    }
+  }
+  return false
+}
+
 function registerPowerMonitorReconnect(): void {
   powerMonitorUnsubscribe?.()
   const onSuspend = (): void => {
@@ -450,19 +468,28 @@ function registerPowerMonitorReconnect(): void {
     }
   }
   const onResume = (): void => {
-    for (const targetId of activeSessions.keys()) {
+    for (const [targetId, session] of activeSessions) {
       const conn = connectionManager?.getConnection(targetId)
       if (!conn) {
         continue
       }
-      const reconnect = connectionManager?.reconnect(targetId)
-      void reconnect?.catch((err) => {
-        console.warn(
-          `[ssh] Failed to reconnect ${targetId} after system resume: ${
-            err instanceof Error ? err.message : String(err)
-          }`
-        )
-      })
+      void (async () => {
+        // Why: unconditional reconnect on every wake tore down live sessions
+        // and flashed the reconnect overlay (#7773). Only reconnect targets
+        // whose relay link actually died during sleep.
+        if (await isRelayLinkAliveAfterResume(session)) {
+          return
+        }
+        try {
+          await connectionManager?.reconnect(targetId)
+        } catch (err) {
+          console.warn(
+            `[ssh] Failed to reconnect ${targetId} after system resume: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          )
+        }
+      })()
     }
   }
   powerMonitor.on('suspend', onSuspend)
