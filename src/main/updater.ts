@@ -1,11 +1,11 @@
 /* eslint-disable max-lines */
 import { app, BrowserWindow, powerMonitor } from 'electron'
-import type { NsisUpdater } from 'electron-updater'
 import { is } from '@electron-toolkit/utils'
 import type { UpdateCheckOptions, UpdateStatus } from '../shared/types'
 import { killAllPty } from './ipc/pty'
 import { withUpdaterSpan } from './observability/instrumentation'
 import { loadElectronAutoUpdater, type ElectronAutoUpdater } from './electron-updater-loader'
+import { writeMainThreadDiagnosticMarker } from './diagnostics/main-thread-churn-probe'
 import {
   beginMacUpdateDownload,
   deferMacQuitUntilInstallerReady,
@@ -34,6 +34,12 @@ type ReleaseFeedPreflightResult = 'ready' | 'not-available'
 
 const AUTO_UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 const AUTO_UPDATE_RETRY_INTERVAL_MS = 60 * 60 * 1000
+// Why: a persistently-failing feed (blocked domain, proxy, GHE mirror) used
+// to re-arm the retry at an exact 1h cadence forever — the recurring hourly
+// macOS Performance Diagnostics signature in issue #7576. Double the retry
+// delay per consecutive failure up to this cap; any completed check resets.
+// Release-publishing windows resolve within the first (still 1h) retry.
+const MAX_AUTO_UPDATE_RETRY_INTERVAL_MS = 6 * 60 * 60 * 1000
 const NUDGE_POLL_INTERVAL_MS = 30 * 60 * 1000
 const NUDGE_ACTIVATION_COOLDOWN_MS = 5 * 60 * 1000
 const QUIT_AND_INSTALL_DELAY_MS = 100
@@ -384,6 +390,9 @@ function beginUpdateCheckAttempt(): number {
   updateCheckAttemptSequence += 1
   activeUpdateCheckAttemptId = updateCheckAttemptSequence
   armUpdateCheckStallTimer(activeUpdateCheckAttemptId)
+  // Why: issue #7576's warnings recurred at the retry cadence; field captures
+  // need a timestamp for each check attempt to confirm or rule the updater out.
+  writeMainThreadDiagnosticMarker('updater-check-attempt')
   return activeUpdateCheckAttemptId
 }
 
@@ -690,7 +699,20 @@ export function getUpdateStatus(): UpdateStatus {
   return currentStatus
 }
 
+let consecutiveAutomaticRetrySchedules = 0
+
 function scheduleAutomaticUpdateCheck(delayMs: number): void {
+  let effectiveDelayMs = delayMs
+  // All retry-cadence callers (here and updater-events) pass exactly this
+  // constant, so keying the backoff on it keeps one choke point instead of
+  // threading a flag through seven schedule sites.
+  if (delayMs === AUTO_UPDATE_RETRY_INTERVAL_MS) {
+    effectiveDelayMs = Math.min(
+      AUTO_UPDATE_RETRY_INTERVAL_MS * 2 ** consecutiveAutomaticRetrySchedules,
+      MAX_AUTO_UPDATE_RETRY_INTERVAL_MS
+    )
+    consecutiveAutomaticRetrySchedules += 1
+  }
   if (autoUpdateCheckTimer) {
     clearTimeout(autoUpdateCheckTimer)
   }
@@ -700,10 +722,11 @@ function scheduleAutomaticUpdateCheck(delayMs: number): void {
     // background attempt scheduled in the main process instead of tying checks
     // to relaunches or renderer lifetime.
     runBackgroundUpdateCheck()
-  }, delayMs)
+  }, effectiveDelayMs)
 }
 
 function recordCompletedUpdateCheck(): void {
+  consecutiveAutomaticRetrySchedules = 0
   persistLastUpdateCheckAt?.(Date.now())
 }
 
@@ -1245,15 +1268,11 @@ export function setupAutoUpdater(
     debug: (m: unknown) => console.debug('[autoUpdater]', m)
   } as never
 
-  // Why: older Windows installs either have no publisherName or have the
-  // stale macOS Apple Developer ID publisherName from issue #631. Keep the
-  // migration path open while SignPath-signed builds roll out.
-  //
-  // TODO: re-enable after SignPath-signed builds with the explicit Windows
-  // publisherName have been the minimum supported updater source for a while.
-  if (process.platform === 'win32') {
-    ;(autoUpdater as NsisUpdater).verifyUpdateCodeSignature = () => Promise.resolve(null)
-  }
+  // Why: Windows update integrity is enforced by electron-updater's built-in
+  // Authenticode check against the `publisherName` (SignPath Foundation) that
+  // electron-builder embeds in app-update.yml. Do NOT re-add a
+  // `verifyUpdateCodeSignature` override — a no-op override silently accepts
+  // every downloaded installer, disabling signature verification entirely.
 
   // Use the generic provider with GitHub's /releases/latest/download/ URL as
   // the startup fallback so electron-updater can fetch the manifest

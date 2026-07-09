@@ -1,7 +1,3 @@
-/* eslint-disable max-lines --
- * Why: agent title detection is intentionally table-driven in one place so the
- * supported title variants stay readable and regressions are easy to compare.
- */
 import { describe, expect, it, test, vi } from 'vitest'
 import {
   detectAgentStatusFromTitle,
@@ -392,6 +388,39 @@ describe('normalizeTerminalTitle', () => {
   it('leaves non-Gemini titles unchanged', () => {
     expect(normalizeTerminalTitle('⠂ Claude Code')).toBe('⠂ Claude Code')
     expect(normalizeTerminalTitle('bash')).toBe('bash')
+  })
+
+  it('collapses Grok rotating working titles to one stable label', () => {
+    // Grok interpolates a rotating status/tool phrase between the spinner and its
+    // name, so each frame is a distinct title; they must all fold to one label.
+    expect(normalizeTerminalTitle('⠋ - Waiting for response… - grok')).toBe('⠋ Grok')
+    expect(normalizeTerminalTitle('⠴ - Thinking - grok')).toBe('⠋ Grok')
+    expect(normalizeTerminalTitle('⠙ - Responding - grok')).toBe('⠋ Grok')
+    expect(normalizeTerminalTitle('⠦ - Sleep 2s then echo hello-from-grok… - grok')).toBe('⠋ Grok')
+    expect(
+      normalizeTerminalTitle('⠹ - Waiting for response… - Execute Shell Command sleep 2 - grok')
+    ).toBe('⠋ Grok')
+    // Idempotent: re-normalizing our own collapsed label stays stable.
+    expect(normalizeTerminalTitle('⠋ Grok')).toBe('⠋ Grok')
+  })
+
+  it('leaves Grok idle and session titles unchanged', () => {
+    // No spinner → not a working frame; the meaningful final title still shows.
+    expect(normalizeTerminalTitle('grok')).toBe('grok')
+    expect(normalizeTerminalTitle('Fix the auth bug - grok')).toBe('Fix the auth bug - grok')
+    // Names "grok" mid-title but ends with another agent → not a Grok frame.
+    expect(normalizeTerminalTitle('⠋ debugging grok - claude')).toBe('⠋ debugging grok - claude')
+    // Claude/Codex task text ending in "grok" must not collapse — only the
+    // Grok frame shape "spinner - phrase - grok" is the rotating-frame signal.
+    expect(normalizeTerminalTitle('⠋ wire up grok')).toBe('⠋ wire up grok')
+    expect(normalizeTerminalTitle('⠋ Codex is thinking about grok')).toBe(
+      '⠋ Codex is thinking about grok'
+    )
+    expect(normalizeTerminalTitle('⠋ support for Grok')).toBe('⠋ support for Grok')
+    // Trailing " - grok" alone is not enough without the post-spinner delimiter.
+    expect(normalizeTerminalTitle('⠋ fix the flaky suite - grok')).toBe(
+      '⠋ fix the flaky suite - grok'
+    )
   })
 
   it('collapses Pi spinner and idle titles to stable labels', () => {

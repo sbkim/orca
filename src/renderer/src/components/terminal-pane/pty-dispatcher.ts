@@ -25,9 +25,9 @@ export type PtyDataMeta = {
   seq?: number
   rawLength?: number
   background?: boolean
-  /** Main's delivery bound trimmed output before this chunk (STA-1397); the
-   *  pane must rebuild from a buffer snapshot instead of painting the splice. */
-  dropped?: boolean
+  /** Main trimmed this pty's unsent backlog past its cap; the handler should
+   *  rebuild the dropped span from the main headless snapshot. */
+  droppedBacklog?: boolean
 }
 
 export const ptyDataHandlers = new Map<string, (data: string, meta?: PtyDataMeta) => void>()
@@ -123,9 +123,9 @@ export function ensurePtyDispatcher(): void {
         meta ??= {}
         meta.background = true
       }
-      if (payload.dropped === true) {
+      if (payload.droppedBacklog === true) {
         meta ??= {}
-        meta.dropped = true
+        meta.droppedBacklog = true
       }
       const handler = ptyDataHandlers.get(payload.id)
       if (handler) {
@@ -246,8 +246,12 @@ export function registerEagerPtyBuffer(
   const exitHandler = (code: number): void => {
     // Shell died before TerminalPane attached — clean up and notify the store
     // so the tab's ptyId is cleared and connectPanePty falls through to connect().
-    ptyDataHandlers.delete(ptyId)
-    ptyReplayHandlers.delete(ptyId)
+    // Identity-guarded like dispose(): never delete a handler a transport has
+    // since registered for this id.
+    if (ptyDataHandlers.get(ptyId) === dataHandler) {
+      ptyDataHandlers.delete(ptyId)
+      ptyReplayHandlers.delete(ptyId)
+    }
     ptyExitHandlers.delete(ptyId)
     eagerPtyHandles.delete(ptyId)
     onExit(ptyId, code)
