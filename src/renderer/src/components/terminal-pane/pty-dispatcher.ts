@@ -338,8 +338,12 @@ export function registerEagerPtyBuffer(
     // Shell died before TerminalPane attached — clean up and notify the store
     // so the tab's ptyId is cleared and connectPanePty falls through to connect().
     releaseDeliveryInterest()
-    ptyDataHandlers.delete(ptyId)
-    ptyReplayHandlers.delete(ptyId)
+    // Identity-guarded like dispose(): never delete a handler a transport has
+    // since registered for this id (#7894 detach/attach remount race).
+    if (ptyDataHandlers.get(ptyId) === dataHandler) {
+      ptyDataHandlers.delete(ptyId)
+      ptyReplayHandlers.delete(ptyId)
+    }
     ptyExitHandlers.delete(ptyId)
     eagerPtyHandles.delete(ptyId)
     onExit(ptyId, code)

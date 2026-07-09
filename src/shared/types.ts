@@ -3048,7 +3048,9 @@ export type NotificationDispatchRequest = {
 
 export type NotificationDispatchResult = {
   delivered: boolean
-  /** Present when delivered is false. Tells the caller why delivery was skipped. */
+  /** Present when delivered is false. Tells the caller why delivery was skipped.
+   *  'blocked-by-system' means the OS-level permission readout says macOS
+   *  would silently swallow the notification (denied or prompt unanswered). */
   reason?:
     | 'disabled'
     | 'source-disabled'
@@ -3056,6 +3058,7 @@ export type NotificationDispatchResult = {
     | 'cooldown'
     | 'not-supported'
     | 'not-displayed'
+    | 'blocked-by-system'
 }
 
 export type NotificationDismissResult = {
@@ -3126,6 +3129,18 @@ export type NotificationPermissionStatusResult = {
   supported: boolean
   platform: NodeJS.Platform
   requested: boolean
+}
+
+/** Outcome of a macOS notification permission check. Preferred source is the
+ *  bundled native helper reading UNUserNotificationCenter authorization
+ *  (authoritative); when unavailable, a silent delivery probe supplies weaker
+ *  scheduling-based evidence. 'awaiting-decision' means the macOS permission
+ *  dialog has not been answered yet. */
+export type NotificationDeliveryProbeResult = {
+  state: 'delivered' | 'blocked' | 'awaiting-decision' | 'unsupported'
+  /** True when the state comes from the native authorization readout. Silent
+   *  to poll; probe-based fallbacks flash a banner when delivery works. */
+  authoritative: boolean
 }
 
 export type WorktreeCardProperty =

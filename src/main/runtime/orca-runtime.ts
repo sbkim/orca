@@ -5454,6 +5454,11 @@ export class OrcaRuntimeService {
     // that the later seed-resolve would overwrite, dropping the live byte.
     // See docs/mobile-prefer-renderer-scrollback.md.
     this.maybeHydrateHeadlessFromRenderer(ptyId)
+    // Our structure wins: OSC title/agent-status extraction runs through the
+    // shared per-PTY title tracker below (getOrCreatePtyTitleTrackerEntry →
+    // applyTrackedPtyTitle) in byte order, superseding main's inline
+    // extractLastOscTitleForPty block (#7880/#7852 title/status semantics are
+    // preserved via the tracker + detectAgentStatusFromTitle path).
     this.trackHeadlessTerminalData(ptyId, data, outputSequence, forwardQueryReplies)
 
     const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
@@ -5957,7 +5962,7 @@ export class OrcaRuntimeService {
             rawTitle,
             ...(meta?.staleWorkingTitleClear ? { staleWorkingTitleClear: true } : {})
           })
-          const changed = this.applyTrackedPtyTitle(ptyId, rawTitle)
+          const changed = this.applyTrackedPtyTitle(ptyId, rawTitle, normalizedTitle)
           if (!changed) {
             return
           }
@@ -6050,7 +6055,11 @@ export class OrcaRuntimeService {
 
   /** Apply one observed OSC title (raw form) to the PTY and leaf records.
    *  Returns true when the PTY record's title or status changed. */
-  private applyTrackedPtyTitle(ptyId: string, rawTitle: string): boolean {
+  private applyTrackedPtyTitle(ptyId: string, rawTitle: string, normalizedTitle: string): boolean {
+    // Why: status is detected from the RAW title (mirrors the renderer tracker),
+    // so working/idle transitions are unaffected by normalization; the records
+    // store the NORMALIZED title so rotating Grok/Pi/Gemini frames collapse to
+    // one stable stored label (#7880) instead of churning `ps`/mobile tabs.
     const agentStatus = detectAgentStatusFromTitle(rawTitle)
     let ptyRecordChanged = false
     const pty = this.ptysById.get(ptyId)
@@ -6058,19 +6067,17 @@ export class OrcaRuntimeService {
       const prevStatus = pty.lastAgentStatus
       const prevTitle = pty.lastOscTitle
       const observedAt = this.nextTitleObservationSequence()
-      // Why: records keep the RAW title — worktree `ps` and mobile tab titles
-      // expect it; normalized titles ride along on the tracker for later
-      // emitted facts (terminal-side-effect-authority.md).
-      pty.lastOscTitle = rawTitle
+      pty.lastOscTitle = normalizedTitle
       pty.lastOscTitleAt = observedAt
       pty.lastAgentStatus = agentStatus
-      this.setPtyManagementTitleFromObservedTitle(pty, rawTitle, observedAt)
-      ptyRecordChanged = prevTitle !== rawTitle || prevStatus !== agentStatus
+      this.setPtyManagementTitleFromObservedTitle(pty, normalizedTitle, observedAt)
+      ptyRecordChanged = prevTitle !== normalizedTitle || prevStatus !== agentStatus
       if (agentStatus === 'idle' && prevStatus !== 'idle') {
         this.resolvePtyTuiIdleWaiters(pty, ptyId)
       }
       const shouldDelayMobileSnapshot =
-        ptyRecordChanged && this.shouldDelayPtyBackedMobileSnapshotForForegroundAgent(pty, rawTitle)
+        ptyRecordChanged &&
+        this.shouldDelayPtyBackedMobileSnapshotForForegroundAgent(pty, normalizedTitle)
       let foregroundRefresh: Promise<boolean> | undefined
       // Why: gate on an actual status transition — braille spinner frames
       // mutate the title every tick, so probing per-title-change would stream
@@ -6097,7 +6104,7 @@ export class OrcaRuntimeService {
       // daemon-hosted terminals (no renderer pushing pane titles) had no
       // way to clear a stale 'working' status after the agent exited and
       // the shell took over the title — the stuck-spinner bug in #1437.
-      leaf.lastOscTitle = rawTitle
+      leaf.lastOscTitle = normalizedTitle
       leaf.lastOscTitleAt = this.nextTitleObservationSequence()
       const prevStatus = leaf.lastAgentStatus
       // Why: when a new OSC title doesn't classify as an agent state (e.g.
@@ -6601,18 +6608,22 @@ export class OrcaRuntimeService {
     // once a live title was observed, so live state always wins.
     this.getOrCreatePtyTitleTrackerEntry(ptyId).tracker.seedInitialTitle(title)
     const status = detectAgentStatusFromTitle(title)
+    // Why: live observations store normalized titles, so seeds must match —
+    // otherwise the first live frame after hydration compares unequal and
+    // touches session tabs once for no visible change.
+    const seededTitle = normalizeTerminalTitle(title)
     const pty = this.ptysById.get(ptyId)
     if (pty) {
       const observedAt = this.nextTitleObservationSequence()
-      pty.lastOscTitle = title
+      pty.lastOscTitle = seededTitle
       pty.lastOscTitleAt = observedAt
-      this.setPtyManagementTitleFromObservedTitle(pty, title, observedAt)
+      this.setPtyManagementTitleFromObservedTitle(pty, seededTitle, observedAt)
     }
     for (const leaf of this.getLeavesForPty(ptyId)) {
       // Why: seed lastOscTitle even when the seeded title doesn't classify
       // as an agent state, so worktree.ps recomputes status from the live
       // title rather than treating the leaf as agentless.
-      leaf.lastOscTitle = title
+      leaf.lastOscTitle = seededTitle
       leaf.lastOscTitleAt = this.nextTitleObservationSequence()
       if (status !== null) {
         leaf.lastAgentStatus = status

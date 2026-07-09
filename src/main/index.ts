@@ -14,6 +14,7 @@ import {
   getCanonicalUserDataPath,
   migrateMobilePairingDataToCanonicalUserDataPath
 } from './persistence'
+import { ensureActiveOrcaProfile, initOrcaProfilePaths } from './orca-profiles/profile-index-store'
 import { applyAppIcon } from './app-icon'
 import { StatsCollector, initStatsPath } from './stats/collector'
 import { ClaudeUsageStore, initClaudeUsagePath } from './claude-usage/store'
@@ -110,7 +111,7 @@ import {
   ensureAutoUpdaterConfigured
 } from './window/attach-main-window-services'
 import { createMainWindow, loadMainWindow } from './window/createMainWindow'
-import { createSystemTray, destroySystemTray } from './tray/system-tray'
+import { createSystemTray, destroySystemTray, setTrayAttention } from './tray/system-tray'
 import { focusExistingMainWindow } from './window/focus-existing-window'
 import { notifyMainWindowBecameVisible } from './window/main-window-visibility'
 import { CodexAccountService } from './codex-accounts/service'
@@ -584,6 +585,7 @@ if (hasSingleInstanceLock) {
   // orca-dev in dev mode) but before app.setName('Orca') inside whenReady
   // (which would change the resolved path on case-sensitive filesystems).
   initDataPath()
+  initOrcaProfilePaths()
   // Why: same timing constraint as initDataPath — capture the userData path
   // before app.setName changes it. See persistence.ts:20-28.
   initStatsPath()
@@ -1004,6 +1006,10 @@ function openMainWindow(): BrowserWindow {
   // macOS dock re-activation recreates the BrowserWindow.
   window.on('show', notifyMainWindowBecameVisible)
   window.on('restore', notifyMainWindowBecameVisible)
+  // Why: showing/restoring the window means the user is back, so clear the
+  // tray attention dot set while it was minimized/hidden (see notifications.ts).
+  window.on('show', () => setTrayAttention(false))
+  window.on('restore', () => setTrayAttention(false))
   agentHookServer.setListener(
     ({
       paneKey,
@@ -1654,7 +1660,8 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId(devInstanceIdentity.appUserModelId)
   app.setName(devInstanceIdentity.name)
 
-  store = new Store()
+  const activeOrcaProfile = ensureActiveOrcaProfile()
+  store = new Store({ dataFile: activeOrcaProfile.dataFile })
   logStartupMilestone('store-loaded')
   // Why: must run before ClaudeRuntimeAuthService's constructor sync — a Claude
   // CLI that survived the restart inside the daemon still holds the current
@@ -1682,7 +1689,10 @@ app.whenReady().then(async () => {
   }
   // Why: browser sessions are used by desktop webviews and runtime profile
   // commands, so initialize them at app startup instead of a renderer IPC path.
-  initializeBrowserSessionsForApp()
+  initializeBrowserSessionsForApp({
+    orcaProfileId: activeOrcaProfile.profile.id,
+    profileDirectory: activeOrcaProfile.profileDirectory
+  })
   unsubscribeSystemResumeBroadcast = registerSystemResumeBroadcast()
   agentAwakeService = new AgentAwakeService()
   agentAwakeService.setEnabled(store.getSettings().keepComputerAwakeWhileAgentsRun)

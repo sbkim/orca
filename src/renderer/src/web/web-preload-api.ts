@@ -46,6 +46,10 @@ import {
   normalizeWorktreeCardProperties,
   ONBOARDING_FLOW_VERSION
 } from '../../../shared/constants'
+import {
+  createDefaultLocalOrcaProfile,
+  DEFAULT_LOCAL_ORCA_PROFILE_ID
+} from '../../../shared/orca-profiles'
 import { legacyBaseRefSearchResult } from '../../../shared/base-ref-search-result'
 import { EMPTY_PTY_MAIN_DELIVERY_DIAGNOSTICS } from '../../../shared/pty-delivery-diagnostics'
 import { createE2EConfig } from '../../../shared/e2e-config'
@@ -456,6 +460,15 @@ export function installWebPreloadApi(): void {
 }
 
 function createWebPreloadApi(): Partial<PreloadApi> {
+  const webOrcaProfileAuthStatus = () =>
+    Promise.resolve({
+      activeProfileId: DEFAULT_LOCAL_ORCA_PROFILE_ID,
+      configured: false,
+      state: 'unconfigured' as const,
+      persistence: 'none' as const,
+      setupMessage: 'Orca Cloud sign-in is not available in the browser fallback.'
+    })
+
   return {
     app: {
       getIdentity: () =>
@@ -501,6 +514,58 @@ function createWebPreloadApi(): Partial<PreloadApi> {
         osRelease: '',
         displayServer: null
       })
+    },
+    orcaProfiles: {
+      list: () =>
+        Promise.resolve({
+          activeProfileId: DEFAULT_LOCAL_ORCA_PROFILE_ID,
+          profiles: [createDefaultLocalOrcaProfile(0)],
+          multiProfileUi: false
+        }),
+      authStatus: webOrcaProfileAuthStatus,
+      createLocal: () =>
+        Promise.resolve({
+          activeProfileId: DEFAULT_LOCAL_ORCA_PROFILE_ID,
+          profiles: [createDefaultLocalOrcaProfile(0)],
+          profile: createDefaultLocalOrcaProfile(0)
+        }),
+      createCloudLinked: async () => ({
+        status: 'unconfigured',
+        auth: await webOrcaProfileAuthStatus()
+      }),
+      switchProfile: () => Promise.resolve({ status: 'already-active' }),
+      transferProject: (args) =>
+        Promise.resolve({
+          status: 'duplicate-target',
+          sourceProfileId: args.sourceProfileId,
+          targetProfileId: args.targetProfileId,
+          sourceRepoId: args.repoId,
+          duplicateRepoId: args.repoId
+        }),
+      findProjectProfiles: async () => ({ projects: [] }),
+      connectCurrent: async () => ({
+        status: 'unconfigured',
+        auth: await webOrcaProfileAuthStatus()
+      }),
+      refreshAuth: async () => ({
+        status: 'unconfigured',
+        auth: await webOrcaProfileAuthStatus()
+      }),
+      signOutCurrent: async () => ({
+        status: 'signed-out',
+        auth: await webOrcaProfileAuthStatus(),
+        activeProfileId: DEFAULT_LOCAL_ORCA_PROFILE_ID,
+        profiles: [createDefaultLocalOrcaProfile(0)]
+      }),
+      selectOrg: async () => ({
+        status: 'unconfigured',
+        auth: await webOrcaProfileAuthStatus()
+      }),
+      orgMembersList: async () => ({ status: 'unconfigured' }),
+      orgMemberInvite: async () => ({ status: 'unconfigured' }),
+      orgInviteRevoke: async () => ({ status: 'unconfigured' }),
+      orgMemberChangeRole: async () => ({ status: 'unconfigured' }),
+      orgMemberRemove: async () => ({ status: 'unconfigured' })
     },
     e2e: {
       getConfig: () => createE2EConfig({})
@@ -2506,8 +2571,7 @@ function createNotificationsApi(): NonNullable<Partial<PreloadApi>['notification
     openSystemSettings: () => Promise.resolve(),
     getPermissionStatus: () =>
       Promise.resolve({ supported: false, platform: getBrowserPlatform(), requested: false }),
-    requestPermission: () =>
-      Promise.resolve({ supported: false, platform: getBrowserPlatform(), requested: false }),
+    probeDelivery: () => Promise.resolve({ state: 'unsupported' as const, authoritative: false }),
     playSound: () => Promise.resolve({ played: false, reason: 'missing-path' })
   }
 }
