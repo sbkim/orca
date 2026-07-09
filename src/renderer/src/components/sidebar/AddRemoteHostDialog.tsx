@@ -33,6 +33,13 @@ export function AddRemoteHostDialog({
   onOpenChange
 }: AddRemoteHostDialogProps): React.JSX.Element {
   const open = mode !== null
+  // Why: `mode` drives both open-state and which form renders. On close it goes null while the
+  // dialog is still animating out, so the title/fields would flash to the SSH default. Latch the
+  // last non-null mode for rendering so the closing dialog keeps showing what the user saw.
+  const [renderMode, setRenderMode] = useState<AddRemoteHostMode>(mode ?? 'ssh')
+  if (mode !== null && mode !== renderMode) {
+    setRenderMode(mode)
+  }
   const [sshForm, setSshForm] = useState<EditingTarget>(EMPTY_FORM)
   const [serverName, setServerName] = useState('')
   const [pairingCode, setPairingCode] = useState('')
@@ -219,7 +226,7 @@ export function AddRemoteHostDialog({
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>
-            {mode === 'server'
+            {renderMode === 'server'
               ? translate(
                   'auto.components.sidebar.AddRemoteHostDialog.serverTitle',
                   'Add remote server'
@@ -227,7 +234,7 @@ export function AddRemoteHostDialog({
               : translate('auto.components.sidebar.AddRemoteHostDialog.sshTitle', 'Add SSH host')}
           </DialogTitle>
           <DialogDescription>
-            {mode === 'server'
+            {renderMode === 'server'
               ? translate(
                   'auto.components.sidebar.AddRemoteHostDialog.serverDescription',
                   'Pair with Orca running on another computer.'
@@ -239,7 +246,7 @@ export function AddRemoteHostDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {mode === 'server' ? (
+        {renderMode === 'server' ? (
           <RemoteServerFields
             name={serverName}
             pairingCode={pairingCode}
@@ -258,7 +265,7 @@ export function AddRemoteHostDialog({
         )}
 
         <DialogFooter className="sm:justify-between">
-          {mode === 'ssh' ? (
+          {renderMode === 'ssh' ? (
             <button
               type="button"
               className="self-center text-left text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50"
@@ -286,7 +293,9 @@ export function AddRemoteHostDialog({
             </Button>
             <Button
               type="button"
-              onClick={mode === 'server' ? () => void saveRemoteServer() : () => void saveSshHost()}
+              onClick={
+                renderMode === 'server' ? () => void saveRemoteServer() : () => void saveSshHost()
+              }
               disabled={isSaving || isImporting}
             >
               {isSaving

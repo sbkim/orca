@@ -56,6 +56,13 @@ vi.mock('@/components/agent/AgentCombobox', () => ({
   default: () => <button type="button">Agent picker</button>
 }))
 
+// Stub the host-add dialog to its `mode` — the composer's job is to open it with the right
+// mode; the dialog's own SSH/runtime IPC has separate coverage.
+vi.mock('@/components/sidebar/AddRemoteHostDialog', () => ({
+  AddRemoteHostDialog: ({ mode }: { mode: 'ssh' | 'server' | null }) =>
+    mode ? <div data-testid="add-remote-host-dialog" data-mode={mode} /> : null
+}))
+
 vi.mock('@/components/sparse/SparseCheckoutPresetSelect', () => ({
   default: () => <div data-testid="sparse-select" />
 }))
@@ -148,7 +155,8 @@ const devboxNeedsSetupHostOption: ProjectHostSetupOption = {
   hostId: 'ssh:devbox',
   label: 'Devbox',
   detail: 'Project not set up on this host',
-  isAvailable: true
+  isAvailable: true,
+  attention: false
 }
 
 const disconnectedDevboxNeedsSetupHostOption: ProjectHostSetupOption = {
@@ -159,7 +167,27 @@ const disconnectedDevboxNeedsSetupHostOption: ProjectHostSetupOption = {
   label: 'Devbox',
   detail: 'Connect this host to set up projects',
   isAvailable: false,
+  attention: false,
   connectAction: { kind: 'ssh', targetId: 'devbox' }
+}
+
+const disconnectedBastionNeedsSetupHostOption: ProjectHostSetupOption = {
+  kind: 'needs-setup',
+  id: 'needs-setup:ssh:bastion',
+  projectId: 'project-group:platform',
+  hostId: 'ssh:bastion',
+  label: 'Bastion',
+  detail: 'Connect this host to set up projects',
+  isAvailable: false,
+  attention: false,
+  connectAction: { kind: 'ssh', targetId: 'bastion' }
+}
+
+function findConnectButton(label: string): HTMLButtonElement | undefined {
+  const item = findRunTargetItem(label)
+  return [...(item?.querySelectorAll('button') ?? [])].find((button) =>
+    button.textContent?.includes('Connect')
+  )
 }
 
 function renderCard(
@@ -415,11 +443,12 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
     )
   })
 
-  it('emits the setup startup policy toggle value', () => {
+  it('emits the setup startup policy toggle value when setup will run', () => {
     const changes: string[] = []
     current = renderCard({
       advancedOpen: true,
       setupControlsEnabled: true,
+      resolvedSetupDecision: 'run',
       setupConfig: {
         source: 'yaml',
         command: 'pnpm install',
@@ -428,12 +457,36 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
       onSetupAgentStartupPolicyChange: (next) => changes.push(next)
     })
 
-    const waitSwitch = current.container.querySelector<HTMLElement>(
+    const waitSwitch = current.container.querySelector<HTMLButtonElement>(
       '[role="switch"][aria-label="Wait for setup to complete before starting agent"]'
     )
     expect(waitSwitch).toBeTruthy()
+    expect(waitSwitch?.disabled).toBe(false)
     act(() => waitSwitch?.click())
     expect(changes).toEqual(['wait-for-setup'])
+  })
+
+  it('disables the wait-for-setup toggle when setup is set to skip', () => {
+    const changes: string[] = []
+    current = renderCard({
+      advancedOpen: true,
+      setupControlsEnabled: true,
+      resolvedSetupDecision: 'skip',
+      setupConfig: {
+        source: 'yaml',
+        command: 'pnpm install',
+        kind: 'setup'
+      },
+      onSetupAgentStartupPolicyChange: (next) => changes.push(next)
+    })
+
+    const waitSwitch = current.container.querySelector<HTMLButtonElement>(
+      '[role="switch"][aria-label="Wait for setup to complete before starting agent"]'
+    )
+    expect(waitSwitch?.disabled).toBe(true)
+    // Nothing to wait for when setup won't run — clicking is inert.
+    act(() => waitSwitch?.click())
+    expect(changes).toEqual([])
   })
 
   it('shows a git-only branch name field in Advanced and emits manual edits', () => {
@@ -526,10 +579,11 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
 
     const devboxItem = findRunTargetItem('Devbox')
     expect(devboxItem?.textContent).toContain('Project not set up on this host')
-    expect(
-      devboxItem?.getAttribute('aria-disabled') === 'true' ||
-        devboxItem?.hasAttribute('data-disabled')
-    ).toBe(true)
+    // Not-connected rows stay highlightable (not disabled) so they hover like the other
+    // items; a separator sets them off instead of a heading.
+    expect(devboxItem?.getAttribute('aria-disabled')).toBe('false')
+    expect(devboxItem?.getAttribute('data-disabled')).toBe('false')
+    expect(document.body.querySelector('[cmdk-separator]')).toBeTruthy()
   })
 
   it('shows the run target picker for one ready setup so hosts can be added', () => {
@@ -587,7 +641,39 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
     expect(findRunTargetItem('Devbox')).toBeUndefined()
   })
 
-  it('opens the SSH host add form from the run target picker', () => {
+  it('keeps other hosts connectable while one connect is still in flight', async () => {
+    // First host's connect never resolves — a stalled connect must not disable the others.
+    apiMocks.sshConnect.mockImplementation(({ targetId }: { targetId: string }) =>
+      targetId === 'devbox' ? new Promise(() => {}) : Promise.resolve(undefined)
+    )
+    current = renderCard({
+      projectHostSetupOptions: [
+        localReadyHostOption,
+        disconnectedDevboxNeedsSetupHostOption,
+        disconnectedBastionNeedsSetupHostOption
+      ],
+      selectedProjectHostSetupId: 'setup-local'
+    })
+
+    openRunTargetPicker(current.container)
+    await act(async () => {
+      findConnectButton('Devbox')?.click()
+    })
+
+    // Clicking Connect closes the popover; reopen to inspect the still-open connect state.
+    openRunTargetPicker(current.container)
+    // Devbox is mid-connect (disabled), but Bastion stays clickable.
+    expect(findConnectButton('Devbox')?.disabled).toBe(true)
+    const bastionButton = findConnectButton('Bastion')
+    expect(bastionButton?.disabled).toBe(false)
+
+    await act(async () => {
+      bastionButton?.click()
+    })
+    expect(apiMocks.sshConnect).toHaveBeenCalledWith({ targetId: 'bastion' })
+  })
+
+  it('opens the SSH host add dialog over the composer without leaving for Settings', () => {
     current = renderCard({
       projectHostSetupOptions: [localReadyHostOption, devboxNeedsSetupHostOption],
       selectedProjectHostSetupId: 'setup-local'
@@ -597,16 +683,34 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
     act(() => findRunTargetItem('Add host')?.click())
     act(() => findRunTargetItem('Add SSH host')?.click())
 
-    expect(storeMocks.closeModal).toHaveBeenCalled()
-    expect(storeMocks.openSettingsPage).toHaveBeenCalled()
-    expect(storeMocks.openSettingsTarget).toHaveBeenCalledWith({
-      pane: 'ssh',
-      repoId: null,
-      intent: 'add-ssh-host'
-    })
+    const dialog = document.body.querySelector('[data-testid="add-remote-host-dialog"]')
+    expect(dialog?.getAttribute('data-mode')).toBe('ssh')
+    // The composer stays put — no navigation that would discard the in-progress form.
+    expect(storeMocks.closeModal).not.toHaveBeenCalled()
+    expect(storeMocks.openSettingsPage).not.toHaveBeenCalled()
+    expect(storeMocks.openSettingsTarget).not.toHaveBeenCalled()
   })
 
-  it('opens the remote Orca server add form from the run target picker', () => {
+  it('opens the add-host submenu on hover without a click', () => {
+    current = renderCard({
+      projectHostSetupOptions: [localReadyHostOption, devboxNeedsSetupHostOption],
+      selectedProjectHostSetupId: 'setup-local'
+    })
+
+    openRunTargetPicker(current.container)
+    const addHost = findRunTargetItem('Add host')
+    expect(addHost).toBeTruthy()
+    // Hovering the row (no click) opens its submenu so it feels like a menu. React derives
+    // onPointerEnter from a bubbling pointerover, which is what jsdom dispatches here.
+    act(() => {
+      addHost?.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }))
+    })
+
+    expect(findRunTargetItem('Add SSH host')).toBeTruthy()
+    expect(findRunTargetItem('Add Remote Orca Server')).toBeTruthy()
+  })
+
+  it('opens the remote Orca server add dialog over the composer without leaving for Settings', () => {
     current = renderCard({
       projectHostSetupOptions: [localReadyHostOption, devboxNeedsSetupHostOption],
       selectedProjectHostSetupId: 'setup-local'
@@ -616,13 +720,11 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
     act(() => findRunTargetItem('Add host')?.click())
     act(() => findRunTargetItem('Add Remote Orca Server')?.click())
 
-    expect(storeMocks.closeModal).toHaveBeenCalled()
-    expect(storeMocks.openSettingsPage).toHaveBeenCalled()
-    expect(storeMocks.openSettingsTarget).toHaveBeenCalledWith({
-      pane: 'servers',
-      repoId: null,
-      intent: 'add-remote-orca-server'
-    })
+    const dialog = document.body.querySelector('[data-testid="add-remote-host-dialog"]')
+    expect(dialog?.getAttribute('data-mode')).toBe('server')
+    expect(storeMocks.closeModal).not.toHaveBeenCalled()
+    expect(storeMocks.openSettingsPage).not.toHaveBeenCalled()
+    expect(storeMocks.openSettingsTarget).not.toHaveBeenCalled()
   })
 
   it('shows VM recipes inside the run target picker', () => {

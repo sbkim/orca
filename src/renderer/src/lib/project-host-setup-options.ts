@@ -32,6 +32,9 @@ export type ProjectHostSetupOption =
       label: string
       detail: string
       isAvailable: boolean
+      // Why: only a genuine connection error warrants an alarm glyph; a dormant
+      // disconnected host is merely not-yet-connected, not broken.
+      attention: boolean
       connectAction?: { kind: 'ssh'; targetId: string } | { kind: 'runtime'; environmentId: string }
     }
 
@@ -164,6 +167,7 @@ function buildNeedsSetupOptions({
             : 'Project not set up on this host'
           : availability.detail,
         isAvailable: availability.isAvailable,
+        attention: host.health === 'error',
         ...(connectAction ? { connectAction } : {})
       }
     })

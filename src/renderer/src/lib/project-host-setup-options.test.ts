@@ -244,6 +244,21 @@ describe('buildProjectHostSetupOptions', () => {
   )
 
   it.each([
+    ['connecting' as const, false],
+    ['disconnected' as const, false],
+    ['error' as const, true]
+  ])('flags only errored %s hosts for attention', (health: ExecutionHostHealth, attention) => {
+    const options = buildProjectHostSetupOptions({
+      projectId: 'project-1',
+      eligibleRepos: [repo('local-repo')],
+      hosts: [host('local'), host('ssh:builder', { label: 'Builder', health })],
+      projectHostSetups: [setup('local', 'project-1', 'local', 'local-repo')]
+    })
+
+    expect(options.at(-1)).toMatchObject({ kind: 'needs-setup', attention })
+  })
+
+  it.each([
     ['ssh:builder' as const, { kind: 'ssh', targetId: 'builder' }],
     ['runtime:gpu' as const, { kind: 'runtime', environmentId: 'gpu' }]
   ])('adds a connect action for disconnected %s setup-needed hosts', (hostId, connectAction) => {
