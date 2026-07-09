@@ -45,16 +45,14 @@ function isRunNeutralCharCode(charCode: number): boolean {
   return charCode === 0xa0
 }
 
-// ZWNJ/ZWJ shape within a word (mandatory in Persian/Kurdish orthography) and
-// RLM/ALM assert RTL context — breaking the run on them would split one word
-// into two joined chunks laid out in swapped visual order. Transparent: never
-// opens, closes, extends, or counts toward a run. LRM (U+200E) is strong LTR
-// and intentionally still breaks the run.
-// The zero-width Cf controls inside the RTL blocks (Arabic number signs
-// U+0600–0605, end of ayah U+06DD, Syriac abbreviation mark U+070F, disputed
-// end of ayah U+08E2) and BOM/ZWNBSP U+FEFF are width-0 in xterm, so like
-// combining marks they must never open or count a run (an empty joined cell
-// range blanks the following glyph in WebGL) — and they have no shape to join.
+// Run-transparent: never opens, closes, extends, or counts toward a run.
+// Two families qualify. (1) ZWNJ/ZWJ (Persian/Kurdish joining controls) and
+// RLM/ALM (RTL direction marks): breaking on them would split one word into
+// two chunks in swapped visual order — LRM (U+200E) is strong LTR and still
+// breaks. (2) Zero-width Cf controls that sit inside the strong-RTL blocks
+// (Arabic number signs U+0600–0605, U+06DD, U+070F, U+08E2, BOM U+FEFF): like
+// combining marks, opening a run on them yields an empty joined cell range
+// that blanks the next glyph in WebGL, and they have no shape to join.
 function isRtlRunTransparentCodePoint(codePoint: number): boolean {
   return (
     codePoint === 0x200c ||
