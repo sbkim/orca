@@ -6,7 +6,8 @@ const mocks = vi.hoisted(() => ({
   markNativeChatLaunchPromptFailed: vi.fn(),
   isPromptReceiptEligible: vi.fn(),
   watchForPromptSubmitReceipt: vi.fn(),
-  receiptCancel: vi.fn()
+  receiptCancel: vi.fn(),
+  receiptStartTimer: vi.fn()
 }))
 
 vi.mock('@/lib/agent-paste-draft', () => ({
@@ -36,7 +37,8 @@ describe('deliverLaunchPromptToAgentTab', () => {
     mocks.isPromptReceiptEligible.mockResolvedValue(false)
     mocks.watchForPromptSubmitReceipt.mockReturnValue({
       result: Promise.resolve(true),
-      cancel: mocks.receiptCancel
+      cancel: mocks.receiptCancel,
+      startTimer: mocks.receiptStartTimer
     })
   })
 
@@ -183,6 +185,9 @@ describe('deliverLaunchPromptToAgentTab', () => {
         agent: 'codex',
         since: expect.any(Number)
       })
+      // Why: the receipt window is armed only after the paste lands, so a slow
+      // readiness wait can't consume it before the prompt is submitted (#7466).
+      expect(mocks.receiptStartTimer).toHaveBeenCalledTimes(1)
       expect(mocks.markNativeChatLaunchPromptFailed).not.toHaveBeenCalled()
     })
 
@@ -190,7 +195,8 @@ describe('deliverLaunchPromptToAgentTab', () => {
       mocks.isPromptReceiptEligible.mockResolvedValue(true)
       mocks.watchForPromptSubmitReceipt.mockReturnValue({
         result: Promise.resolve(false),
-        cancel: mocks.receiptCancel
+        cancel: mocks.receiptCancel,
+        startTimer: mocks.receiptStartTimer
       })
       const onTimeout = vi.fn()
 
@@ -224,6 +230,9 @@ describe('deliverLaunchPromptToAgentTab', () => {
       ).resolves.toBe(false)
 
       expect(mocks.receiptCancel).toHaveBeenCalledTimes(1)
+      // Why: a failed paste never submits a prompt, so the receipt window is
+      // released rather than armed.
+      expect(mocks.receiptStartTimer).not.toHaveBeenCalled()
     })
 
     it('keeps the optimistic verdict for agents without installed managed hooks', async () => {

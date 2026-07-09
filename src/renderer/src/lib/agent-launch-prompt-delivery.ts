@@ -57,15 +57,23 @@ export async function deliverLaunchPromptToAgentTab(args: {
     }
   }
 
-  const pasted = await pasteDraftWhenAgentReady({
-    tabId,
-    content,
-    agent,
-    submit,
-    forcePaste,
-    timeoutMs,
-    onTimeout: onTimeout ? () => onTimeout('readiness-timeout') : undefined
-  })
+  let pasted: boolean
+  try {
+    pasted = await pasteDraftWhenAgentReady({
+      tabId,
+      content,
+      agent,
+      submit,
+      forcePaste,
+      timeoutMs,
+      onTimeout: onTimeout ? () => onTimeout('readiness-timeout') : undefined
+    })
+  } catch (error) {
+    // Why: the receipt timeout is only armed after a successful paste, so an
+    // unexpected paste throw must still release the watch's IPC subscription.
+    receiptWatch?.cancel()
+    throw error
+  }
 
   if (!pasted && !deliversViaNativePrefill) {
     receiptWatch?.cancel()
@@ -74,6 +82,10 @@ export async function deliverLaunchPromptToAgentTab(args: {
   }
 
   if (receiptWatch) {
+    // Why: arm the receipt window only now that the paste+Enter is in, so the
+    // full timeout covers the post-submit hook round-trip rather than the
+    // preceding readiness wait (which can run many seconds on a cold SSH boot).
+    receiptWatch.startTimer()
     const receipted = await receiptWatch.result
     if (!receipted) {
       onTimeout?.('receipt-timeout')

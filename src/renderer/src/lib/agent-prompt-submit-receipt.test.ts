@@ -76,20 +76,25 @@ describe('agent-prompt-submit-receipt', () => {
         since: 1000,
         timeoutMs: 50
       })
+      watch.startTimer()
       emit({ tabId: 'tab-2', receivedAt: 2000 })
       await vi.advanceTimersByTimeAsync(50)
       await expect(watch.result).resolves.toBe(false)
     })
 
-    it('ignores non-submit hook events — codex SessionStart also maps to working', async () => {
+    it('ignores non-submit hook events even when they carry an explicit prompt', async () => {
       const watch = watchForPromptSubmitReceipt({
         tabId: 'tab-1',
         agent: 'codex',
         since: 1000,
         timeoutMs: 50
       })
-      emit({ hookEventName: 'SessionStart', hasExplicitPrompt: undefined, receivedAt: 2000 })
-      emit({ hookEventName: 'PreToolUse', hasExplicitPrompt: undefined, receivedAt: 2000 })
+      watch.startTimer()
+      // Why: the codex normalizer can stamp hasExplicitPrompt on a SessionStart
+      // that carries a prompt (it maps to working too), so the hookEventName
+      // guard — not hasExplicitPrompt alone — is what rejects the boot event.
+      emit({ hookEventName: 'SessionStart', hasExplicitPrompt: true, receivedAt: 2000 })
+      emit({ hookEventName: 'PreToolUse', hasExplicitPrompt: true, receivedAt: 2000 })
       await vi.advanceTimersByTimeAsync(50)
       await expect(watch.result).resolves.toBe(false)
     })
@@ -101,6 +106,7 @@ describe('agent-prompt-submit-receipt', () => {
         since: 1000,
         timeoutMs: 50
       })
+      watch.startTimer()
       emit({ hasExplicitPrompt: undefined, receivedAt: 2000 })
       await vi.advanceTimersByTimeAsync(50)
       await expect(watch.result).resolves.toBe(false)
@@ -113,6 +119,7 @@ describe('agent-prompt-submit-receipt', () => {
         since: 10_000,
         timeoutMs: 50
       })
+      watch.startTimer()
       emit({ receivedAt: 1000 })
       await vi.advanceTimersByTimeAsync(50)
       await expect(watch.result).resolves.toBe(false)
@@ -125,6 +132,7 @@ describe('agent-prompt-submit-receipt', () => {
         since: 1000,
         timeoutMs: 50
       })
+      watch.startTimer()
       emit({ agentType: 'codex', receivedAt: 2000 })
       await vi.advanceTimersByTimeAsync(50)
       await expect(watch.result).resolves.toBe(false)
@@ -137,9 +145,29 @@ describe('agent-prompt-submit-receipt', () => {
         since: 1000,
         timeoutMs: 100
       })
+      watch.startTimer()
       await vi.advanceTimersByTimeAsync(100)
       await expect(watch.result).resolves.toBe(false)
       expect(unsubscribe).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not arm the timeout until startTimer is called', async () => {
+      // Why: the window must cover the post-submit hook round-trip, not the
+      // readiness wait that precedes the paste — arming at creation would
+      // expire the window during a slow cold boot (#7466).
+      const watch = watchForPromptSubmitReceipt({
+        tabId: 'tab-1',
+        agent: 'codex',
+        since: 1000,
+        timeoutMs: 50
+      })
+      await vi.advanceTimersByTimeAsync(1000)
+      const pending = Symbol('pending')
+      await expect(Promise.race([watch.result, Promise.resolve(pending)])).resolves.toBe(pending)
+
+      watch.startTimer()
+      await vi.advanceTimersByTimeAsync(50)
+      await expect(watch.result).resolves.toBe(false)
     })
 
     it('cancel resolves false immediately', async () => {

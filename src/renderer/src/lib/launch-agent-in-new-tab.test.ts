@@ -161,7 +161,8 @@ describe('launchAgentInNewTab', () => {
     mockIsPromptReceiptEligible.mockResolvedValue(false)
     mockWatchForPromptSubmitReceipt.mockReturnValue({
       result: Promise.resolve(true),
-      cancel: vi.fn()
+      cancel: vi.fn(),
+      startTimer: vi.fn()
     })
   })
 
@@ -702,7 +703,8 @@ describe('launchAgentInNewTab', () => {
     mockIsPromptReceiptEligible.mockResolvedValue(true)
     mockWatchForPromptSubmitReceipt.mockReturnValue({
       result: Promise.resolve(false),
-      cancel: vi.fn()
+      cancel: vi.fn(),
+      startTimer: vi.fn()
     })
     store.tabsByWorktree = { 'wt-1': [{ id: 'tab-1', ptyId: 'pty-1' } as never] }
     const { launchAgentInNewTab } = await import('./launch-agent-in-new-tab')

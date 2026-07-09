@@ -58,14 +58,23 @@ export async function isPromptReceiptEligible(agent: TuiAgent | undefined): Prom
 export type PromptSubmitReceiptWatch = {
   /** Resolves true when a UserPromptSubmit receipt for the tab arrives; false on timeout/cancel. */
   result: Promise<boolean>
+  /**
+   * Arm the timeout countdown. Call AFTER the paste+Enter is issued so the full
+   * window covers the post-submit hook round-trip, not the readiness wait that
+   * precedes the paste (which can run many seconds on a cold SSH boot) —
+   * otherwise the window expires before the prompt is even submitted (issue
+   * #7466). Idempotent and a no-op once the watch has settled.
+   */
+  startTimer: () => void
   cancel: () => void
 }
 
 /**
  * Watch the agent-status IPC stream for a UserPromptSubmit receipt bound to
- * `tabId`. Start the watch BEFORE submitting so a fast receipt cannot slip
- * past the subscription. Remote (SSH) launches arrive through the same
- * channel via the agent-hook relay, so no transport split is needed.
+ * `tabId`. Subscribe BEFORE submitting so a fast receipt cannot slip past the
+ * subscription, then call `startTimer()` once the paste is in to arm the
+ * timeout. Remote (SSH) launches arrive through the same channel via the
+ * agent-hook relay, so no transport split is needed.
  */
 export function watchForPromptSubmitReceipt(args: {
   tabId: string
@@ -75,6 +84,7 @@ export function watchForPromptSubmitReceipt(args: {
 }): PromptSubmitReceiptWatch {
   const { tabId, agent, since, timeoutMs } = args
   let cancel: () => void = () => {}
+  let startTimer: () => void = () => {}
   const result = new Promise<boolean>((resolve) => {
     let settled = false
     let unsubscribe: (() => void) | null = null
@@ -92,6 +102,12 @@ export function watchForPromptSubmitReceipt(args: {
       resolve(value)
     }
     cancel = () => finish(false)
+    startTimer = () => {
+      if (settled || timer !== null) {
+        return
+      }
+      timer = window.setTimeout(() => finish(false), timeoutMs ?? PROMPT_RECEIPT_TIMEOUT_MS)
+    }
 
     unsubscribe = window.api.agentStatus.onSet((data: AgentStatusIpcPayload) => {
       if (data.tabId !== tabId) {
@@ -108,8 +124,6 @@ export function watchForPromptSubmitReceipt(args: {
       }
       finish(true)
     })
-
-    timer = window.setTimeout(() => finish(false), timeoutMs ?? PROMPT_RECEIPT_TIMEOUT_MS)
   })
-  return { result, cancel }
+  return { result, startTimer, cancel }
 }

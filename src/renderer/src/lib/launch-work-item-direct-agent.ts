@@ -150,7 +150,7 @@ export async function pasteDirectWorkItemDraftWhenAgentReady(args: {
     agent: startupPlan.agent,
     submit,
     forcePaste,
-    onTimeout: () => {
+    onTimeout: (reason) => {
       const label = submit ? 'prompt' : 'work item context'
       toast.message(
         translate(
@@ -159,10 +159,11 @@ export async function pasteDirectWorkItemDraftWhenAgentReady(args: {
           { value0: label }
         )
       )
-      // Why: process-startup timeout has no v1 enum slot; the `unknown` slice
-      // on the dashboard is the trigger to add one.
+      // Why: a swallowed submit is its own class (#7466); other startup
+      // timeouts still fold to `unknown`, whose dashboard slice is the trigger
+      // to add a dedicated enum value.
       track('agent_error', {
-        error_class: 'unknown',
+        error_class: reason === 'receipt-timeout' ? 'prompt_receipt_timeout' : 'unknown',
         agent_kind: tuiAgentToAgentKind(startupPlan.agent)
       })
     }
