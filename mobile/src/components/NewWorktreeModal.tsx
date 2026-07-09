@@ -12,7 +12,7 @@ import {
 } from 'react-native'
 import { ChevronDown, ChevronUp } from 'lucide-react-native'
 import type { RpcClient } from '../transport/rpc-client'
-import type { RpcSuccess } from '../transport/types'
+import type { RpcResponse, RpcSuccess } from '../transport/types'
 import { colors, spacing, radii, typography } from '../theme/mobile-theme'
 import { BottomDrawer } from './BottomDrawer'
 import { PickerListDrawer } from './PickerListDrawer'
@@ -313,19 +313,23 @@ function NewWorktreeModalContent({
       // Why: settle each RPC independently so a flaky availability probe (e.g. a
       // linear.status timeout, which rejects rather than resolving {ok:false})
       // can't discard the already-resolved critical settings/ui results.
-      const settled = await Promise.allSettled([
-        client.sendRequest('settings.get'),
-        client.sendRequest('ui.get'),
+      const probes = Promise.allSettled([
         client.sendRequest('status.get'),
         client.sendRequest('preflight.check'),
         client.sendRequest('linear.status')
       ])
+      const okResult = (entry: PromiseSettledResult<RpcResponse>): RpcSuccess | null =>
+        entry.status === 'fulfilled' && entry.value.ok ? (entry.value as RpcSuccess) : null
+      // Why: hydrate settings/trust the moment their own RPCs settle — gating them
+      // on the probes (a first-open preflight.check can take seconds) widens the
+      // window where an already-trusted setup hook spuriously re-prompts on create.
+      const [settingsRes, uiRes] = await Promise.allSettled([
+        client.sendRequest('settings.get'),
+        client.sendRequest('ui.get')
+      ])
       if (stale) {
         return
       }
-      const okResult = (entry: (typeof settled)[number]): RpcSuccess | null =>
-        entry.status === 'fulfilled' && entry.value.ok ? (entry.value as RpcSuccess) : null
-      const [settingsRes, uiRes, statusRes, preflightRes, linearRes] = settled
 
       const settingsResult = okResult(settingsRes)
       const settingsValue = settingsResult
@@ -342,6 +346,11 @@ function NewWorktreeModalContent({
       if (uiResult) {
         const ui = (uiResult.result as { ui?: { trustedOrcaHooks?: PersistedTrustedOrcaHooks } }).ui
         setTrustedOrcaHooks(ui?.trustedOrcaHooks ?? {})
+      }
+
+      const [statusRes, preflightRes, linearRes] = await probes
+      if (stale) {
+        return
       }
       // Tasks is an additive RPC surface, so older paired desktops without the
       // capability fall back to branch + blank sources only.

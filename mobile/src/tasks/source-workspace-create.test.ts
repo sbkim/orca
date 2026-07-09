@@ -4,6 +4,7 @@ import { createWorkspaceFromSource } from './source-workspace-create'
 import {
   buildBranchSource,
   buildGitHubTaskSource,
+  buildGitLabTaskSource,
   buildLinearTaskSource,
   buildNewBranchSource
 } from './workspace-source-selection'
@@ -67,6 +68,44 @@ describe('createWorkspaceFromSource', () => {
     expect(createParams.createdWithAgent).toBe('codex')
     expect(createParams.startupDraft).toBe('https://github.com/acme/app/pull/42')
     expect(createParams.pushTarget).toEqual({ remoteName: 'origin', branchName: 'feat' })
+  })
+
+  it('resolves the MR base then creates a workspace linked to the GitLab MR', async () => {
+    const calls: Call[] = []
+    const client = fakeClient((method) => {
+      if (method === 'worktree.resolveMrBase') {
+        return { baseBranch: 'develop', pushTarget: { remoteName: 'origin', branchName: 'fix' } }
+      }
+      return { worktree: { id: 'wt-mr' } }
+    }, calls)
+
+    const result = await createWorkspaceFromSource({
+      client,
+      source: buildGitLabTaskSource('repo-2', {
+        type: 'mr',
+        number: 7,
+        title: 'Fix logout',
+        url: 'https://gitlab.com/acme/app/-/merge_requests/7',
+        branchName: 'fix',
+        isCrossRepository: true
+      }) as never,
+      targetRepoId: 'repo-2',
+      setupDecision: 'inherit',
+      agent: { choice: 'blank', startupCommand: undefined },
+      workspaceName: undefined,
+      note: undefined
+    })
+
+    expect(result).toEqual({ worktreeId: 'wt-mr', name: 'mr-7' })
+    expect(calls[0]).toEqual({
+      method: 'worktree.resolveMrBase',
+      params: { repo: 'id:repo-2', mrIid: 7, sourceBranch: 'fix', isCrossRepository: true }
+    })
+    expect(calls[1]?.method).toBe('worktree.create')
+    const createParams = calls[1]?.params as Record<string, unknown>
+    expect(createParams.linkedGitLabMR).toBe(7)
+    expect(createParams.baseBranch).toBe('develop')
+    expect(createParams.pushTarget).toEqual({ remoteName: 'origin', branchName: 'fix' })
   })
 
   it('creates a branch workspace with baseBranch + branchNameOverride and no resolve call', async () => {
