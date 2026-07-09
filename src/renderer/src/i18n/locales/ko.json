@@ -545,6 +545,13 @@
       },
       "ephemeralVmWorkspaceTarget": {
         "projectRootRegistrationFailed": "Failed to register the recipe-created project root on the runtime."
+      },
+      "blocked": {
+        "notification": {
+          "fallback": {
+            "de50bef680": "macOS가 Orca 알림을 차단하고 있습니다"
+          }
+        }
       }
     },
     "hooks": {

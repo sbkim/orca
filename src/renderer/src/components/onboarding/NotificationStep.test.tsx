@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { GlobalSettings } from '../../../../shared/types'
 import { NotificationStep } from './NotificationStep'
-import { resolveMacNotificationPermissionState } from './mac-notification-permission-card'
+import { resolveMacNotificationPermissionState } from '../notifications/mac-notification-permission-card'
 
 function createSettings(
   notificationOverrides: Partial<GlobalSettings['notifications']> = {}

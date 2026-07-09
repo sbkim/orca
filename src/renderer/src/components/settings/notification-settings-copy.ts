@@ -130,7 +130,7 @@ export async function sendNotificationSettingsTestNotification(
     return 'delivered'
   }
 
-  if (result.reason === 'not-displayed') {
+  if (result.reason === 'not-displayed' || result.reason === 'blocked-by-system') {
     if (options?.suppressSystemPermissionToasts) {
       return 'not-displayed'
     }

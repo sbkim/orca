@@ -3026,7 +3026,9 @@ export type NotificationDispatchRequest = {
 
 export type NotificationDispatchResult = {
   delivered: boolean
-  /** Present when delivered is false. Tells the caller why delivery was skipped. */
+  /** Present when delivered is false. Tells the caller why delivery was skipped.
+   *  'blocked-by-system' means the OS-level permission readout says macOS
+   *  would silently swallow the notification (denied or prompt unanswered). */
   reason?:
     | 'disabled'
     | 'source-disabled'
@@ -3034,6 +3036,7 @@ export type NotificationDispatchResult = {
     | 'cooldown'
     | 'not-supported'
     | 'not-displayed'
+    | 'blocked-by-system'
 }
 
 export type NotificationDismissResult = {

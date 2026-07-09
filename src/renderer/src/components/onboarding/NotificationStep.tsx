@@ -16,7 +16,7 @@ import { getNotificationSoundOptions } from '@/components/notification-sound-opt
 import {
   MacNotificationPermissionCard,
   useMacNotificationPermissionState
-} from '@/components/onboarding/mac-notification-permission-card'
+} from '@/components/notifications/mac-notification-permission-card'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { translate } from '@/i18n/i18n'
 
