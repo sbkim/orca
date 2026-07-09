@@ -284,5 +284,26 @@ describe('deliverLaunchPromptToAgentTab', () => {
 
       expect(mocks.watchForPromptSubmitReceipt).not.toHaveBeenCalled()
     })
+
+    it('keeps the optimistic verdict for remote launches', async () => {
+      // Why: eligibility reads LOCAL hook evidence, which says nothing about a
+      // remote host whose hooks may silently not fire — strict-gating there
+      // would false-fail delivered prompts. Remote graduates in a follow-up
+      // with host-scoped observed evidence.
+      mocks.isPromptReceiptEligible.mockResolvedValue(true)
+
+      await expect(
+        deliverLaunchPromptToAgentTab({
+          tabId: 'tab-1',
+          agent: 'codex',
+          content: 'Fix failing checks',
+          submit: true,
+          forcePaste: true,
+          remoteLaunch: true
+        })
+      ).resolves.toBe(true)
+
+      expect(mocks.watchForPromptSubmitReceipt).not.toHaveBeenCalled()
+    })
   })
 })

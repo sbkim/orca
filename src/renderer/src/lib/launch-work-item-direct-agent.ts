@@ -142,14 +142,23 @@ export async function pasteDirectWorkItemDraftWhenAgentReady(args: {
   content: string
   submit?: boolean
   forcePaste?: boolean
+  remoteLaunch?: boolean
 }): Promise<void> {
-  const { primaryTabId, startupPlan, content, submit = false, forcePaste = false } = args
+  const {
+    primaryTabId,
+    startupPlan,
+    content,
+    submit = false,
+    forcePaste = false,
+    remoteLaunch
+  } = args
   await deliverLaunchPromptToAgentTab({
     tabId: primaryTabId,
     content,
     agent: startupPlan.agent,
     submit,
     forcePaste,
+    remoteLaunch,
     onTimeout: (reason) => {
       const label = submit ? 'prompt' : 'work item context'
       toast.message(

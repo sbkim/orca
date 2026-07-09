@@ -326,7 +326,8 @@ export async function launchWorkItemDirect(args: LaunchWorkItemDirectArgs): Prom
     startupPlan,
     content: draftContent,
     submit: promptDelivery === 'submit-after-ready',
-    forcePaste: promptDelivery === 'submit-after-ready'
+    forcePaste: promptDelivery === 'submit-after-ready',
+    remoteLaunch: typeof getConnectionId(worktreeId) === 'string'
   })
   return true
 }

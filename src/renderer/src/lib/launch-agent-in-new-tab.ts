@@ -309,6 +309,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
       agent,
       submit: submitPastedPrompt,
       forcePaste: forcePasteAfterLaunch,
+      remoteLaunch: isRemote || runtimeEnvironmentId != null,
       onTimeout: (reason) => {
         const state = useAppStore.getState()
         const tabsForWorktree = state.tabsByWorktree[worktreeId] ?? []

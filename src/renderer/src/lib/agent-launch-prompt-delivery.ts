@@ -20,10 +20,16 @@ export async function deliverLaunchPromptToAgentTab(args: {
   content: string
   submit: boolean
   forcePaste: boolean
+  /** Why: receipt eligibility reads LOCAL evidence (local hook install state,
+   * locally-observed statuses), which says nothing about a remote host whose
+   * hooks may silently not fire — strict-gating there would false-fail
+   * delivered prompts. Remote launches keep the optimistic verdict until
+   * host-scoped evidence exists (follow-up). */
+  remoteLaunch?: boolean
   timeoutMs?: number
   onTimeout?: (reason?: LaunchPromptDeliveryFailureReason) => void
 }): Promise<boolean> {
-  const { tabId, agent, content, submit, forcePaste, timeoutMs, onTimeout } = args
+  const { tabId, agent, content, submit, forcePaste, remoteLaunch, timeoutMs, onTimeout } = args
   const shouldSeed =
     submit === true && content.trim().length > 0 && isNativeChatSupportedAgent(agent)
 
@@ -49,7 +55,10 @@ export async function deliverLaunchPromptToAgentTab(args: {
   // delivery has no submitted paste, so it never waits on a receipt (which
   // would never arrive).
   const requireReceipt =
-    submit === true && !deliversViaNativePrefill && (await isPromptReceiptEligible(agent))
+    submit === true &&
+    remoteLaunch !== true &&
+    !deliversViaNativePrefill &&
+    (await isPromptReceiptEligible(agent))
   const receiptWatch = requireReceipt
     ? watchForPromptSubmitReceipt({ tabId, agent, since: Date.now() })
     : null
