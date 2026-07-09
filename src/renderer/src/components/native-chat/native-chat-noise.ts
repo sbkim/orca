@@ -3,10 +3,10 @@ import { isHarnessInjectedUserTurnText } from '../../../../shared/harness-inject
 
 // Why: harness machinery turns land in the transcript but are not real user
 // messages, so the chat filters them out (they were confusingly rendered as
-// the user's own bubbles). The prefix list lives in
+// the user's own bubbles). The classifier lives in
 // src/shared/harness-injected-user-turns.ts, shared with the agent-status
-// prompt pipeline. Mirrors the mobile predicate in
-// mobile/src/session/mobile-native-chat-noise.ts.
+// prompt pipeline; structurally marked turns (isMeta etc.) are already
+// dropped at decode in src/main/native-chat/transcript-line-decoders.ts.
 
 function messageText(message: NativeChatMessage): string {
   return message.blocks

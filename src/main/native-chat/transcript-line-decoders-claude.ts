@@ -26,6 +26,15 @@ export function decodeClaudeTranscriptLine(
   if (blocks.length === 0) {
     return null
   }
+  // Why: Claude structurally marks injected turns, but tool-result records are
+  // genuine output and must remain visible even when the containing turn is meta.
+  if (
+    role === 'user' &&
+    (record.isMeta === true || record.isSynthetic === true || record.isCompactSummary === true) &&
+    !blocks.some((block) => block.type === 'tool-result')
+  ) {
+    return null
+  }
   const messageId = extractString(record.uuid) ?? extractString(message?.id)
   return {
     id: messageId ?? fallbackId,

@@ -87,6 +87,53 @@ describe('readNativeChatTranscript (claude)', () => {
     expect(toolResult?.blocks[0]).toEqual({ type: 'tool-result', output: 'file-a\nfile-b' })
   })
 
+  it('drops structurally marked injected user turns but keeps their tool results', async () => {
+    const filePath = await writeFixture('orca-native-chat-claude-meta-', [
+      {
+        type: 'user',
+        uuid: 'u-real',
+        timestamp: '2026-06-01T10:00:00.000Z',
+        message: { role: 'user', content: 'fix the login bug' }
+      },
+      {
+        type: 'user',
+        uuid: 'u-meta',
+        isMeta: true,
+        timestamp: '2026-06-01T10:00:01.000Z',
+        message: {
+          role: 'user',
+          content: 'Another Claude session sent a message:\n<agent-message from="reviewer">hi'
+        }
+      },
+      {
+        type: 'user',
+        uuid: 'u-compact',
+        isCompactSummary: true,
+        timestamp: '2026-06-01T10:00:02.000Z',
+        message: {
+          role: 'user',
+          content: 'This session is being continued from a previous conversation.'
+        }
+      },
+      {
+        type: 'user',
+        uuid: 'u-meta-toolresult',
+        isMeta: true,
+        timestamp: '2026-06-01T10:00:03.000Z',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', content: 'ok', is_error: false }]
+        }
+      }
+    ])
+    const result = await readNativeChatTranscript('claude', 'sess', { filePath })
+    if (!('messages' in result)) {
+      throw new Error('expected messages')
+    }
+    expect(result.messages.map((m) => m.id)).toEqual(['u-real', 'u-meta-toolresult'])
+    expect(result.messages[1].role).toBe('tool')
+  })
+
   it('marks thinking-only assistant content as a reasoning surface', async () => {
     const filePath = await writeFixture('orca-native-chat-claude-think-', [
       {
