@@ -49,6 +49,10 @@ import {
   prepareSystemConfigForFreshRuntimeMirror,
   syncSystemConfigIntoManagedCodexHome
 } from '../codex/codex-config-mirror'
+import {
+  promoteCodexRuntimeSettingsToSystem,
+  snapshotCodexRuntimeSettingsBaseline
+} from '../codex/config-settings-promotion'
 import { parseWslUncPath } from '../../shared/wsl-paths'
 import {
   getWslSelectionKey,
@@ -139,9 +143,9 @@ export class CodexRuntimeHomeService {
   prepareForCodexLaunch(target?: CodexAccountSelectionTarget): string | null {
     if (target?.runtime === 'wsl') {
       const wslTarget = this.resolveWslDefaultTarget(target)
-      const runtimeHomePath =
-        this.syncWslRuntimeForCurrentSelection(wslTarget) ??
-        this.getWslSystemCodexHomePath(wslTarget)
+      const syncedRuntimeHomePath = this.syncWslRuntimeForCurrentSelection(wslTarget)
+      this.syncWslConfigSettingsPromotion(wslTarget, syncedRuntimeHomePath)
+      const runtimeHomePath = syncedRuntimeHomePath ?? this.getWslSystemCodexHomePath(wslTarget)
       this.startWslSessionBridgeForLaunch(wslTarget, runtimeHomePath)
       return runtimeHomePath
     }
@@ -222,13 +226,38 @@ export class CodexRuntimeHomeService {
     return home ? this.joinWslPath(home, '.codex') : null
   }
 
+  // Why: WSL runtime homes are seeded once and never re-mirrored, so /model
+  // and /approvals changes Codex writes there would otherwise stay split from
+  // the distro's real ~/.codex forever. Promote them with a per-distro
+  // baseline stored inside that runtime home. Only runs against a materialized
+  // runtime home — never against the system home fallback, which would drop
+  // an Orca baseline file into the user's real ~/.codex.
+  private syncWslConfigSettingsPromotion(
+    target: CodexAccountSelectionTarget,
+    runtimeHomePath: string | null
+  ): void {
+    if (!runtimeHomePath) {
+      return
+    }
+    const distro =
+      parseWslUncPath(runtimeHomePath)?.distro || target.wslDistro?.trim() || getDefaultWslDistro()
+    if (!distro) {
+      return
+    }
+    const systemHomePath = this.getWslSystemCodexHomePath({ runtime: 'wsl', wslDistro: distro })
+    if (!systemHomePath || systemHomePath === runtimeHomePath) {
+      return
+    }
+    promoteCodexRuntimeSettingsToSystem({ runtimeHomePath, systemHomePath })
+    snapshotCodexRuntimeSettingsBaseline(runtimeHomePath)
+  }
+
   prepareForRateLimitFetch(target?: CodexAccountSelectionTarget): string | null {
     if (target?.runtime === 'wsl') {
       const wslTarget = this.resolveWslDefaultTarget(target)
-      return (
-        this.syncWslRuntimeForCurrentSelection(wslTarget) ??
-        this.getWslSystemCodexHomePath(wslTarget)
-      )
+      const syncedRuntimeHomePath = this.syncWslRuntimeForCurrentSelection(wslTarget)
+      this.syncWslConfigSettingsPromotion(wslTarget, syncedRuntimeHomePath)
+      return syncedRuntimeHomePath ?? this.getWslSystemCodexHomePath(wslTarget)
     }
     this.syncForCurrentSelection()
     syncSystemCodexResourcesIntoManagedHome()

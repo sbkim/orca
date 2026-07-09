@@ -533,6 +533,63 @@ describe('CodexRuntimeHomeService', () => {
     }
   })
 
+  it('promotes WSL in-Codex setting changes into the distro ~/.codex config', async () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+    const wslHome = join(testState.userDataDir, 'wsl-home')
+    vi.doMock('../wsl', () => ({
+      getDefaultWslDistro: () => 'Ubuntu',
+      getWslHome: () => wslHome
+    }))
+    const store = createStore(
+      createSettings({
+        activeCodexManagedAccountId: null,
+        activeCodexManagedAccountIdsByRuntime: { host: null, wsl: { Ubuntu: null } }
+      })
+    )
+    const wslSystemConfigPath = join(wslHome, '.codex', 'config.toml')
+    mkdirSync(join(wslHome, '.codex'), { recursive: true })
+    writeFileSync(wslSystemConfigPath, 'model = "gpt-5"\n', 'utf-8')
+
+    try {
+      const { CodexRuntimeHomeService } = await import('./runtime-home-service')
+      const service = new CodexRuntimeHomeService(store as never)
+      const wslRuntimeHomePath = join(
+        wslHome,
+        '.local',
+        'share',
+        'orca',
+        'codex-runtime-home',
+        'home'
+      )
+
+      // First fetch seeds the runtime config and records the per-distro baseline.
+      expect(service.prepareForRateLimitFetch({ runtime: 'wsl', wslDistro: 'Ubuntu' })).toBe(
+        wslRuntimeHomePath
+      )
+      const baselinePath = join(wslRuntimeHomePath, '.orca-config-settings-baseline.json')
+      expect(existsSync(baselinePath)).toBe(true)
+
+      // Codex persists a /model change into the WSL runtime config.
+      const runtimeConfigPath = join(wslRuntimeHomePath, 'config.toml')
+      writeFileSync(
+        runtimeConfigPath,
+        readFileSync(runtimeConfigPath, 'utf-8').replace('model = "gpt-5"', 'model = "o4"'),
+        'utf-8'
+      )
+
+      service.prepareForRateLimitFetch({ runtime: 'wsl', wslDistro: 'Ubuntu' })
+      expect(readFileSync(wslSystemConfigPath, 'utf-8')).toBe('model = "o4"\n')
+      // Baseline advances so the promoted value is not re-promoted forever.
+      expect(readFileSync(baselinePath, 'utf-8')).toContain('"model": "\\"o4\\""')
+    } finally {
+      vi.doUnmock('../wsl')
+      if (originalPlatform) {
+        Object.defineProperty(process, 'platform', originalPlatform)
+      }
+    }
+  })
+
   it('bridges WSL history from a configured per-distro source-home override', async () => {
     const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
     Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
