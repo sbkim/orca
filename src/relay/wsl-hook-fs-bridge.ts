@@ -18,7 +18,13 @@ function failure(err: unknown): WslFsFailure {
   return { ok: false, errno: e?.code ?? 'EUNKNOWN', message: e?.message ?? String(err) }
 }
 
-export function registerWslHookFsHandlers(dispatcher: RelayDispatcher, home: string): void {
+export function registerWslHookFsHandlers(
+  dispatcher: RelayDispatcher,
+  home: string,
+  // Why: the home request doubles as the connect handshake; link diagnostics
+  // (port fallback) ride it so the host can breadcrumb them.
+  linkStatus?: () => Record<string, unknown>
+): void {
   // Why: the bridge exists solely to write agent hook configs into the guest
   // user's home. Refusing paths outside it bounds the blast radius of a
   // compromised host-side caller to what hook installation touches anyway.
@@ -51,7 +57,7 @@ export function registerWslHookFsHandlers(dispatcher: RelayDispatcher, home: str
   dispatcher.onRequest(
     WSL_HOOK_FS_METHODS.home,
     async (): Promise<WslFsResult<{ home: string }>> => {
-      return { ok: true, home: homeRoot }
+      return { ok: true, home: homeRoot, ...linkStatus?.() }
     }
   )
 

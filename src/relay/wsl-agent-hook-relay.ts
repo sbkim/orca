@@ -20,7 +20,11 @@ import {
   AGENT_HOOK_NOTIFICATION_METHOD,
   AGENT_HOOK_REQUEST_REPLAY_METHOD
 } from '../shared/agent-hook-relay'
-import { wslHookRelayEndpointDir } from '../shared/wsl-hook-relay-contract'
+import {
+  sanitizeWslHookInstanceKey,
+  WSL_HOOK_RELAY_INSTANCE_ENV,
+  wslHookRelayEndpointDir
+} from '../shared/wsl-hook-relay-contract'
 
 async function main(): Promise<void> {
   const windowsPort = Number(process.env.ORCA_AGENT_HOOK_PORT ?? '')
@@ -38,8 +42,12 @@ async function main(): Promise<void> {
     return process.stdout.write(data)
   })
 
+  // Why: restart-stable instance key keeps the endpoint file at one path
+  // across app restarts so surviving agents re-coordinate off its rewrite.
+  const instanceKey =
+    sanitizeWslHookInstanceKey(process.env[WSL_HOOK_RELAY_INSTANCE_ENV]) ?? `port${windowsPort}`
   const hookServer = new RelayAgentHookServer({
-    endpointDir: wslHookRelayEndpointDir(homedir(), windowsPort),
+    endpointDir: wslHookRelayEndpointDir(homedir(), instanceKey),
     token,
     preferredPort: windowsPort,
     forward: (envelope) =>
@@ -52,7 +60,10 @@ async function main(): Promise<void> {
   dispatcher.onRequest(AGENT_HOOK_REQUEST_REPLAY_METHOD, async () => ({
     replayed: hookServer.replayCachedPayloadsForPanes()
   }))
-  registerWslHookFsHandlers(dispatcher, homedir())
+  registerWslHookFsHandlers(dispatcher, homedir(), () => ({
+    portFallback: hookServer.usedPortFallback,
+    boundPort: hookServer.getCoordinates().port
+  }))
 
   try {
     await hookServer.start()

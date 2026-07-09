@@ -84,6 +84,7 @@ describe.skipIf(process.platform === 'win32')(
           ORCA_AGENT_HOOK_ENV: 'production',
           ORCA_AGENT_HOOK_VERSION: '1'
         }),
+        instanceKey: () => 'liveinstance',
         resolveBundle: () => ({ jsPath: BUNDLE_JS, version }),
         listDistros: async () => ['LiveDistro'],
         spawnRelay: (_distro, env) => {
@@ -138,7 +139,7 @@ describe.skipIf(process.platform === 'win32')(
         fakeHome,
         '.orca-wsl',
         'agent-hooks',
-        `port-${preferredPort}`,
+        'instance-liveinstance',
         'endpoint.env'
       )
       expect(existsSync(endpointFile)).toBe(true)

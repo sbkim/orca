@@ -3,23 +3,30 @@
 // and the sentinel wait that turns a wsl.exe child's stdio into a
 // MultiplexerTransport. Kept separate from the manager so the state machine
 // stays readable. See docs/agent-status-over-wsl.md (STA-1515).
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { app } from 'electron'
 
-import { RELAY_SENTINEL, RELAY_SENTINEL_TIMEOUT_MS } from '../ssh/relay-protocol'
 import type { MultiplexerTransport } from '../ssh/ssh-channel-multiplexer'
+import {
+  decodeWslText,
+  MAX_STARTUP_BUFFER_BYTES,
+  type waitForWslRelaySentinel,
+  type WslRelayStartupFailure
+} from './wsl-hook-relay-sentinel'
 import { addOrcaWslInteropEnv } from '../pty/wsl-orca-env'
+import { escapeWslShCommandForWindows } from '../../shared/wsl-login-shell-command'
 import {
   WSL_HOOK_RELAY_BUNDLE_NAME,
   WSL_HOOK_RELAY_DIR,
+  WSL_HOOK_RELAY_INSTANCE_ENV,
   WSL_HOOK_RELAY_NO_NODE_EXIT_CODE,
   WSL_HOOK_RELAY_VERSION_ENV,
   WSL_HOOK_RELAY_VERSION_FILE
 } from '../../shared/wsl-hook-relay-contract'
 
-const MAX_STARTUP_BUFFER_BYTES = 64 * 1024
+const INSTALL_TIMEOUT_MS = 30_000
 
 export type WslHookRelayBundle = { jsPath: string; version: string }
 
@@ -46,7 +53,9 @@ export function resolveWslHookRelayBundle(): WslHookRelayBundle | null {
     const versionPath = join(dir, WSL_HOOK_RELAY_VERSION_FILE)
     if (existsSync(jsPath) && existsSync(versionPath)) {
       const version = readFileSync(versionPath, 'utf8').trim()
-      if (version.length > 0) {
+      // Why: the version lands inside single-quoted guest shell text and in
+      // a guest path segment — refuse anything outside the safe alphabet.
+      if (/^[A-Za-z0-9+.-]+$/.test(version)) {
         return { jsPath, version }
       }
     }
@@ -54,26 +63,34 @@ export function resolveWslHookRelayBundle(): WslHookRelayBundle | null {
   return null
 }
 
-const GUEST_RELAY_DIR = `$HOME/${WSL_HOOK_RELAY_DIR}`
+// Why: the install dir is namespaced by bundle version so concurrent Orca
+// instances with different bundles (dev + prod) never reinstall over each
+// other; each instance launches exactly the version it shipped.
+function guestRelayDirExpr(version: string): string {
+  return `$HOME/${WSL_HOOK_RELAY_DIR}/${version}`
+}
 
-/** Guest launcher, installed alongside the bundle. Version check first so a
- *  stale install exits 42 and the host reinstalls; node resolution probes
- *  PATH then common install locations (nvm et al) because `sh -c` does not
- *  source interactive profiles. */
-export function buildGuestLaunchScript(): string {
+/** Guest launcher, installed alongside the bundle. The `.version` marker is
+ *  written last by the installer, so the check rejects partial installs;
+ *  node resolution probes each candidate's version because `sh -c` does not
+ *  source interactive profiles (an apt node 12 on PATH must not shadow an
+ *  nvm node 20 off PATH). */
+export function buildGuestLaunchScript(version: string): string {
+  const dir = guestRelayDirExpr(version)
   return [
     '#!/bin/sh',
-    `d="${GUEST_RELAY_DIR}"`,
+    `d="${dir}"`,
     `v="$(cat "$d/${WSL_HOOK_RELAY_VERSION_FILE}" 2>/dev/null || true)"`,
     `[ -n "$${WSL_HOOK_RELAY_VERSION_ENV}" ] && [ "$v" = "$${WSL_HOOK_RELAY_VERSION_ENV}" ] || exit 42`,
-    'n="$(command -v node 2>/dev/null || true)"',
-    'if [ -z "$n" ]; then',
-    '  for c in "$HOME/.nvm/versions/node"/*/bin/node /usr/local/bin/node /usr/bin/node "$HOME/.local/bin/node"; do',
-    '    [ -x "$c" ] && n="$c"',
-    '  done',
-    'fi',
+    'n=""',
+    'for c in "$(command -v node 2>/dev/null || true)" "$HOME/.nvm/versions/node"/*/bin/node /usr/local/bin/node /usr/bin/node "$HOME/.local/bin/node"; do',
+    '  [ -n "$c" ] && [ -x "$c" ] || continue',
+    `  if "$c" -e 'process.exit(Number(process.versions.node.split(".")[0])>=18?0:1)' 2>/dev/null; then`,
+    '    n="$c"',
+    '    break',
+    '  fi',
+    'done',
     `[ -n "$n" ] || exit ${WSL_HOOK_RELAY_NO_NODE_EXIT_CODE}`,
-    `"$n" -e 'process.exit(Number(process.versions.node.split(".")[0])>=18?0:1)' 2>/dev/null || exit ${WSL_HOOK_RELAY_NO_NODE_EXIT_CODE}`,
     `exec "$n" "$d/${WSL_HOOK_RELAY_BUNDLE_NAME}"`,
     ''
   ].join('\n')
@@ -81,22 +98,23 @@ export function buildGuestLaunchScript(): string {
 
 /** Idempotent install script, piped to `sh -s` over stdin. Heredocs with
  *  quoted delimiters carry the bundle (base64) and launcher verbatim, so no
- *  argv quoting crosses the wsl.exe boundary. */
+ *  argv quoting crosses the wsl.exe boundary. Tmp names carry the guest PID
+ *  so same-version concurrent installs cannot corrupt each other. */
 export function buildGuestInstallScript(bundleJs: Buffer, version: string): string {
   const b64 = bundleJs.toString('base64').replace(/(.{1,120})/g, '$1\n')
   return [
     'set -e',
     'umask 077',
-    `d="${GUEST_RELAY_DIR}"`,
+    `d="${guestRelayDirExpr(version)}"`,
     'mkdir -p "$d"',
-    `base64 -d > "$d/bundle.tmp" << 'ORCA_EOF_BUNDLE'`,
+    `base64 -d > "$d/bundle.$$.tmp" << 'ORCA_EOF_BUNDLE'`,
     b64.trimEnd(),
     'ORCA_EOF_BUNDLE',
-    `mv "$d/bundle.tmp" "$d/${WSL_HOOK_RELAY_BUNDLE_NAME}"`,
-    `cat > "$d/launch.tmp" << 'ORCA_EOF_LAUNCH'`,
-    buildGuestLaunchScript().trimEnd(),
+    `mv "$d/bundle.$$.tmp" "$d/${WSL_HOOK_RELAY_BUNDLE_NAME}"`,
+    `cat > "$d/launch.$$.tmp" << 'ORCA_EOF_LAUNCH'`,
+    buildGuestLaunchScript(version).trimEnd(),
     'ORCA_EOF_LAUNCH',
-    'mv "$d/launch.tmp" "$d/launch.sh"',
+    'mv "$d/launch.$$.tmp" "$d/launch.sh"',
     'chmod 700 "$d/launch.sh"',
     // Version marker last: a partial install stays "stale" and reinstalls.
     `printf '%s' '${version}' > "$d/${WSL_HOOK_RELAY_VERSION_FILE}"`,
@@ -106,13 +124,46 @@ export function buildGuestInstallScript(bundleJs: Buffer, version: string): stri
 
 export function spawnWslRelayProcess(
   distro: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  version: string
 ): ChildProcessWithoutNullStreams {
-  return spawn(
-    'wsl.exe',
-    ['-d', distro, '--', 'sh', '-c', 'exec sh "$HOME"/.orca-wsl/hook-relay/launch.sh'],
-    { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }
-  )
+  // Why: escapeWslShCommandForWindows — wsl.exe preprocesses unescaped `$`
+  // in Windows argv; every sh -c site in the repo routes through it.
+  const command = escapeWslShCommandForWindows(`exec sh "${guestRelayDirExpr(version)}/launch.sh"`)
+  return spawn('wsl.exe', ['-d', distro, '--', 'sh', '-c', command], {
+    env,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true
+  })
+}
+
+/** True when the distro shows in `wsl --list --running`. Listing does NOT
+ *  boot anything — unlike `wsl -d`, which starts a stopped distro. The
+ *  restart timer must check this so relay recovery never resurrects a VM the
+ *  user shut down with `wsl --shutdown`. Fails open (true) on probe errors so
+ *  a flaky wsl.exe cannot block recovery. */
+export function isWslDistroRunning(distro: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    execFile(
+      'wsl.exe',
+      ['--list', '--running', '--quiet'],
+      // Why: WSL_UTF8=1 forces UTF-8 output; without it wsl.exe emits
+      // UTF-16LE that reads as NUL-riddled text.
+      { env: { ...process.env, WSL_UTF8: '1' }, timeout: 10_000, windowsHide: true },
+      (err, stdout) => {
+        if (err) {
+          resolve(true)
+          return
+        }
+        const wanted = distro.trim().toLowerCase()
+        const running = decodeWslText(String(stdout))
+          .split(/\r?\n/)
+          .map((line) => line.trim().toLowerCase())
+          .filter(Boolean)
+        resolve(running.includes(wanted))
+      }
+    )
+  })
 }
 
 export function runWslInstallProcess(
@@ -127,11 +178,36 @@ export function runWslInstallProcess(
       windowsHide: true
     })
     let stderr = ''
+    let settled = false
+    // Why: a wedged wsl.exe here would otherwise pin the manager's state at
+    // 'starting' forever — the one unbounded await on the ensure path.
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true
+        child.kill()
+        resolve({
+          code: null,
+          stderr: `${stderr}\ninstall timed out after ${INSTALL_TIMEOUT_MS}ms`
+        })
+      }
+    }, INSTALL_TIMEOUT_MS)
     child.stderr.on('data', (d: Buffer) => {
-      stderr = (stderr + d.toString('utf8')).slice(-MAX_STARTUP_BUFFER_BYTES)
+      stderr = (stderr + decodeWslText(d.toString('utf8'))).slice(-MAX_STARTUP_BUFFER_BYTES)
     })
-    child.on('error', reject)
-    child.on('close', (code) => resolve({ code, stderr }))
+    child.on('error', (err) => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timeout)
+        reject(err)
+      }
+    })
+    child.on('close', (code) => {
+      if (!settled) {
+        settled = true
+        clearTimeout(timeout)
+        resolve({ code, stderr })
+      }
+    })
     child.stdin.on('error', () => {
       // Guest exited before consuming stdin — surfaced via close/code.
     })
@@ -140,120 +216,79 @@ export function runWslInstallProcess(
   })
 }
 
-export type WslRelayStartupFailure = {
-  kind: 'exit' | 'timeout'
-  code: number | null
-  stderr: string
+const TRANSIENT_RETRY_LIMIT = 2
+
+export type WslRelayLaunchIo = {
+  spawnRelay: typeof spawnWslRelayProcess
+  waitForSentinel: typeof waitForWslRelaySentinel
+  runInstall: typeof runWslInstallProcess
+  readBundle: (jsPath: string) => Buffer
+  transientRetryDelayMs: number
 }
 
-/** Wait for the relay's ready sentinel on the child's stdout, then hand the
- *  remaining stdio over as a MultiplexerTransport. WSL twin of the SSH
- *  deploy's waitForSentinel, over a ChildProcess instead of a ClientChannel. */
-export function waitForWslRelaySentinel(
-  child: ChildProcessWithoutNullStreams
-): Promise<MultiplexerTransport> {
-  return new Promise((resolve, reject) => {
-    let settled = false
-    let sentinelSeen = false
-    let stdoutBuffer: Buffer = Buffer.alloc(0)
-    let stderrOutput = ''
-    let exitCode: number | null = null
-    const sentinel = Buffer.from(RELAY_SENTINEL, 'utf8')
-    const dataCallbacks: ((data: Buffer) => void)[] = []
-    const closeCallbacks: (() => void)[] = []
-    let closedNotified = false
-
-    const fail = (failure: WslRelayStartupFailure): void => {
-      if (settled) {
-        return
-      }
-      settled = true
-      clearTimeout(timeout)
-      reject(Object.assign(new Error(formatStartupFailure(failure)), { startup: failure }))
+/** Spawn → sentinel → connect, with the guest-install/retry policy: stale or
+ *  missing installs get exactly one streamed reinstall, wsl.exe's transient
+ *  "Catastrophic failure (E_UNEXPECTED)" gets a bounded retry, a distro
+ *  without node >= 18 reports through `onNoNode`. Terminal failures report
+ *  through `onFailure`; non-startup errors propagate to the caller. */
+export async function launchWslRelayWithInstall(options: {
+  distro: string
+  env: NodeJS.ProcessEnv
+  bundleJsPath: string
+  version: string
+  io: WslRelayLaunchIo
+  isDisposed: () => boolean
+  onChild: (child: ChildProcessWithoutNullStreams) => void
+  onNoNode: () => void
+  onFailure: (message: string) => void
+  connect: (transport: MultiplexerTransport, child: ChildProcessWithoutNullStreams) => Promise<void>
+}): Promise<void> {
+  const { distro, env, bundleJsPath, version, io } = options
+  let installTried = false
+  let transientRetries = 0
+  for (;;) {
+    if (options.isDisposed()) {
+      return
     }
-
-    const timeout = setTimeout(() => {
-      child.kill()
-      fail({ kind: 'timeout', code: null, stderr: stderrOutput })
-    }, RELAY_SENTINEL_TIMEOUT_MS)
-
-    const notifyClosed = (): void => {
-      if (!closedNotified) {
-        closedNotified = true
-        for (const cb of closeCallbacks) {
-          cb()
-        }
+    const child = io.spawnRelay(distro, env, version)
+    options.onChild(child)
+    try {
+      const transport = await io.waitForSentinel(child)
+      await options.connect(transport, child)
+      return
+    } catch (err) {
+      const failure = (err as { startup?: WslRelayStartupFailure }).startup
+      if (!failure) {
+        throw err
       }
+      if (failure.code === WSL_HOOK_RELAY_NO_NODE_EXIT_CODE) {
+        options.onNoNode()
+        return
+      }
+      if (
+        /catastrophic failure/i.test(failure.stderr) &&
+        transientRetries < TRANSIENT_RETRY_LIMIT
+      ) {
+        transientRetries++
+        await new Promise((resolve) => setTimeout(resolve, io.transientRetryDelayMs))
+        continue
+      }
+      if (!installTried) {
+        installTried = true
+        const script = buildGuestInstallScript(io.readBundle(bundleJsPath), version)
+        const result = await io.runInstall(distro, script, env)
+        if (result.code === 0) {
+          continue
+        }
+        options.onFailure(
+          `guest install failed (code ${result.code ?? 'unknown'}): ${result.stderr.trim()}`
+        )
+        return
+      }
+      options.onFailure(formatWslRelayFailure(failure))
+      return
     }
-
-    child.stderr.on('data', (d: Buffer) => {
-      stderrOutput = (stderrOutput + d.toString('utf8')).slice(-MAX_STARTUP_BUFFER_BYTES)
-    })
-    child.on('error', (err) =>
-      fail({ kind: 'exit', code: null, stderr: `${stderrOutput}\n${err.message}` })
-    )
-    child.on('exit', (code) => {
-      exitCode = code
-    })
-    child.on('close', (code) => {
-      if (sentinelSeen) {
-        notifyClosed()
-        return
-      }
-      fail({ kind: 'exit', code: code ?? exitCode, stderr: stderrOutput })
-    })
-
-    child.stdout.on('data', (chunk: Buffer) => {
-      if (sentinelSeen) {
-        for (const cb of dataCallbacks) {
-          cb(chunk)
-        }
-        return
-      }
-      stdoutBuffer = Buffer.concat([stdoutBuffer, chunk])
-      const idx = stdoutBuffer.indexOf(sentinel)
-      if (idx === -1) {
-        // Why: pre-sentinel stdout is untrusted startup noise; cap it so a
-        // broken guest cannot grow memory until the timeout fires.
-        if (stdoutBuffer.length > MAX_STARTUP_BUFFER_BYTES) {
-          child.kill()
-          fail({ kind: 'exit', code: null, stderr: 'startup output exceeded 64 KiB' })
-        }
-        return
-      }
-      sentinelSeen = true
-      settled = true
-      clearTimeout(timeout)
-      const trailing = stdoutBuffer.subarray(idx + sentinel.length)
-      const transport: MultiplexerTransport = {
-        write: (data) => {
-          try {
-            child.stdin.write(data)
-          } catch {
-            // Channel already closing — mux close handling takes over.
-          }
-        },
-        onData: (cb) => {
-          dataCallbacks.push(cb)
-          if (trailing.length > 0 && dataCallbacks.length === 1) {
-            // Post-sentinel bytes that arrived in the same chunk.
-            setImmediate(() => cb(trailing))
-          }
-        },
-        onClose: (cb) => closeCallbacks.push(cb),
-        close: () => child.kill()
-      }
-      resolve(transport)
-    })
-  })
-}
-
-function formatStartupFailure(failure: WslRelayStartupFailure): string {
-  const detail = failure.stderr.trim()
-  if (failure.kind === 'timeout') {
-    return `WSL hook relay did not become ready within ${RELAY_SENTINEL_TIMEOUT_MS / 1000}s${detail ? `: ${detail}` : ''}`
   }
-  return `WSL hook relay exited (code ${failure.code ?? 'unknown'})${detail ? `: ${detail}` : ''}`
 }
 
 export function formatWslRelayFailure(failure: WslRelayStartupFailure): string {
@@ -261,19 +296,24 @@ export function formatWslRelayFailure(failure: WslRelayStartupFailure): string {
   return `startup failed (${failure.kind}, code ${failure.code ?? 'unknown'})${detail ? `: ${detail}` : ''}`
 }
 
-/** Env for the relay's wsl.exe spawn: the live hook coordinates plus the
- *  host-expected bundle version, all crossed via WSLENV. */
+/** Env for the relay's wsl.exe spawn: the live hook coordinates, the
+ *  host-expected bundle version, and the stable instance key, all crossed
+ *  via WSLENV. WSL_UTF8 keeps wsl.exe's own error text (e.g. "Catastrophic
+ *  failure") UTF-8 so stderr matching and breadcrumbs stay readable. */
 export function buildWslRelaySpawnEnv(
   coords: Record<string, string>,
-  bundleVersion: string
+  bundleVersion: string,
+  instanceKey: string
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    WSL_UTF8: '1',
     ORCA_AGENT_HOOK_PORT: coords.ORCA_AGENT_HOOK_PORT,
     ORCA_AGENT_HOOK_TOKEN: coords.ORCA_AGENT_HOOK_TOKEN,
     ORCA_AGENT_HOOK_ENV: coords.ORCA_AGENT_HOOK_ENV,
     ORCA_AGENT_HOOK_VERSION: coords.ORCA_AGENT_HOOK_VERSION,
-    [WSL_HOOK_RELAY_VERSION_ENV]: bundleVersion
+    [WSL_HOOK_RELAY_VERSION_ENV]: bundleVersion,
+    [WSL_HOOK_RELAY_INSTANCE_ENV]: instanceKey
   }
   // Why: the relay derives its own guest endpoint path; a /p-translated
   // Windows endpoint here would only add WSLENV noise.

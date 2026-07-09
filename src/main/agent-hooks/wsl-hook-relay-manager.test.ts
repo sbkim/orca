@@ -13,7 +13,8 @@ import { registerWslHookFsHandlers } from '../../relay/wsl-hook-fs-bridge'
 import { SshChannelMultiplexer, type MultiplexerTransport } from '../ssh/ssh-channel-multiplexer'
 import { createWslHookSftpAdapter } from './wsl-hook-fs-adapter'
 import { installRemoteManagedAgentHooks } from './remote-managed-hook-installers'
-import { WslHookRelayManager, type WslHookRelayManagerDeps } from './wsl-hook-relay-manager'
+import { WslHookRelayManager } from './wsl-hook-relay-manager'
+import type { WslHookRelayManagerDeps } from './wsl-hook-relay-deps'
 import {
   AGENT_HOOK_NOTIFICATION_METHOD,
   AGENT_HOOK_REQUEST_REPLAY_METHOD
@@ -192,9 +193,11 @@ describe('WslHookRelayManager', () => {
         ORCA_AGENT_HOOK_ENV: 'production',
         ORCA_AGENT_HOOK_VERSION: '1'
       }),
+      instanceKey: () => 'testinstance',
       resolveBundle: () => ({ jsPath: '/fake/wsl-agent-hook-relay.js', version: '0.1.0+abc' }),
       readBundle: () => Buffer.from('// bundle'),
       listDistros: async () => ['Ubuntu'],
+      isDistroRunning: vi.fn(async () => true),
       spawnRelay: vi.fn(() => fakeChild()),
       runInstall: vi.fn(async () => ({ code: 0, stderr: '' })),
       waitForSentinel: vi.fn(async () => guestTransport()),
@@ -219,7 +222,7 @@ describe('WslHookRelayManager', () => {
     })
 
     expect(manager.getGuestEndpointFilePath('Ubuntu')).toBe(
-      `${home}/.orca-wsl/agent-hooks/port-43117/endpoint.env`
+      `${home}/.orca-wsl/agent-hooks/instance-testinstance/endpoint.env`
     )
 
     const guest = harnesses[0].guestDispatcher
@@ -249,7 +252,7 @@ describe('WslHookRelayManager', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
     expect(manager.getGuestEndpointFilePath(null)).toBe(
-      `${home}/.orca-wsl/agent-hooks/port-43117/endpoint.env`
+      `${home}/.orca-wsl/agent-hooks/instance-testinstance/endpoint.env`
     )
     manager.disposeAll()
   })

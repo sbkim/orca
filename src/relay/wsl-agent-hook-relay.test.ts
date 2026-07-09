@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { RelayAgentHookServer } from './agent-hook-server'
 import {
+  sanitizeWslHookInstanceKey,
   wslHookRelayEndpointDir,
   wslHookRelayEndpointFilePath
 } from '../shared/wsl-hook-relay-contract'
@@ -87,18 +88,26 @@ describe('RelayAgentHookServer host-given coordinates (WSL relay)', () => {
 })
 
 describe('wsl hook relay endpoint contract', () => {
-  it('derives the endpoint dir from guest home and the Windows port', () => {
-    expect(wslHookRelayEndpointDir('/home/u', 43117)).toBe(
-      '/home/u/.orca-wsl/agent-hooks/port-43117'
+  it('derives the endpoint dir from guest home and the restart-stable instance key', () => {
+    expect(wslHookRelayEndpointDir('/home/u', 'abc123')).toBe(
+      '/home/u/.orca-wsl/agent-hooks/instance-abc123'
     )
-    expect(wslHookRelayEndpointDir('/home/u/', 43117)).toBe(
-      '/home/u/.orca-wsl/agent-hooks/port-43117'
+    expect(wslHookRelayEndpointDir('/home/u/', 'abc123')).toBe(
+      '/home/u/.orca-wsl/agent-hooks/instance-abc123'
     )
   })
 
   it('names the guest endpoint file endpoint.env regardless of host platform', () => {
-    expect(wslHookRelayEndpointFilePath('/home/u', 1)).toBe(
-      '/home/u/.orca-wsl/agent-hooks/port-1/endpoint.env'
+    expect(wslHookRelayEndpointFilePath('/home/u', 'k1')).toBe(
+      '/home/u/.orca-wsl/agent-hooks/instance-k1/endpoint.env'
     )
+  })
+
+  it('sanitizes instance keys to a shell/path-inert alphabet', () => {
+    expect(sanitizeWslHookInstanceKey('ABCdef012')).toBe('abcdef012')
+    expect(sanitizeWslHookInstanceKey('  a-1  ')).toBe('a-1')
+    expect(sanitizeWslHookInstanceKey('bad key$')).toBeNull()
+    expect(sanitizeWslHookInstanceKey('')).toBeNull()
+    expect(sanitizeWslHookInstanceKey(undefined)).toBeNull()
   })
 })

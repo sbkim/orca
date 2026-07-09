@@ -239,6 +239,48 @@ two fixes:
    once the seed lands. Consequence: the very first WSL Codex session after a cold relay
    may miss hooks; the next one has them.
 
+## 2026-07-09 adversarial-review hardening (pre-rig round 3)
+
+Four independent review lenses over the full diff; confirmed findings fixed:
+
+- **Endpoint identity (all 4 reviewers)**: the guest endpoint dir was keyed by the
+  ephemeral Windows hook port, so a daemon-surviving agent kept sourcing the DEAD
+  `port-P1` file after an Orca restart — breaking the restart-resume acceptance criterion
+  and regressing shipped OMP recovery. Now keyed by a restart-stable instance key
+  (hash of the Windows endpoint file path = userData + namespace, crossed via
+  `ORCA_WSL_HOOK_INSTANCE`): the restarted instance's relay REWRITES the same file, which
+  is exactly what re-coordinates survivors.
+- **Restart policy**: every failure now arms the restart timer (one failed relaunch no
+  longer ends self-recovery), and the timer probes `wsl --list --running` first — `wsl -d`
+  BOOTS a stopped distro, so recovery must never resurrect a VM the user shut down; a
+  stopped distro's state is dropped instead (next WSL terminal re-ensures). Failure
+  counters only reset after 2 min of stable uptime, so connect-then-die loops escalate to
+  the 10-min cap instead of cycling every 10s.
+- **Install-dir versioning**: the guest install dir is namespaced by bundle version, so
+  concurrent Orca instances with different bundles (dev + prod) never reinstall over each
+  other; tmp files carry the guest PID. The install spawn also gained the 30s timeout it
+  was missing (a wedged wsl.exe could previously pin the state machine at 'starting'
+  forever).
+- **Guest node resolution**: candidates (PATH, nvm glob, fixed paths) are each
+  version-probed, first pass wins — an apt node 12 on PATH no longer masks an nvm node 20
+  into a false "no node >= 18" 10-minute cooldown.
+- **wsl.exe text handling**: `WSL_UTF8=1` on all spawns + NUL-stripping on stderr, so the
+  "Catastrophic failure" transient-retry matcher and breadcrumbs survive UTF-16LE output.
+- Smaller: ordered post-sentinel chunk handoff (frame-decoder desync race), port-fallback
+  breadcrumb now reaches host logs via the home handshake, bad home reply fails the
+  connect (was: silently 'running' without installs), missing-bundle warn-once, distro
+  map keys case-normalized, `disposeAll` wired to app `will-quit`, single-spawn Codex
+  trust catch-up via a one-shot 60s reinstall timer.
+
+Accepted gaps (reviewed, deliberately not addressed here): guest relay per-pane cache
+count grows for the relay's lifetime and reconnect replays all of it (bounded bytes per
+entry; main-side suppression absorbs closed panes); old version-namespaced install dirs
+accrete across upgrades (~200KB each); the OMP curl.exe bridge coexists until the relay
+is validated (then retires); an outdated running daemon /p-translates the guest endpoint
+path until it restarts (hook scripts fall back to env coords, which same-port binding
+keeps correct); `wslDistroCache` caches a transient empty list for the app run
+(pre-existing semantics, now load-bearing for default-distro resolution).
+
 ## Implementation map
 
 - Guest: `src/relay/wsl-agent-hook-relay.ts` (entry; exits on stdin close),

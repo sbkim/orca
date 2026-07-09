@@ -34,6 +34,7 @@ export function addOrcaWslInteropEnv(env: Record<string, string>): void {
     'ORCA_AGENT_HOOK_VERSION/u',
     `ORCA_AGENT_HOOK_ENDPOINT/${endpointFlag}`,
     'ORCA_WSL_HOOK_RELAY_VERSION/u',
+    'ORCA_WSL_HOOK_INSTANCE/u',
     'ORCA_OMP_SOURCE_AGENT_DIR/p',
     'ORCA_OMP_STATUS_EXTENSION/p'
   ]

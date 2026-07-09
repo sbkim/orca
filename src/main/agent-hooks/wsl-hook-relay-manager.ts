@@ -1,46 +1,34 @@
 // Host-side lifecycle manager for the guest-resident WSL agent-hook relay
-// (STA-1515). One relay per distro per Orca instance, ensured from every WSL
-// PTY spawn (fresh spawns AND post-restart reattach re-spawns), forwarding
-// guest hook envelopes into agentHookServer.ingestRemote and installing hook
-// configs into the guest over the relay's fs bridge.
+// (STA-1515): one relay per distro per instance, ensured from every WSL PTY
+// spawn, forwarding envelopes into ingestRemote and installing guest hooks.
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import { installWslGuestHooks } from './wsl-hook-fs-adapter'
+import { buildWslRelaySpawnEnv, launchWslRelayWithInstall } from './wsl-hook-relay-launch'
 import {
-  buildGuestInstallScript,
-  buildWslRelaySpawnEnv,
-  formatWslRelayFailure,
-  type WslRelayStartupFailure
-} from './wsl-hook-relay-launch'
-import { defaultWslHookRelayDeps, type WslHookRelayManagerDeps } from './wsl-hook-relay-deps'
+  defaultWslHookRelayDeps,
+  FAILURE_COOLDOWN_BASE_MS,
+  FAILURE_COOLDOWN_MAX_MS,
+  NO_NODE_COOLDOWN_MS,
+  REINSTALL_MIN_INTERVAL_MS,
+  REINSTALL_ONE_SHOT_DELAY_MS,
+  RUNNING_TEARDOWN_COOLDOWN_MS,
+  STABLE_UPTIME_MS,
+  type WslHookRelayManagerDeps
+} from './wsl-hook-relay-deps'
 import { wireWslRelayLink } from './wsl-hook-relay-link'
+import { WslRelayRecovery } from './wsl-hook-relay-recovery'
 import { SshChannelMultiplexer, type MultiplexerTransport } from '../ssh/ssh-channel-multiplexer'
 import { AGENT_HOOK_REQUEST_REPLAY_METHOD } from '../../shared/agent-hook-relay'
 import {
+  sanitizeWslHookInstanceKey,
   WSL_HOOK_FS_METHODS,
-  WSL_HOOK_RELAY_NO_NODE_EXIT_CODE,
   wslHookRelayEndpointFilePath
 } from '../../shared/wsl-hook-relay-contract'
 
-export type { WslHookRelayManagerDeps } from './wsl-hook-relay-deps'
-
-const TRANSIENT_RETRY_LIMIT = 2
-const FAILURE_COOLDOWN_BASE_MS = 60_000
-const FAILURE_COOLDOWN_MAX_MS = 10 * 60_000
-// Why: a distro without node >= 18 will not grow one mid-session; probe
-// rarely instead of once per PTY spawn.
-const NO_NODE_COOLDOWN_MS = 10 * 60_000
-// Why: a previously-healthy relay dying mid-session (mux protocol error, WSL
-// restart) must self-recover — a live agent session produces no new PTY
-// spawns, so waiting for the next ensure would leave status dead for good.
-const RUNNING_TEARDOWN_COOLDOWN_MS = 10_000
-// Why: re-running the (byte-equality idempotent) installers on later spawns
-// picks up configs that appeared after first install — e.g. Codex's runtime
-// home config.toml is seeded by the launch path, so its hook-trust entries
-// can only be written once that file exists. Throttled: cheap but not free.
-const REINSTALL_MIN_INTERVAL_MS = 30_000
-
 type DistroState = {
+  /** Original casing for wsl.exe argv and breadcrumbs; map keys are lowercased. */
+  distro: string
   phase: 'starting' | 'running' | 'failed'
   child?: ChildProcessWithoutNullStreams
   mux?: SshChannelMultiplexer
@@ -48,22 +36,37 @@ type DistroState = {
   guestEndpointFilePath?: string
   failures: number
   cooldownUntil: number
+  connectedAt?: number
   restartTimer?: ReturnType<typeof setTimeout>
+  reinstallTimer?: ReturnType<typeof setTimeout>
   lastInstallAt?: number
+}
+
+function distroKey(distro: string): string {
+  return distro.trim().toLowerCase()
 }
 
 export class WslHookRelayManager {
   private deps: WslHookRelayManagerDeps
+  private recovery: WslRelayRecovery
   private states = new Map<string, DistroState>()
   private defaultDistro: string | null = null
   private disposed = false
+  private warnedBundleMissing = false
 
   constructor(deps: Partial<WslHookRelayManagerDeps> = {}) {
     this.deps = { ...defaultWslHookRelayDeps, ...deps }
+    this.recovery = new WslRelayRecovery({
+      isDistroRunning: (distro) => this.deps.isDistroRunning(distro),
+      warn: (message) => this.deps.warn(message),
+      isDisposed: () => this.disposed,
+      isCurrent: (state) => this.states.get(distroKey(state.distro)) === state,
+      restart: (distro) => this.ensureForDistro(distro),
+      dropState: (state) => void this.states.delete(distroKey(state.distro))
+    })
   }
 
-  /** Fire-and-forget: called from every WSL PTY spawn-env build. Errors are
-   *  breadcrumbed, never thrown — hooks degrade, terminals must not. */
+  /** Fire-and-forget from every WSL PTY spawn-env build; errors breadcrumb. */
   ensureForDistro(distro: string | null): void {
     if (this.disposed || this.deps.platform() !== 'win32' || !this.deps.remoteHooksEnabled()) {
       return
@@ -75,23 +78,20 @@ export class WslHookRelayManager {
     })
   }
 
-  /** Guest-side endpoint file path for a distro's PTY env, once known.
-   *  Null before the relay's first connect — callers keep the /p-translated
-   *  Windows endpoint path until then. */
+  /** Guest endpoint file path once known; null before first connect
+   *  (callers keep the /p-translated Windows endpoint path until then). */
   getGuestEndpointFilePath(distro: string | null): string | null {
-    const key = distro ?? this.defaultDistro
-    if (!key) {
+    const name = distro ?? this.defaultDistro
+    if (!name) {
       return null
     }
-    return this.states.get(key)?.guestEndpointFilePath ?? null
+    return this.states.get(distroKey(name))?.guestEndpointFilePath ?? null
   }
 
   disposeAll(): void {
     this.disposed = true
     for (const state of this.states.values()) {
-      if (state.restartTimer) {
-        clearTimeout(state.restartTimer)
-      }
+      this.recovery.clearTimers(state)
       state.mux?.dispose()
       state.child?.kill()
     }
@@ -103,10 +103,11 @@ export class WslHookRelayManager {
     if (!distro || this.disposed) {
       return
     }
-    const existing = this.states.get(distro)
+    const key = distroKey(distro)
+    const existing = this.states.get(key)
     if (existing) {
       if (existing.phase === 'running') {
-        void this.maybeReinstallHooks(distro, existing)
+        void this.maybeReinstallHooks(existing)
         return
       }
       if (existing.phase !== 'failed' || Date.now() < existing.cooldownUntil) {
@@ -120,113 +121,75 @@ export class WslHookRelayManager {
     }
     const bundle = this.deps.resolveBundle()
     if (!bundle) {
-      this.deps.warn('[agent-hooks] WSL hook relay bundle not found; run build:relay')
+      if (!this.warnedBundleMissing) {
+        this.warnedBundleMissing = true
+        this.deps.warn('[agent-hooks] WSL hook relay bundle not found; run build:relay')
+      }
       return
     }
-    if (existing?.restartTimer) {
-      clearTimeout(existing.restartTimer)
+    // Why: restart-stable instance identity keeps the guest endpoint file at
+    // ONE path across restarts so daemon-surviving agents re-coordinate.
+    const instanceKey =
+      sanitizeWslHookInstanceKey(this.deps.instanceKey() ?? undefined) ?? `port${port}`
+    if (existing) {
+      this.recovery.clearTimers(existing)
     }
     const state: DistroState = {
+      distro,
       phase: 'starting',
       failures: existing?.failures ?? 0,
       cooldownUntil: 0
     }
-    this.states.set(distro, state)
+    this.states.set(key, state)
 
-    const env = buildWslRelaySpawnEnv(coords, bundle.version)
+    const env = buildWslRelaySpawnEnv(coords, bundle.version, instanceKey)
 
     try {
-      await this.launchWithInstall(distro, state, env, bundle.jsPath, bundle.version, port)
+      await launchWslRelayWithInstall({
+        distro: state.distro,
+        env,
+        bundleJsPath: bundle.jsPath,
+        version: bundle.version,
+        io: this.deps,
+        isDisposed: () => this.disposed,
+        onChild: (child) => {
+          state.child = child
+        },
+        onNoNode: () =>
+          this.markFailed(
+            state,
+            `no node >= 18 found in distro '${state.distro}'; agent hooks stay degraded there`,
+            { cooldownBaseMs: NO_NODE_COOLDOWN_MS }
+          ),
+        onFailure: (message) =>
+          this.markFailed(state, message, { cooldownBaseMs: FAILURE_COOLDOWN_BASE_MS }),
+        connect: (transport, child) => this.connect(state, transport, child, instanceKey)
+      })
     } catch (err) {
-      // Why: the teardown handler may have already recorded this failure
-      // (child died mid-connect); don't double-count it.
+      // Why: teardown may have already recorded this failure; don't double-
+      // count. A request-level error can leave a live child — never leak it.
+      state.child?.kill()
+      state.mux?.dispose()
       if (state.phase !== 'failed') {
-        this.markFailed(
-          distro,
-          state,
-          err instanceof Error ? err.message : String(err),
-          FAILURE_COOLDOWN_BASE_MS
-        )
-      }
-    }
-  }
-
-  private async launchWithInstall(
-    distro: string,
-    state: DistroState,
-    env: NodeJS.ProcessEnv,
-    bundleJsPath: string,
-    version: string,
-    windowsPort: number
-  ): Promise<void> {
-    let installTried = false
-    let transientRetries = 0
-    for (;;) {
-      const child = this.deps.spawnRelay(distro, env)
-      state.child = child
-      try {
-        const transport = await this.deps.waitForSentinel(child)
-        await this.connect(distro, state, transport, child, windowsPort)
-        return
-      } catch (err) {
-        const failure = (err as { startup?: WslRelayStartupFailure }).startup
-        if (!failure) {
-          throw err
-        }
-        if (failure.code === WSL_HOOK_RELAY_NO_NODE_EXIT_CODE) {
-          this.markFailed(
-            distro,
-            state,
-            `no node >= 18 found in distro '${distro}'; agent hooks stay degraded there`,
-            NO_NODE_COOLDOWN_MS
-          )
-          return
-        }
-        // Why: fresh WSL intermittently throws "Catastrophic failure
-        // (E_UNEXPECTED)" under concurrent wsl.exe spawn load; bounded retry,
-        // never a spawn loop.
-        if (
-          /catastrophic failure/i.test(failure.stderr) &&
-          transientRetries < TRANSIENT_RETRY_LIMIT
-        ) {
-          transientRetries++
-          await new Promise((resolve) => setTimeout(resolve, this.deps.transientRetryDelayMs))
-          continue
-        }
-        if (!installTried) {
-          installTried = true
-          const script = buildGuestInstallScript(this.deps.readBundle(bundleJsPath), version)
-          const result = await this.deps.runInstall(distro, script, env)
-          if (result.code === 0) {
-            continue
-          }
-          this.markFailed(
-            distro,
-            state,
-            `guest install failed (code ${result.code ?? 'unknown'}): ${result.stderr.trim()}`,
-            FAILURE_COOLDOWN_BASE_MS
-          )
-          return
-        }
-        this.markFailed(distro, state, formatWslRelayFailure(failure), FAILURE_COOLDOWN_BASE_MS)
-        return
+        this.markFailed(state, err instanceof Error ? err.message : String(err), {
+          cooldownBaseMs: FAILURE_COOLDOWN_BASE_MS
+        })
       }
     }
   }
 
   private async connect(
-    distro: string,
     state: DistroState,
     transport: MultiplexerTransport,
     child: ChildProcessWithoutNullStreams,
-    windowsPort: number
+    instanceKey: string
   ): Promise<void> {
     const mux = new SshChannelMultiplexer(transport)
     state.mux = mux
     wireWslRelayLink({
       mux,
       child,
-      distro,
+      distro: state.distro,
       ingest: this.deps.ingest,
       warn: this.deps.warn,
       onDead: (reason) => {
@@ -235,42 +198,56 @@ export class WslHookRelayManager {
         }
         state.mux = undefined
         const wasRunning = state.phase === 'running'
-        this.markFailed(
-          distro,
-          state,
-          `relay link for '${distro}' ${reason}; scheduling restart`,
-          wasRunning ? RUNNING_TEARDOWN_COOLDOWN_MS : FAILURE_COOLDOWN_BASE_MS
-        )
-        this.scheduleRestart(distro, state)
+        // Why: only a stable run forgives past failures — a connect-then-die
+        // loop must escalate, not retry every 10s.
+        if (
+          wasRunning &&
+          state.connectedAt !== undefined &&
+          Date.now() - state.connectedAt >= STABLE_UPTIME_MS
+        ) {
+          state.failures = 0
+        }
+        this.markFailed(state, `relay link for '${state.distro}' ${reason}; scheduling restart`, {
+          cooldownBaseMs: wasRunning ? RUNNING_TEARDOWN_COOLDOWN_MS : FAILURE_COOLDOWN_BASE_MS
+        })
       }
     })
 
     const homeResult = (await mux.request(WSL_HOOK_FS_METHODS.home)) as {
       ok?: boolean
       home?: string
+      portFallback?: boolean
+      boundPort?: number
     }
-    if (homeResult?.ok === true && typeof homeResult.home === 'string') {
-      state.guestHome = homeResult.home
-      state.guestEndpointFilePath = wslHookRelayEndpointFilePath(homeResult.home, windowsPort)
-      await this.runInstallers(distro, state, mux, homeResult.home)
-    } else {
-      this.deps.warn(`[agent-hooks] WSL hook relay for '${distro}' returned no home dir`)
+    if (homeResult?.ok !== true || typeof homeResult.home !== 'string') {
+      throw new Error(`relay for '${state.distro}' returned no home dir`)
     }
+    if (homeResult.portFallback === true) {
+      this.deps.warn(
+        `[agent-hooks] WSL hook relay (${state.distro}): preferred port occupied in guest; bound ${homeResult.boundPort ?? 'unknown'} (endpoint-file re-coordination)`
+      )
+    }
+    state.guestHome = homeResult.home
+    state.guestEndpointFilePath = wslHookRelayEndpointFilePath(homeResult.home, instanceKey)
+    await this.runInstallers(state, mux, homeResult.home)
 
     if (state.phase === 'failed' || state.mux !== mux) {
-      // Child died while we were installing — the close handler already
-      // recorded the failure; don't revive the state.
+      // Child died while installing — already recorded; don't revive.
       return
     }
     state.phase = 'running'
-    state.failures = 0
+    state.connectedAt = Date.now()
+    // Why: one-shot catch-up so a single-spawn session (no later ensure)
+    // still writes Codex's deferred trust after the launch path seeds config.toml.
+    this.recovery.scheduleOneShotReinstall(state, REINSTALL_ONE_SHOT_DELAY_MS, () => {
+      void this.maybeReinstallHooks(state)
+    })
     void mux.request(AGENT_HOOK_REQUEST_REPLAY_METHOD).catch(() => {
       // Fresh relays have nothing to replay; tolerate.
     })
   }
 
   private async runInstallers(
-    distro: string,
     state: DistroState,
     mux: SshChannelMultiplexer,
     guestHome: string
@@ -279,16 +256,13 @@ export class WslHookRelayManager {
     await installWslGuestHooks({
       mux,
       guestHome,
-      distro,
+      distro: state.distro,
       installHooks: this.deps.installHooks,
       warn: this.deps.warn
     })
   }
 
-  /** Re-run the byte-equality-idempotent installers on later ensure calls so
-   *  configs that appear after first install (e.g. Codex's launch-seeded
-   *  runtime-home config.toml) pick up their hook entries. */
-  private async maybeReinstallHooks(distro: string, state: DistroState): Promise<void> {
+  private async maybeReinstallHooks(state: DistroState): Promise<void> {
     const mux = state.mux
     const guestHome = state.guestHome
     if (
@@ -300,39 +274,34 @@ export class WslHookRelayManager {
       return
     }
     try {
-      await this.runInstallers(distro, state, mux, guestHome)
+      await this.runInstallers(state, mux, guestHome)
     } catch (err) {
       this.deps.warn(
-        `[agent-hooks] WSL hook reinstall for '${distro}' failed: ${err instanceof Error ? err.message : String(err)}`
+        `[agent-hooks] WSL hook reinstall for '${state.distro}' failed: ${err instanceof Error ? err.message : String(err)}`
       )
     }
   }
 
-  private scheduleRestart(distro: string, state: DistroState): void {
-    if (this.disposed || state.restartTimer) {
-      return
-    }
-    const delayMs = Math.max(state.cooldownUntil - Date.now(), 0) + 250
-    state.restartTimer = setTimeout(() => {
-      state.restartTimer = undefined
-      this.ensureForDistro(distro)
-    }, delayMs)
-    state.restartTimer.unref?.()
-  }
-
+  /** Records + breadcrumbs the failure and always arms the restart timer —
+   *  one failed relaunch must not end self-recovery; the timer's
+   *  distro-running probe keeps this from booting stopped distros. */
   private markFailed(
-    distro: string,
     state: DistroState,
     message: string,
-    cooldownBaseMs: number
+    options: { cooldownBaseMs: number }
   ): void {
     state.phase = 'failed'
     state.failures++
     state.child = undefined
     state.mux = undefined
+    if (state.reinstallTimer) {
+      clearTimeout(state.reinstallTimer)
+      state.reinstallTimer = undefined
+    }
     state.cooldownUntil =
-      Date.now() + Math.min(cooldownBaseMs * state.failures, FAILURE_COOLDOWN_MAX_MS)
-    this.deps.warn(`[agent-hooks] WSL hook relay (${distro}): ${message}`)
+      Date.now() + Math.min(options.cooldownBaseMs * state.failures, FAILURE_COOLDOWN_MAX_MS)
+    this.deps.warn(`[agent-hooks] WSL hook relay (${state.distro}): ${message}`)
+    this.recovery.scheduleRestart(state)
   }
 
   private async resolveDefaultDistro(): Promise<string | null> {
