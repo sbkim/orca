@@ -8,19 +8,12 @@
 # anything — so the release pipeline on main is never at risk while we verify.
 #
 # Runs only via manual dispatch. Use the test-signing policy for iteration
-# (auto-approved test certificate) and release-signing once for the final
-# production rehearsal (requires manual SignPath approvals).
+# (auto-approved test certificate) and release-signing to rehearse the
+# production flow (requires manual SignPath approvals). Rehearsed successfully
+# with test-signing (run 28987534795) and release-signing (run 28988432001).
 name: Windows signing rehearsal
 
 on:
-  # Why: workflow_dispatch only works for files on the default branch, and this
-  # rehearsal must stay off main. Trigger on pushes that touch this file on the
-  # rehearsal branch instead; re-run by amending the trigger comment below.
-  push:
-    branches:
-      - Jinwoo-H/code-signing-windows
-    paths:
-      - .github/workflows/windows-signing-rehearsal.yml
   workflow_dispatch:
     inputs:
       signing-policy-slug:
@@ -34,8 +27,6 @@ on:
         description: SignPath artifact configuration for the inner-binaries zip
         type: string
         default: windows-inner-binaries-zip
-
-# Trigger nonce: 3 (stage 3: production release-signing rehearsal)
 
 jobs:
   rehearse:
@@ -172,7 +163,7 @@ jobs:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: c37aa192-a27a-4377-9c90-5d6c95912dc0
           project-slug: orca
-          signing-policy-slug: ${{ inputs.signing-policy-slug || 'release-signing' }}
+          signing-policy-slug: ${{ inputs.signing-policy-slug || 'test-signing' }}
           artifact-configuration-slug: ${{ inputs.inner-artifact-configuration-slug || 'windows-inner-binaries-zip' }}
           github-artifact-id: ${{ steps.upload-unsigned-inner.outputs.artifact-id }}
           wait-for-completion: false
@@ -246,7 +237,7 @@ jobs:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
           organization-id: c37aa192-a27a-4377-9c90-5d6c95912dc0
           project-slug: orca
-          signing-policy-slug: ${{ inputs.signing-policy-slug || 'release-signing' }}
+          signing-policy-slug: ${{ inputs.signing-policy-slug || 'test-signing' }}
           artifact-configuration-slug: github-actions-windows-installer
           github-artifact-id: ${{ steps.upload-unsigned-installer.outputs.artifact-id }}
           wait-for-completion: false
@@ -306,7 +297,7 @@ jobs:
       - name: Verify signatures end to end
         shell: pwsh
         env:
-          SIGNING_POLICY: ${{ inputs.signing-policy-slug || 'release-signing' }}
+          SIGNING_POLICY: ${{ inputs.signing-policy-slug || 'test-signing' }}
         run: |
           $report = New-Object System.Collections.Generic.List[string]
           $failures = New-Object System.Collections.Generic.List[string]
@@ -356,7 +347,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: windows-signing-rehearsal-${{ inputs.signing-policy-slug || 'release-signing' }}-${{ github.run_id }}
+          name: windows-signing-rehearsal-${{ inputs.signing-policy-slug || 'test-signing' }}-${{ github.run_id }}
           path: |
             signing-evidence.txt
             inner-signing-list.txt
