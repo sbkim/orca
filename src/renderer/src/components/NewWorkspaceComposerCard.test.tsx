@@ -584,6 +584,7 @@ describe('NewWorkspaceComposerCard folder task source mode', () => {
 
     expect(apiMocks.sshConnect).toHaveBeenCalledWith({ targetId: 'devbox' })
     expect(hostChanges).toEqual([])
+    expect(findRunTargetItem('Devbox')).toBeUndefined()
   })
 
   it('opens the SSH host add form from the run target picker', () => {

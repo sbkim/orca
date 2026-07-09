@@ -429,12 +429,16 @@ function WorkspaceRunTargetCombobox({
                       type="button"
                       variant="ghost"
                       size="xs"
-                      className="ml-1 shrink-0 text-muted-foreground hover:text-foreground"
+                      className="ml-1 shrink-0 text-muted-foreground/50 hover:text-muted-foreground"
                       disabled={connectingHostId !== null}
-                      onPointerDown={(event) => event.stopPropagation()}
+                      onPointerDown={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                      }}
                       onClick={(event) => {
                         event.preventDefault()
                         event.stopPropagation()
+                        setOpen(false)
                         void connectHost(option)
                       }}
                     >
