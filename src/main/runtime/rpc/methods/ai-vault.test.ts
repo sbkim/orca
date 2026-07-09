@@ -129,6 +129,33 @@ describe('aiVault.listSessions handler + shared cache', () => {
     expect(scanAiVaultSessions).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a newer different-key scan dedupable after an older scan resolves', async () => {
+    // Why: the resolving scan's cleanup must not clear tracking a concurrent
+    // different-key scan replaced, or re-requests start a duplicate rescan.
+    const deferreds: ((result: AiVaultListResult) => void)[] = []
+    scanAiVaultSessions.mockImplementation(
+      () => new Promise<AiVaultListResult>((resolve) => deferreds.push(resolve))
+    )
+    // The scanner is invoked a microtask after the call (WSL-home await), so
+    // wait for each deferred to register before driving resolution order.
+    const scanA = listAiVaultSessions({ limit: 100 })
+    await vi.waitFor(() => expect(deferreds).toHaveLength(1))
+    const scanB = listAiVaultSessions({ limit: 200 })
+    await vi.waitFor(() => expect(deferreds).toHaveLength(2))
+    deferreds[0]?.(makeResult())
+    await scanA
+    // Re-request key B while its first scan is still pending: must dedupe.
+    const scanBAgain = listAiVaultSessions({ limit: 200 })
+    // Flush a macrotask so that a wrongly-started duplicate scan would reach the
+    // mock (it fires a microtask after the WSL-home await): guarded stays 2, a
+    // reverted guard reads 3, so this assertion — not a Promise.all hang — pins
+    // the fix.
+    await new Promise((resolve) => setTimeout(resolve))
+    expect(scanAiVaultSessions).toHaveBeenCalledTimes(2)
+    deferreds[1]?.(makeResult())
+    await Promise.all([scanB, scanBAgain])
+  })
+
   it('restamps the shared cached result as the addressed runtime host', async () => {
     scanAiVaultSessions.mockResolvedValue({
       sessions: [makeSession()],

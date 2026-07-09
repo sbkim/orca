@@ -70,8 +70,12 @@ export async function listAiVaultSessions(args?: AiVaultListArgs): Promise<AiVau
       return result
     })
     .finally(() => {
-      inflightKey = null
-      inflightList = null
+      // Only clear tracking if it still refers to this request: a concurrent
+      // different-key scan may have replaced it and must stay dedupable.
+      if (inflightKey === key) {
+        inflightKey = null
+        inflightList = null
+      }
     })
   return inflightList
 }
