@@ -97,16 +97,6 @@ function setPlistValue(plistPath, key, value) {
   execFileSync('/usr/bin/plutil', ['-replace', key, '-string', value, plistPath])
 }
 
-function sanitizeBundleIdPart(value) {
-  return (
-    value
-      .toLowerCase()
-      .replace(/[^a-z0-9.-]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 80) || 'dev'
-  )
-}
-
 function sanitizeMacAppBundleName(value) {
   return (
     Array.from(value, (char) => {
@@ -151,7 +141,17 @@ function prepareMacDevElectronApp() {
   const appBundleName = `${sanitizeMacAppBundleName(title)}.app`
   const appPath = path.join(distDir, appBundleName)
   const markerPath = path.join(distDir, 'orca-dev-electron-app.json')
-  const bundleId = `com.stablyai.orca.dev.${sanitizeBundleIdPart(hash)}`
+  // Why: one stable id for every dev instance. Per-instance ids registered a
+  // new macOS Notification Settings entry for each branch × Electron version,
+  // piling up "Orca: <branch>" rows forever and breaking the notification
+  // settings deep-link (System Settings can't resolve an id it has no entry
+  // for and falls back to the root list). macOS keys notification permission
+  // by bundle id, so a single id also means granting notifications to one dev
+  // instance covers all of them. Trade-off: when two dev instances run at
+  // once, macOS may route a notification click to the other instance —
+  // Electron drops clicks for notification ids it didn't create, so the
+  // click is lost, not misdirected.
+  const bundleId = 'com.stablyai.orca.dev'
   process.env.ORCA_DEV_MACOS_BUNDLE_ID = bundleId
   const expectedMarker = JSON.stringify(
     { title, appBundleName, bundleId, sourceAppPath, electronVersion, bundleLayoutVersion },
