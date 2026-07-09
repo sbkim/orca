@@ -43,7 +43,11 @@ export function NotificationStep({
 }: NotificationStepProps): React.JSX.Element {
   const notificationSettings = settings?.notifications
   const notificationSettingsRef = useRef(notificationSettings)
-  const [macPermissionState, setMacPermissionState] = useMacNotificationPermissionState()
+  // Why: undefined settings are still loading — assume enabled (the default)
+  // so the fresh-install permission flow starts without waiting.
+  const [macPermissionState, setMacPermissionState] = useMacNotificationPermissionState(
+    notificationSettings?.enabled !== false
+  )
   const [isPickingSound, setIsPickingSound] = useState(false)
   const [selectPortalRoot, setSelectPortalRoot] = useState<HTMLElement | null>(null)
   const syncedNotificationSettingsRef = useRef(notificationSettings)

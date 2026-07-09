@@ -34,7 +34,9 @@ export function NotificationsPane({
 }: NotificationsPaneProps): React.JSX.Element {
   const notificationSettings = settings.notifications
   const notificationSettingsRef = useRef(notificationSettings)
-  const [macPermissionState, setMacPermissionState] = useMacNotificationPermissionState()
+  const [macPermissionState, setMacPermissionState] = useMacNotificationPermissionState(
+    notificationSettings.enabled
+  )
 
   const updateNotificationSettings = async (
     updates: Partial<GlobalSettings['notifications']>

@@ -35,14 +35,21 @@ export function resolveMacNotificationPermissionState(
   return promptedBefore ? 'blocked' : 'awaiting-permission'
 }
 
-export function useMacNotificationPermissionState(): [
-  MacNotificationPermissionState | null,
-  (state: MacNotificationPermissionState | null) => void
-] {
+export function useMacNotificationPermissionState(
+  enabled: boolean = true
+): [MacNotificationPermissionState | null, (state: MacNotificationPermissionState | null) => void] {
   const [macPermissionState, setMacPermissionState] =
     useState<MacNotificationPermissionState | null>(null)
 
   useEffect(() => {
+    // Why: while Orca's own notifications setting is off, the OS permission
+    // is irrelevant — a green "notifications are enabled" card next to a
+    // disabled toggle reads as a contradiction. Hide the card and skip the
+    // readout polling entirely until the setting is back on.
+    if (!enabled) {
+      setMacPermissionState(null)
+      return
+    }
     let cancelled = false
     let pollTimer: ReturnType<typeof setTimeout> | null = null
     let pollAttempts = 0
@@ -98,7 +105,7 @@ export function useMacNotificationPermissionState(): [
         clearTimeout(pollTimer)
       }
     }
-  }, [])
+  }, [enabled])
 
   return [macPermissionState, setMacPermissionState]
 }

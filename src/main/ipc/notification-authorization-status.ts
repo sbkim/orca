@@ -46,11 +46,25 @@ function resolveHelperPath(): string | null {
  * (scheduling silently succeeds even while macOS is suppressing display), so
  * the only truthful signal is the native settings read.
  */
+let readInFlight: Promise<NotificationAuthorizationStatus | null> | null = null
+
 export function readNotificationAuthorizationStatus(): Promise<NotificationAuthorizationStatus | null> {
   const helperPath = resolveHelperPath()
   if (!helperPath) {
     return Promise.resolve(null)
   }
+  // Why: simultaneous agent completions across worktrees each consult the
+  // readout — one in-flight helper run answers all of them.
+  if (readInFlight) {
+    return readInFlight
+  }
+  readInFlight = runStatusHelper(helperPath).finally(() => {
+    readInFlight = null
+  })
+  return readInFlight
+}
+
+function runStatusHelper(helperPath: string): Promise<NotificationAuthorizationStatus | null> {
   return new Promise((resolve) => {
     execFile(helperPath, [], { timeout: HELPER_TIMEOUT_MS }, (error, stdout) => {
       if (error) {
