@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
   countRecordKeysByReference,
-  getCenteringScrollPadding,
   getScrollTopToRevealBounds,
   resolvePendingSidebarReveal,
   WORKTREE_SIDEBAR_REVEAL_TOP_INSET,
@@ -44,11 +43,8 @@ const makeImportedCardRow = (): Extract<Row, { type: 'imported-worktrees-card' }
   placement: 'repo-group'
 })
 
-const makeScrollContainer = (
-  scrollTop: number,
-  clientHeight: number,
-  scrollHeight = 1_000
-): HTMLElement => ({ scrollTop, clientHeight, scrollHeight }) as HTMLElement
+const makeScrollContainer = (scrollTop: number, clientHeight: number): HTMLElement =>
+  ({ scrollTop, clientHeight }) as HTMLElement
 
 describe('shouldAdjustWorktreeSidebarMeasuredRowScroll', () => {
   it('counts record keys once per object reference', () => {
@@ -125,64 +121,64 @@ describe('shouldAdjustWorktreeSidebarMeasuredRowScroll', () => {
 })
 
 describe('getScrollTopToRevealBounds', () => {
-  it('requests leading space when the first target would be clamped above center', () => {
-    const container = makeScrollContainer(0, 400)
-
-    expect(
-      getCenteringScrollPadding(
-        container,
-        {
-          start: 34,
-          end: 74
-        },
-        WORKTREE_SIDEBAR_REVEAL_TOP_INSET
-      )
-    ).toEqual({ start: 163, end: 0 })
-  })
-
-  it('centers a fully visible target', () => {
+  it('treats the sticky header as occluding the viewport top', () => {
     const container = makeScrollContainer(100, 400)
 
     expect(
       getScrollTopToRevealBounds(
         container,
         {
-          start: 300,
-          end: 400
-        },
-        WORKTREE_SIDEBAR_REVEAL_TOP_INSET
-      )
-    ).toBe(133)
-  })
-
-  it('centers within the area below the sticky header', () => {
-    const container = makeScrollContainer(100, 400)
-
-    expect(
-      getScrollTopToRevealBounds(
-        container,
-        {
-          start: 300,
-          end: 400
+          start: 100,
+          end: 216
         },
         GROUP_HEADER_ROW_HEIGHT
       )
-    ).toBe(136)
+    ).toBe(72)
   })
 
-  it('requests trailing space when the last target would be clamped below center', () => {
-    const container = makeScrollContainer(100, 400, 500)
+  it('includes extra reveal clearance for the highlight ring', () => {
+    const container = makeScrollContainer(100, 400)
 
     expect(
-      getCenteringScrollPadding(
+      getScrollTopToRevealBounds(
         container,
         {
-          start: 430,
-          end: 470
+          start: 100,
+          end: 216
         },
         WORKTREE_SIDEBAR_REVEAL_TOP_INSET
       )
-    ).toEqual({ start: 0, end: 133 })
+    ).toBe(66)
+  })
+
+  it('does not scroll when the bounds are below the sticky header', () => {
+    const container = makeScrollContainer(100, 400)
+
+    expect(
+      getScrollTopToRevealBounds(
+        container,
+        {
+          start: 128,
+          end: 244
+        },
+        GROUP_HEADER_ROW_HEIGHT
+      )
+    ).toBeNull()
+  })
+
+  it('keeps the viewport bottom independent of the sticky header inset', () => {
+    const container = makeScrollContainer(100, 400)
+
+    expect(
+      getScrollTopToRevealBounds(
+        container,
+        {
+          start: 430,
+          end: 520
+        },
+        GROUP_HEADER_ROW_HEIGHT
+      )
+    ).toBe(120)
   })
 })
 

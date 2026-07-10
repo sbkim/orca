@@ -113,12 +113,14 @@ import { translate } from '@/i18n/i18n'
 
 export type PendingSidebarWorktreeReveal = {
   worktreeId: string
+  behavior: 'auto' | 'smooth'
   highlight?: boolean
   beginRename?: boolean
 }
 
 export type PendingSidebarRowReveal = {
   rowKey: string
+  behavior: 'auto' | 'smooth'
   highlight?: boolean
 }
 
@@ -896,6 +898,7 @@ export type UISlice = {
   revealWorktreeInSidebar: (
     worktreeId: string,
     options?: {
+      behavior?: PendingSidebarWorktreeReveal['behavior']
       highlight?: boolean
       beginRename?: boolean
     }
@@ -903,6 +906,7 @@ export type UISlice = {
   revealSidebarRow: (
     rowKey: string,
     options?: {
+      behavior?: PendingSidebarRowReveal['behavior']
       highlight?: boolean
     }
   ) => void
@@ -986,7 +990,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
       targets.some((target) => target.status === 'eligible') &&
       (previousMode?.id !== args.id || previousMode.worktreeId !== args.worktreeId)
     ) {
-      get().revealWorktreeInSidebar(args.worktreeId, { highlight: true })
+      get().revealWorktreeInSidebar(args.worktreeId, { behavior: 'auto', highlight: true })
     }
   },
   closeAgentSendPopoverTargetMode: (id, instanceId) =>
@@ -2202,6 +2206,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     set({
       pendingRevealWorktree: {
         worktreeId,
+        behavior: options?.behavior ?? 'smooth',
         ...(options?.highlight ? { highlight: true } : {}),
         ...(options?.beginRename ? { beginRename: true } : {})
       }
@@ -2210,6 +2215,7 @@ export const createUISlice: StateCreator<AppState, [], [], UISlice> = (set, get)
     set({
       pendingRevealSidebarRow: {
         rowKey,
+        behavior: options?.behavior ?? 'smooth',
         ...(options?.highlight === false ? {} : { highlight: true })
       }
     }),

@@ -100,7 +100,6 @@ import {
   type RenderRow
 } from './worktree-list-virtual-rows'
 import {
-  getElementCenteringScrollPadding,
   revealElementInScrollContainer,
   WORKTREE_SIDEBAR_REVEAL_TOP_INSET
 } from './worktree-sidebar-reveal'
@@ -288,7 +287,6 @@ import {
 import { getFolderWorkspaceCardPrDisplay } from './folder-workspace-card-pr-display'
 
 export {
-  getCenteringScrollPadding,
   getScrollTopToRevealBounds,
   WORKTREE_SIDEBAR_REVEAL_TOP_INSET
 } from './worktree-sidebar-reveal'
@@ -472,15 +470,31 @@ function markSidebarWorktreeActiveImmediately(worktreeId: string, primaryRowKey?
   }
 }
 
+function revealMountedWorktreeElement(
+  container: HTMLElement,
+  worktreeId: string,
+  behavior: ScrollBehavior,
+  optionId?: string
+): HTMLElement | null {
+  const element = optionId
+    ? document.getElementById(optionId)
+    : getMountedWorktreeOptions(worktreeId, container)[0]
+  if (!element || !container.contains(element)) {
+    return null
+  }
+  return revealElementInScrollContainer(container, element, behavior) ? element : null
+}
+
 function revealMountedSidebarRowElement(
   container: HTMLElement,
-  rowKey: string
+  rowKey: string,
+  behavior: ScrollBehavior
 ): HTMLElement | null {
   const element = document.getElementById(getWorktreeOptionId(rowKey))
   if (!element || !container.contains(element)) {
     return null
   }
-  return revealElementInScrollContainer(container, element) ? element : null
+  return revealElementInScrollContainer(container, element, behavior) ? element : null
 }
 
 function getRenderRowSidebarKey(row: RenderRow): string | null {
@@ -1322,11 +1336,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
   const [worktreeDragState, setWorktreeDragState] = useState<WorktreeRowDragState>(
     WORKTREE_ROW_DRAG_INITIAL_STATE
   )
-  const [centeringScrollPadding, setCenteringScrollPadding] = useState<{
-    targetKey: string
-    start: number
-    end: number
-  } | null>(null)
   const [pendingRevealRetryTick, setPendingRevealRetryTick] = useState(0)
   const [documentVisibilityRevision, setDocumentVisibilityRevision] = useState(0)
   const [highlightedRevealRowKey, setHighlightedRevealRowKey] = useState<string | null>(null)
@@ -1976,8 +1985,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     ),
     overscan: 10,
     gap: 6,
-    paddingStart: centeringScrollPadding?.start ?? 0,
-    paddingEnd: centeringScrollPadding?.end ?? 0,
     // Why: the active sticky group header is rendered inside the virtual list,
     // so TanStack's scroll math needs the same top inset as the exact DOM reveal.
     scrollPaddingStart: WORKTREE_SIDEBAR_REVEAL_TOP_INSET,
@@ -2128,35 +2135,14 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
             clearPendingRevealWorktreeId()
           }
         }
-        const optionId = getRenderRowOptionId(targetRow, pendingRevealWorktree.worktreeId)
-        const centeringTargetKey = `worktree:${optionId ?? pendingRevealWorktree.worktreeId}`
-        if (centeringScrollPadding && centeringScrollPadding.targetKey !== centeringTargetKey) {
-          setCenteringScrollPadding(null)
-          retryExactRevealOnNextFrame()
-          return
-        }
-        const option = optionId
-          ? document.getElementById(optionId)
-          : getMountedWorktreeOptions(pendingRevealWorktree.worktreeId, container)[0]
-        const mountedOption = container && option && container.contains(option) ? option : null
-        if (container && mountedOption) {
-          const additionalPadding = getElementCenteringScrollPadding(container, mountedOption)
-          if (additionalPadding && (additionalPadding.start > 0 || additionalPadding.end > 0)) {
-            // Why: the first and last virtual rows need temporary boundary space
-            // or the browser clamps their centered position to the list edge.
-            setCenteringScrollPadding({
-              targetKey: centeringTargetKey,
-              start: (centeringScrollPadding?.start ?? 0) + additionalPadding.start,
-              end: (centeringScrollPadding?.end ?? 0) + additionalPadding.end
-            })
-            retryExactRevealOnNextFrame()
-            return
-          }
-        }
-        const revealedOption =
-          container && mountedOption && revealElementInScrollContainer(container, mountedOption)
-            ? mountedOption
-            : null
+        const revealedOption = container
+          ? revealMountedWorktreeElement(
+              container,
+              pendingRevealWorktree.worktreeId,
+              pendingRevealWorktree.behavior,
+              getRenderRowOptionId(targetRow, pendingRevealWorktree.worktreeId)
+            )
+          : null
         if (revealedOption) {
           if (pendingRevealWorktree.highlight) {
             const revealedRowKey =
@@ -2228,7 +2214,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     pendingRevealRetryTick,
     flashRevealedRow,
     setRenamingWorktreeId,
-    centeringScrollPadding,
     schedulePendingRevealFrame,
     cancelPendingRevealFrames
   ])
@@ -2312,16 +2297,12 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
       }
 
       const container = scrollRef.current
-      // Why: only clear stale boundary padding here. While a worktree reveal is
-      // still pending, clearing would wipe the padding it just accumulated and
-      // its boundary target could exhaust retries without ever centering.
-      if (centeringScrollPadding && !pendingRevealWorktree) {
-        setCenteringScrollPadding(null)
-        retryExactRevealOnNextFrame()
-        return
-      }
       const revealedElement = container
-        ? revealMountedSidebarRowElement(container, pendingRevealSidebarRow.rowKey)
+        ? revealMountedSidebarRowElement(
+            container,
+            pendingRevealSidebarRow.rowKey,
+            pendingRevealSidebarRow.behavior
+          )
         : null
       if (revealedElement) {
         if (pendingRevealSidebarRow.highlight) {
@@ -2345,7 +2326,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     }
   }, [
     pendingRevealSidebarRow,
-    pendingRevealWorktree,
     repoMap,
     projectGroups,
     projectGrouping,
@@ -2357,7 +2337,6 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
     pendingRevealRetryTick,
     flashRevealedRow,
     clearPendingRevealSidebarRow,
-    centeringScrollPadding,
     schedulePendingRevealFrame,
     cancelPendingRevealFrames
   ])
@@ -6681,6 +6660,7 @@ const WorktreeList = React.memo(function WorktreeList({
           { target: { type: 'sidebar-row' } }
         >
         revealSidebarRow(detail.target.rowKey, {
+          behavior: 'smooth',
           highlight: sidebarDetail.highlight !== false
         })
         return
@@ -6702,6 +6682,7 @@ const WorktreeList = React.memo(function WorktreeList({
         clearFilters()
       }
       revealWorktreeInSidebar(currentSidebarWorktreeId, {
+        behavior: 'smooth',
         highlight: true,
         beginRename: (detail as { beginRename?: boolean } | undefined)?.beginRename === true
       })

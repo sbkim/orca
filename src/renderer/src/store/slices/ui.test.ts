@@ -286,6 +286,7 @@ describe('createUISlice agent send target mode', () => {
     })
     expect(store.getState().pendingRevealWorktree).toMatchObject({
       worktreeId,
+      behavior: 'auto',
       highlight: true
     })
   })
@@ -1097,12 +1098,14 @@ describe('createUISlice hydratePersistedUI', () => {
     const store = createUIStore()
 
     store.getState().revealWorktreeInSidebar('repo1::/feature', {
+      behavior: 'smooth',
       highlight: true,
       beginRename: true
     })
 
     expect(store.getState().pendingRevealWorktree).toEqual({
       worktreeId: 'repo1::/feature',
+      behavior: 'smooth',
       highlight: true,
       beginRename: true
     })
