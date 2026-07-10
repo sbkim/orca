@@ -739,6 +739,204 @@ describe('generateCommitMessageFromContext', () => {
     })
   })
 
+  it('surfaces pi auth failure detail end-to-end through the adjusted path sanitizer', async () => {
+    const result = await generateCommitMessageFromContext(
+      {
+        branch: 'main',
+        stagedSummary: 'M\tREADME.md',
+        stagedPatch: '+hello'
+      },
+      {
+        agentId: 'pi',
+        model: 'github-copilot/gpt-5.5'
+      },
+      {
+        kind: 'remote',
+        cwd: '/repo',
+        missingBinaryLocation: 'remote PATH',
+        execute: async () => ({
+          stdout: '',
+          stderr: [
+            'No API key found for github-copilot.',
+            '',
+            'Use /login to log into a provider via OAuth or API key. See:',
+            '  /private/tmp/pi-exit1-repro/node_modules/@earendil-works/pi-coding-agent/docs/providers.md',
+            '  /private/tmp/pi-exit1-repro/node_modules/@earendil-works/pi-coding-agent/docs/models.md'
+          ].join('\n'),
+          exitCode: 1,
+          timedOut: false
+        })
+      }
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        'Pi CLI command failed: No API key found for github-copilot. Use /login to log into a provider via OAuth or API key.'
+    })
+  })
+
+  it('preserves slash-commands while redacting multi-segment paths in failure detail', async () => {
+    const result = await generateCommitMessageFromContext(
+      {
+        branch: 'main',
+        stagedSummary: 'M\tREADME.md',
+        stagedPatch: '+hello'
+      },
+      {
+        agentId: 'custom',
+        model: '',
+        customAgentCommand: 'agent'
+      },
+      {
+        kind: 'remote',
+        cwd: '/repo',
+        missingBinaryLocation: 'remote PATH',
+        execute: async () => ({
+          stdout: '',
+          stderr: 'ERROR: run /login then check /Users/name/repo',
+          exitCode: 1,
+          timedOut: false
+        })
+      }
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'agent CLI command failed: run /login then check [path]'
+    })
+  })
+
+  it('redacts a filesystem path embedded in a pi HTTP 401 payload', async () => {
+    const result = await generateCommitMessageFromContext(
+      {
+        branch: 'main',
+        stagedSummary: 'M\tREADME.md',
+        stagedPatch: '+hello'
+      },
+      {
+        agentId: 'pi',
+        model: 'github-copilot/gpt-5.5'
+      },
+      {
+        kind: 'remote',
+        cwd: '/repo',
+        missingBinaryLocation: 'remote PATH',
+        execute: async () => ({
+          stdout: '',
+          stderr: '401: {"message":"Invalid key loaded from /Users/name/.config/pi/auth.json"}',
+          exitCode: 1,
+          timedOut: false
+        })
+      }
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Pi CLI command failed: 401: Invalid key loaded from [path]'
+    })
+  })
+
+  it('redacts key=/path shapes in provider bodies', async () => {
+    const result = await generateCommitMessageFromContext(
+      {
+        branch: 'main',
+        stagedSummary: 'M\tREADME.md',
+        stagedPatch: '+hello'
+      },
+      {
+        agentId: 'pi',
+        model: 'github-copilot/gpt-5.5'
+      },
+      {
+        kind: 'remote',
+        cwd: '/repo',
+        missingBinaryLocation: 'remote PATH',
+        execute: async () => ({
+          stdout: '',
+          stderr: '401: {"message":"rejected credential_path=/Users/name/.config/pi/auth.json"}',
+          exitCode: 1,
+          timedOut: false
+        })
+      }
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Pi CLI command failed: 401: rejected credential_path=[path]'
+    })
+  })
+
+  it.each([
+    [
+      'comma-prefixed list path',
+      '401: {"message":"candidate list a,/Users/name/creds rejected"}',
+      'Pi CLI command failed: 401: candidate list a,[path] rejected'
+    ],
+    [
+      'non-drive colon-prefixed path',
+      '401: {"message":"slot 1:/Users/name/alt failed"}',
+      'Pi CLI command failed: 401: slot 1:[path] failed'
+    ]
+  ])('redacts a %s in provider bodies', async (_shape, stderr, expected) => {
+    const result = await generateCommitMessageFromContext(
+      {
+        branch: 'main',
+        stagedSummary: 'M\tREADME.md',
+        stagedPatch: '+hello'
+      },
+      {
+        agentId: 'pi',
+        model: 'github-copilot/gpt-5.5'
+      },
+      {
+        kind: 'remote',
+        cwd: '/repo',
+        missingBinaryLocation: 'remote PATH',
+        execute: async () => ({
+          stdout: '',
+          stderr,
+          exitCode: 1,
+          timedOut: false
+        })
+      }
+    )
+
+    expect(result).toEqual({ success: false, error: expected })
+  })
+
+  it('passes the live colonless 400 gateway payload through the sanitizer unmangled', async () => {
+    const result = await generateCommitMessageFromContext(
+      {
+        branch: 'main',
+        stagedSummary: 'M\tREADME.md',
+        stagedPatch: '+hello'
+      },
+      {
+        agentId: 'pi',
+        model: 'github-copilot/gpt-5.5'
+      },
+      {
+        kind: 'remote',
+        cwd: '/repo',
+        missingBinaryLocation: 'remote PATH',
+        execute: async () => ({
+          stdout: '',
+          stderr:
+            '400 {"type":"error","error":{"type":"invalid_request_error","message":"Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going."},"request_id":"req_011CcsZLJ5ZiLLNvpxcxDuU4"}',
+          exitCode: 1,
+          timedOut: false
+        })
+      }
+    )
+
+    expect(result).toEqual({
+      success: false,
+      error:
+        'Pi CLI command failed: 400: Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going.'
+    })
+  })
+
   it('preserves the structured subject and body when formatting the final response', async () => {
     const result = await generateCommitMessageFromContext(
       {

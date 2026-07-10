@@ -95,6 +95,17 @@ function stripAnsiControlSequences(value: string): string {
 const AGENT_ERROR_CODE_SCAN_LIMIT = 8192
 const ERROR_CODE_MARKER = 'error code:'
 
+// Direction-specific bound: pi prints its auth/model block at the very top of
+// stderr (head window) and its HTTP failures last (tail window), so this is not
+// interchangeable with the tail-only AGENT_ERROR_CODE_SCAN_LIMIT.
+const AGENT_STDERR_FAILURE_SCAN_LIMIT = 8192
+// pi's auth/model-resolution failures share this stable remedy line; it sits
+// below a blank line and ends with a dangling ` See:` before local doc paths.
+const PI_LOGIN_HELP_PREFIX = 'Use /login to log into a provider via OAuth or API key.'
+const PI_AUTH_FAILURE_RE =
+  /^(?:No API key (?:found )?for .+|No models available\b.*|No model selected\.)$/
+const AGENT_HTTP_STATUS_LINE_RE = /^([45]\d{2}):?\s+(.+)$/
+
 // Why: agent CLIs (Codex, Claude) prefix their stdout/stderr with config
 // preamble, the echoed prompt, and hook lifecycle messages. When something
 // fails, the actionable error is buried far below all of that. This pulls
@@ -140,7 +151,94 @@ export function extractAgentErrorMessage(stdout: string, stderr: string): string
     }
   }
 
+  // Pass 3/4 scan stderr only: pi writes its auth/model and HTTP failures there,
+  // and stdout can echo prompt/diff content that would falsely match.
+  const piAuthFailure = extractPiAuthResolutionFailure(stderr)
+  if (piAuthFailure !== null) {
+    return piAuthFailure
+  }
+
+  return extractPiRequestFailure(stderr)
+}
+
+function stripAnsiIfPresent(value: string): string {
+  return value.includes(String.fromCharCode(27)) ? stripAnsiControlSequences(value) : value
+}
+
+// Pass 3: pi prints exactly one auth/model-resolution block at the top of stderr
+// and exits, so scan the head window top-down and take the first match.
+function extractPiAuthResolutionFailure(stderr: string): string | null {
+  const head =
+    stderr.length > AGENT_STDERR_FAILURE_SCAN_LIMIT
+      ? stderr.slice(0, AGENT_STDERR_FAILURE_SCAN_LIMIT)
+      : stderr
+  // Bare `\r` is a boundary too (progress-bar frames), matching pass 1's walker.
+  const lines = head.split(/\r\n|\r|\n/)
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = stripAnsiIfPresent(lines[index]).trim()
+    if (!PI_AUTH_FAILURE_RE.test(line)) {
+      continue
+    }
+    const primary = stripTrailingSeeToken(line)
+    const help = findPiLoginHelpFollowUp(lines, index + 1)
+    return help ? `${primary} ${help}` : primary
+  }
   return null
+}
+
+// The remedy line sits below a blank line; skip blanks so the append lands on it
+// and never on the local doc-path lines that follow it.
+function findPiLoginHelpFollowUp(lines: string[], start: number): string | null {
+  for (let index = start; index < lines.length; index += 1) {
+    const line = stripAnsiIfPresent(lines[index]).trim()
+    if (line.length === 0) {
+      continue
+    }
+    return line.startsWith(PI_LOGIN_HELP_PREFIX) ? stripTrailingSeeToken(line) : null
+  }
+  return null
+}
+
+function stripTrailingSeeToken(line: string): string {
+  return line.endsWith(' See:') ? line.slice(0, -' See:'.length) : line
+}
+
+// Pass 4: HTTP/connection failures can repeat across retries; the most recent
+// (closest to exit) is operative, so scan the tail window bottom-up.
+function extractPiRequestFailure(stderr: string): string | null {
+  const tail =
+    stderr.length > AGENT_STDERR_FAILURE_SCAN_LIMIT
+      ? stderr.slice(stderr.length - AGENT_STDERR_FAILURE_SCAN_LIMIT)
+      : stderr
+  // Bare `\r` is a boundary too (progress-bar frames), matching pass 1's walker.
+  const lines = tail.split(/\r\n|\r|\n/)
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = stripAnsiIfPresent(lines[index]).trim()
+    if (/^Connection error\.?$/.test(line)) {
+      return 'Connection error.'
+    }
+    const match = AGENT_HTTP_STATUS_LINE_RE.exec(line)
+    if (match) {
+      return formatHttpStatusFailure(match[1], match[2])
+    }
+  }
+  return null
+}
+
+function formatHttpStatusFailure(status: string, payload: string): string {
+  const trimmed = payload.trim()
+  if (trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed) as { message?: string; error?: { message?: string } }
+      const inner = parsed.error?.message ?? parsed.message
+      if (typeof inner === 'string' && inner.trim().length > 0) {
+        return `${status}: ${inner.trim()}`
+      }
+    } catch {
+      // Fall through to the raw payload below.
+    }
+  }
+  return `${status}: ${trimmed}`
 }
 
 function extractCompactedErrorCodeTail(combined: string): string | null {

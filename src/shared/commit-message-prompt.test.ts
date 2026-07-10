@@ -241,6 +241,152 @@ describe('extractAgentErrorMessage', () => {
   })
 })
 
+describe('extractAgentErrorMessage — pi failure formats', () => {
+  // Exact capture shape from pi 0.80.6: primary line, a blank line, the remedy
+  // line ending in ` See:`, then two local doc paths.
+  const noApiKeyBlock = (provider: string): string =>
+    [
+      `No API key found for ${provider}.`,
+      '',
+      'Use /login to log into a provider via OAuth or API key. See:',
+      '  /private/tmp/pi-exit1-repro/node_modules/@earendil-works/pi-coding-agent/docs/providers.md',
+      '  /private/tmp/pi-exit1-repro/node_modules/@earendil-works/pi-coding-agent/docs/models.md'
+    ].join('\n')
+
+  it('joins the No-API-key block with the login remedy and strips ` See:` and paths', () => {
+    expect(extractAgentErrorMessage('', noApiKeyBlock('github-copilot'))).toBe(
+      'No API key found for github-copilot. Use /login to log into a provider via OAuth or API key.'
+    )
+  })
+
+  it('matches the pi-ai API-layer template without "found"', () => {
+    expect(extractAgentErrorMessage('', 'No API key for provider: openai')).toBe(
+      'No API key for provider: openai'
+    )
+  })
+
+  it('matches the no-model-flag selected-model auth line', () => {
+    expect(extractAgentErrorMessage('', 'No API key found for the selected model.')).toBe(
+      'No API key found for the selected model.'
+    )
+  })
+
+  it('strips a trailing ` See:` from a single-line No-models-available message', () => {
+    expect(
+      extractAgentErrorMessage(
+        '',
+        'No models available. Use /login to log into a provider via OAuth or API key. See:'
+      )
+    ).toBe('No models available. Use /login to log into a provider via OAuth or API key.')
+  })
+
+  it('joins No-model-selected with the login remedy across the blank line', () => {
+    const stderr = [
+      'No model selected.',
+      '',
+      'Use /login to log into a provider via OAuth or API key. See:'
+    ].join('\n')
+    expect(extractAgentErrorMessage('', stderr)).toBe(
+      'No model selected. Use /login to log into a provider via OAuth or API key.'
+    )
+  })
+
+  it('extracts the JSON message from a 401 status line', () => {
+    expect(
+      extractAgentErrorMessage(
+        '',
+        '401: {"message":"Invalid API key provided","type":"invalid_request_error"}'
+      )
+    ).toBe('401: Invalid API key provided')
+  })
+
+  it('extracts the JSON message from a 500 status line', () => {
+    expect(
+      extractAgentErrorMessage(
+        '',
+        '500: {"message":"The server had an error","type":"server_error"}'
+      )
+    ).toBe('500: The server had an error')
+  })
+
+  it('extracts a nested error.message from a status line', () => {
+    expect(extractAgentErrorMessage('', '502: {"error":{"message":"upstream failed"}}')).toBe(
+      '502: upstream failed'
+    )
+  })
+
+  it('handles the old-pi colonless status line with a plain payload', () => {
+    expect(extractAgentErrorMessage('', '400 The requested model is not supported.')).toBe(
+      '400: The requested model is not supported.'
+    )
+  })
+
+  // Real capture: pi 0.80.6's anthropic-messages client prints `NNN {json}` with
+  // NO colon even on current versions, so the optional-colon pattern is mandatory
+  // (not just old-version compat). Nested error.message wins; request_id ignored.
+  it('extracts nested error.message from the live colonless 400 gateway payload', () => {
+    const stderr =
+      '400 {"type":"error","error":{"type":"invalid_request_error","message":"Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going."},"request_id":"req_011CcsZLJ5ZiLLNvpxcxDuU4"}'
+    expect(extractAgentErrorMessage('', stderr)).toBe(
+      '400: Third-party apps now draw from your extra usage, not your plan limits. Add more at claude.ai/settings/usage and keep going.'
+    )
+  })
+
+  it('surfaces a bare connection error', () => {
+    expect(extractAgentErrorMessage('', 'Connection error.')).toBe('Connection error.')
+  })
+
+  it('lets an `Error:` line take precedence over a pi auth line', () => {
+    const stderr = ['No API key found for openai.', 'Error: boom from the CLI'].join('\n')
+    expect(extractAgentErrorMessage('', stderr)).toBe('boom from the CLI')
+  })
+
+  it('ignores a status line that appears only on stdout', () => {
+    expect(extractAgentErrorMessage('401: {"message":"echoed content"}\n', '')).toBeNull()
+  })
+
+  it('handles a CRLF No-API-key block', () => {
+    const stderr = noApiKeyBlock('github-copilot').replace(/\n/g, '\r\n')
+    expect(extractAgentErrorMessage('', stderr)).toBe(
+      'No API key found for github-copilot. Use /login to log into a provider via OAuth or API key.'
+    )
+  })
+
+  it('treats a bare `\\r` progress-frame boundary as a line break', () => {
+    const stderr =
+      'Fetching models... 50%\rFetching models... 100%\r401: {"message":"Invalid API key provided"}'
+    expect(extractAgentErrorMessage('', stderr)).toBe('401: Invalid API key provided')
+  })
+
+  it('finds a pi auth line behind bare `\\r` progress frames', () => {
+    const stderr = 'Contacting provider...\rNo API key found for openai.'
+    expect(extractAgentErrorMessage('', stderr)).toBe('No API key found for openai.')
+  })
+
+  it('strips ANSI wrapping from a pi auth line', () => {
+    expect(extractAgentErrorMessage('', '[91mNo API key found for openai.[0m\n')).toBe(
+      'No API key found for openai.'
+    )
+  })
+
+  it('finds the head auth block even behind more than 8 KiB of trailing stderr', () => {
+    const stderr = `${noApiKeyBlock('github-copilot')}\n${'x'.repeat(9000)}`
+    expect(extractAgentErrorMessage('', stderr)).toBe(
+      'No API key found for github-copilot. Use /login to log into a provider via OAuth or API key.'
+    )
+  })
+
+  it('ignores numeric lines that are not 4xx/5xx statuses', () => {
+    expect(extractAgentErrorMessage('', '123 files processed')).toBeNull()
+  })
+
+  it('treats a 4xx-prefixed stderr line as a status (colonless-match tradeoff)', () => {
+    expect(extractAgentErrorMessage('', '404 files changed by refactor')).toBe(
+      '404: files changed by refactor'
+    )
+  })
+})
+
 describe('tokenizeCustomCommandTemplate', () => {
   it('splits on whitespace', () => {
     const r = tokenizeCustomCommandTemplate('claude -p')

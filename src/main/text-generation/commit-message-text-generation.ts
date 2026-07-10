@@ -178,7 +178,13 @@ function sanitizeAgentFailureDetail(detail: string | null): string | null {
       /[A-Za-z]:[\\/](?:[^\s"'`<>\\/|:*?]+(?:\s+[^\s"'`<>\\/|:*?]+)*(?=[\\/])[\\/])*[^\s"'`<>\\/|:*?]+/g,
       '[path]'
     )
-    .replace(/(^|[\s"'`(])\/(?:[^\s"'`<>/]+(?:\s+[^\s"'`<>/]+)*(?=\/)\/)*[^\s"'`<>/]+/g, '$1[path]')
+    // Why: require ≥2 segments (one internal `/`) so provider remedy tokens like
+    // `/login` survive while multi-segment paths (`/Users/name/repo`) still redact.
+    // `=:,` prefixes catch key=/path value:/path list,/path shapes in provider bodies.
+    .replace(
+      /(^|[\s"'`(=:,])\/(?:[^\s"'`<>/]+(?:\s+[^\s"'`<>/]+)*(?=\/)\/)+[^\s"'`<>/]+/g,
+      '$1[path]'
+    )
   return redacted.length > 240 ? `${redacted.slice(0, 240).trimEnd()}...` : redacted
 }
 
