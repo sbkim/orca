@@ -45,10 +45,11 @@ describe('buildParcelWatcherIgnoreOptions', () => {
       for (const dir of WATCHER_IGNORE_DIRS) {
         expect(regex.test(dir)).toBe(true)
         expect(regex.test(`packages/app/${dir}`)).toBe(true)
-        expect(regex.test(`packages\\app\\${dir}\\nested\\file.ts`)).toBe(true)
+        expect(regex.test(`packages\\app\\${dir}\\nested\\file.ts`)).toBe(platform === 'win32')
       }
       expect(regex.test('packages/app/.github/workflows')).toBe(false)
       expect(regex.test('packages/app/node_modules-cache/file.ts')).toBe(false)
+      expect(regex.test('project\\node_modules/file.ts')).toBe(platform === 'win32')
     }
   })
 })

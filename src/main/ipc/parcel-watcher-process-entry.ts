@@ -130,17 +130,27 @@ function main(): void {
   // native handle — on Windows a leaked handle keeps the worktree dir locked.
   const subscriptions = new Map<number, Promise<ParcelWatcher.AsyncSubscription | null>>()
   const liveSubscriptionIds = new Set<number>()
-  let pendingSubscriptionOperations = 0
+  let pendingSubscriptionCrawls = 0
   let subscriptionActivityRevision = 0
+  let nativeLifecycleTail = Promise.resolve()
 
-  const beginSubscriptionOperation = (): void => {
-    pendingSubscriptionOperations++
+  const beginSubscriptionCrawl = (): void => {
+    pendingSubscriptionCrawls++
     subscriptionActivityRevision++
   }
 
-  const finishSubscriptionOperation = (): void => {
-    pendingSubscriptionOperations--
+  const finishSubscriptionCrawl = (): void => {
+    pendingSubscriptionCrawls--
     subscriptionActivityRevision++
+  }
+
+  const runNativeWatcherLifecycleExclusive = <T>(operation: () => Promise<T>): Promise<T> => {
+    const ready = nativeLifecycleTail
+    let release: () => void
+    nativeLifecycleTail = new Promise((resolve) => {
+      release = resolve
+    })
+    return ready.then(operation).finally(() => release())
   }
 
   const handleSubscribe = async (
@@ -148,26 +158,32 @@ function main(): void {
     dir: string,
     opts: WatcherProcessSubscribeOptions
   ): Promise<ParcelWatcher.AsyncSubscription | null> => {
-    beginSubscriptionOperation()
     try {
-      const watcher = await import('@parcel/watcher')
-      const subscription = await watcher.subscribe(
-        dir,
-        (err, events) => {
-          if (err) {
-            send({ op: 'watch-error', id, message: errorMessage(err) })
-            return
-          }
-          if (events.length > 0) {
-            send({
-              op: 'events',
-              id,
-              events: events.map((event) => ({ type: event.type, path: event.path }))
-            })
-          }
-        },
-        opts as ParcelWatcher.Options
-      )
+      const subscription = await runNativeWatcherLifecycleExclusive(async () => {
+        beginSubscriptionCrawl()
+        try {
+          const watcher = await import('@parcel/watcher')
+          return await watcher.subscribe(
+            dir,
+            (err, events) => {
+              if (err) {
+                send({ op: 'watch-error', id, message: errorMessage(err) })
+                return
+              }
+              if (events.length > 0) {
+                send({
+                  op: 'events',
+                  id,
+                  events: events.map((event) => ({ type: event.type, path: event.path }))
+                })
+              }
+            },
+            opts as ParcelWatcher.Options
+          )
+        } finally {
+          finishSubscriptionCrawl()
+        }
+      })
       // An unsubscribe can remove the record while subscribe() is crawling.
       // Only advertise it as live if it is still owned by this process.
       if (subscriptions.has(id)) {
@@ -180,25 +196,29 @@ function main(): void {
       liveSubscriptionIds.delete(id)
       send({ op: 'subscribe-failed', id, message: errorMessage(err) })
       return null
-    } finally {
-      finishSubscriptionOperation()
     }
   }
 
   const handleUnsubscribe = async (id: number): Promise<void> => {
-    beginSubscriptionOperation()
+    // Why: invalidate a probe already in flight, but keep future probes active.
+    // A native teardown deadlock is the failure the canary exists to recover.
+    subscriptionActivityRevision++
     const pending = subscriptions.get(id)
     subscriptions.delete(id)
     liveSubscriptionIds.delete(id)
     try {
-      const subscription = await pending
-      await subscription?.unsubscribe()
+      // Why: Parcel already serializes crawl and teardown on one backend mutex.
+      // Mirror that ordering here so neither operation can mask a canary miss.
+      await runNativeWatcherLifecycleExclusive(async () => {
+        const subscription = await pending
+        await subscription?.unsubscribe()
+      })
     } catch (err) {
       process.stderr.write(
         `[parcel-watcher-process] unsubscribe ${id} failed: ${errorMessage(err)}\n`
       )
     } finally {
-      finishSubscriptionOperation()
+      subscriptionActivityRevision++
     }
     send({ op: 'unsubscribed', id })
   }
@@ -217,7 +237,7 @@ function main(): void {
   })
 
   void startCanary(() => {
-    if (pendingSubscriptionOperations > 0 || liveSubscriptionIds.size === 0) {
+    if (pendingSubscriptionCrawls > 0 || liveSubscriptionIds.size === 0) {
       return null
     }
     return subscriptionActivityRevision

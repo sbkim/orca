@@ -36,7 +36,11 @@ function escapeRegex(value: string): string {
 
 function buildNestedDirectoryRegex(ignoreDirs: readonly string[]): string {
   const alternatives = ignoreDirs.map(escapeRegex).join('|')
-  return `^(?:[^\\\\/]+[\\\\/])*(?:${alternatives})(?:[\\\\/].*)?$`
+  if (process.platform === 'win32') {
+    return `^(?:[^\\\\/]+[\\\\/])*(?:${alternatives})(?:[\\\\/].*)?$`
+  }
+  // Why: backslash is a legal POSIX filename character, not a path separator.
+  return `^(?:[^/]+/)*(?:${alternatives})(?:/.*)?$`
 }
 
 export function buildParcelWatcherIgnoreOptions(
