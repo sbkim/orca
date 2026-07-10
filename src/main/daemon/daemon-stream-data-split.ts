@@ -4,18 +4,23 @@
  * clamp shared by the batcher's bulk write slicing and keep-tail dropping.
  */
 import { encodeNdjson } from './ndjson'
+import type { Socket } from 'node:net'
 
-export function encodeStreamDataEvent(sessionId: string, data: string): string {
+export function encodeStreamDataEvent(
+  sessionId: string,
+  data: string,
+  sequenceChars?: number
+): string {
   return encodeNdjson({
     type: 'event',
     event: 'data',
     sessionId,
-    payload: { data }
+    payload: { data, ...(sequenceChars === undefined ? {} : { sequenceChars }) }
   })
 }
 
-function streamDataEventLineBytes(sessionId: string, data: string): number {
-  return Buffer.byteLength(encodeStreamDataEvent(sessionId, data), 'utf8')
+function streamDataEventLineBytes(sessionId: string, data: string, sequenceChars?: number): number {
+  return Buffer.byteLength(encodeStreamDataEvent(sessionId, data, sequenceChars), 'utf8')
 }
 
 function isHighSurrogate(value: number): boolean {
@@ -50,9 +55,10 @@ function nextSafeSplitIndex(value: string, start: number): number {
 export function splitStreamDataForNdjson(
   sessionId: string,
   data: string,
-  maxLineBytes: number
+  maxLineBytes: number,
+  sequenceChars?: number
 ): string[] {
-  if (streamDataEventLineBytes(sessionId, data) <= maxLineBytes) {
+  if (streamDataEventLineBytes(sessionId, data, sequenceChars) <= maxLineBytes) {
     return [data]
   }
 
@@ -71,7 +77,9 @@ export function splitStreamDataForNdjson(
         continue
       }
 
-      if (streamDataEventLineBytes(sessionId, data.slice(start, mid)) <= maxLineBytes) {
+      if (
+        streamDataEventLineBytes(sessionId, data.slice(start, mid), sequenceChars) <= maxLineBytes
+      ) {
         best = mid
         low = rawMid + 1
       } else {
@@ -85,4 +93,22 @@ export function splitStreamDataForNdjson(
   }
 
   return chunks
+}
+
+export function writeStreamDataEvents(
+  streamSocket: Pick<Socket, 'write'>,
+  sessionId: string,
+  data: string,
+  maxLineBytes: number,
+  sequenceChars = data.length
+): void {
+  const explicitSequenceChars = sequenceChars === data.length ? undefined : sequenceChars
+  for (const chunk of splitStreamDataForNdjson(
+    sessionId,
+    data,
+    maxLineBytes,
+    explicitSequenceChars
+  )) {
+    streamSocket.write(encodeStreamDataEvent(sessionId, chunk, explicitSequenceChars))
+  }
 }

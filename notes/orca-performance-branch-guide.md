@@ -168,12 +168,13 @@ Three cooperating layers, innermost first:
   pendingData flow control (main drops their bytes after ingestion), which
   let N background agents run unbounded ahead of main. Main mirrors the
   hidden-delivery gate to the daemon via the wire-tolerated
-  `setSessionBackground` notification (v19; old daemons swallow it, old
-  mains never send it) — but a live remote view subscriber (mobile/web)
-  vetoes backgrounding (`hasRemoteTerminalViewSubscriber`). Backgrounded
-  sessions' queued output is keep-tail dropped (oldest bytes replaced by an
-  in-order `dataGap` event; reply-eliciting query bytes salvaged out so
-  hidden programs never hang on DSR/DA replies); producers are NEVER paused,
+  `setSessionBackground` notification (introduced in v19; authoritative
+  thinning requires v20 snapshots, so preserved v19 sessions are explicitly
+  unthinned; older daemons swallow it) — but a live remote view subscriber
+  (mobile/web) vetoes backgrounding (`hasRemoteTerminalViewSubscriber`).
+  Backgrounded sessions' queued output is keep-tail dropped (oldest bytes
+  replaced by an in-order `dataGap` event; reply-eliciting query bytes are
+  salvaged so hidden programs never hang on DSR/DA replies); producers are NEVER paused,
   so reveal stays instant with zero catch-up. Un-background neither discards
   nor force-flushes the queued tail — restore paths read MAIN's model
   (hidden-output recovery buffer), so a discarded tail loses a finished
@@ -348,20 +349,6 @@ Conflict pattern, established over ~6 syncs:
 5. Peel PRs to main: throughput fixes → batch+MessageChannel → flow control →
    term-speed-2 last. PR #7214 is the integration overview; #7260 (wake/ACK)
    is open against main separately.
-6. Pre-existing hidden-gate races found while building background thinning
-   (all pre-date this branch's work; the thinning keys off the visibility
-   registry specifically to sidestep them, but they still weaken the gate):
-   (a) pane PARK races the un-ref-counted `setHiddenRendererPty` bit — the
-   parked byte-watcher and the unmounting pane share one boolean, so a park
-   can leave the pty un-gated; (b) the renderer briefly reports
-   `visible=true` for ALL hidden-worktree panes during park/switch churn
-   windows (`pty:setRendererPtyVisible` reports observed via
-   `mainBackgroundSync` probe events with caller='visibility-report');
-   (c) eager pre-mount buffers (`registerEagerPtyBuffer`) hold delivery
-   interest that defeats `shouldDropHiddenRendererPtyData` for parked panes —
-   hidden bytes flow to a buffer nobody may ever replay. Fix direction:
-   ref-count the hidden mark, make park not emit transient visible reports,
-   and give eager buffers a gate-exempt interest class.
 
 ## Guardrails for future agents
 
@@ -381,3 +368,165 @@ Conflict pattern, established over ~6 syncs:
   may only log.
 - Any change on the delivery/restore path: run both fuzz suites, the roundtrip
   tests, the chain e2e trio, AND a 10MB bench before calling it done.
+
+## Audit 1
+
+Completed 2026-07-10 against `orca-performance`. Scope: the daemon → main →
+renderer terminal path, with particular attention to hidden delivery, parking,
+stream thinning, snapshot fidelity, ACK/backpressure semantics, wake/reattach,
+mobile/remote composition, SSH routing, and teardown. The audit treated model
+state and user scrollback as correctness requirements, not expendable memory.
+
+### Findings and fixes
+
+1. **Hidden-gate handoff owners could undo one another.** A parked watcher and
+   an unmounting/remounting pane shared one boolean hidden mark; likewise a
+   retiring pane could report `visible=false` after its replacement had already
+   reported `visible=true`. Hidden claims are now reference-counted and
+   visibility is counted per owner (`pty-renderer-delivery-claims.ts`). Eager
+   pre-mount buffers no longer hold raw-byte delivery interest: they are not a
+   side-effect consumer, and model-backed hidden output can restore from a
+   snapshot. This removes the ownership and eager-interest races formerly
+   listed in Known limits item 6 without weakening parked side effects. The
+   remaining transient-visibility concern was checked separately: bind and
+   reconnect reports read `TerminalPane`'s synchronously refreshed
+   `isVisible && isWorktreeActive` ref, the global effect uses the same
+   expression, and owner counting prevents a retiring pane from overriding its
+   replacement. No hidden-worktree `visible=true` report site remains.
+
+2. **A natural/synthetic daemon exit could overtake final output.** When a
+   shallow-gated socket had queued data, `daemon-server.ts` wrote the exit event
+   directly. The final bytes could therefore arrive after `exit`. Exit is now an
+   ordered control event in `DaemonStreamDataBatcher`; both natural and
+   synthetic exits flush through the same FIFO. A deep-socket regression test
+   pins final-data-before-exit ordering.
+
+3. **Keep-tail thinning could permanently reduce scrollback to the retained
+   tail.** On `dataGap`, main discarded its headless model, then rebuilt it from
+   later tail bytes even though the daemon still owned the complete model. Live
+   daemon snapshots now carry `outputSequence`; the provider exposes an
+   authoritative `getBufferSnapshot`, accepts the requested scrollback depth,
+   and main requires that provider snapshot after a gap. Reconciliation starts
+   in the pre-snapshot absolute sequence domain and runtime sequence accounting
+   advances across dropped bytes. The daemon remains the source of complete
+   scrollback instead of making a transport optimization destructive. If that
+   authoritative RPC is temporarily unavailable, main now returns no snapshot
+   and lets the renderer retry; it never paints main's known-incomplete tail as
+   a full recovery.
+
+4. **Query-salvage copies corrupted the absolute sequence domain.** DSR/DA
+   bytes salvaged from a dropped region are copies of bytes already counted by
+   the daemon, not new output. Stream events now distinguish delivered text
+   from `sequenceChars`; salvaged query data advances by zero while the gap
+   advances by the original characters. Main can still parse/deliver the query
+   copy without shifting every later snapshot baseline.
+
+5. **“Parse-deferred” ACKs were submission-deferred, not parse-deferred.** ACK
+   credit fired when bytes entered `terminal.write`, before xterm's callback.
+   Split scheduler chunks also attached `onParsed` to the first slice. ACK
+   credit is now owned by `pane-terminal-output-ack-credit.ts`, fires after the
+   final xterm parse callback, and is released exactly once on throw, discard,
+   or terminal disposal. Submitted-but-unparsed credit is retained until parse
+   or disposal, so main's flow-control window measures parser work rather than
+   renderer submission.
+
+6. **Hidden restore ignored configured scrollback.** The renderer always asked
+   for 5,000 rows, so users configured for 10k–50k silently lost older history
+   on a hide/reveal rebuild. Restore now reads the pane's xterm scrollback
+   option and clamps it through the shared 0–50,000 policy
+   (`terminal-hidden-restore-scrollback.ts`).
+
+7. **Active alternate-screen snapshots discarded the normal shell buffer.**
+   SerializeAddon emits `normal buffer + ?1049h + alternate buffer`; the old
+   normalization sliced away everything before the last `?1049h`. A restored
+   TUI looked correct until it exited alternate mode, then returned to empty
+   history. Snapshots now carry the normal buffer separately in
+   `scrollbackAnsi`. Fresh reattach and mobile/remote snapshot streams compose
+   both buffers; an already-alt renderer exits alt, clears/rebuilds the normal
+   buffer, then re-enters and rebuilds alt. History replay also composes both
+   buffers, including legacy empty-field compatibility.
+
+   Deep fuzz then found a second two-buffer issue: normal-buffer serialization
+   can leave its SGR pen active while the separately serialized alternate body
+   assumes default SGR. The rehydrate boundary now emits `SGR 0` before
+   `?1049h`, preventing a shell color from tinting restored TUI cells. The
+   regression proves the TUI is visible immediately and `?1049l` returns to the
+   original shell history.
+
+8. **Daemon provider wrappers forwarded only part of the recovery contract.**
+   A preserved current/legacy daemon could emit `dataGap` through a provider
+   wrapper, but `DegradedDaemonPtyProvider` omitted `getBufferSnapshot`, while
+   the ordinary multi-version `DaemonPtyRouter` omitted background hints, gap
+   events, snapshots, and explicit `sequenceChars`. Both wrappers now route the
+   complete contract to the provider that owns the session, including requested
+   50,000-row recovery and zero-advance query-salvage events.
+
+9. **Sequence-safe recovery was added without advancing the daemon protocol.**
+   An already-running v19 daemon could accept background-thinning hints but
+   could not return the new `outputSequence`, making any resulting gap
+   impossible to reconcile safely. The authoritative snapshot contract is now
+   protocol v20. Preserved v19 sessions remain live but are explicitly marked
+   unthinned; their stale background hint is cleared on the ordered control
+   socket before `createOrAttach`, while fresh v20 sessions retain keep-tail
+   performance and full-model recovery.
+
+### Static audit conclusions
+
+- Model query authority still captures ownership synchronously at ingestion;
+  seed/hydration/snapshot writes remain reply-silent, remote view subscribers
+  retain view authority, and replies use the provider input path (including
+  daemon shell-ready queuing and SSH routing).
+- Hidden/visibility/interest/background-sync/provider-snapshot state is cleared
+  by the centralized PTY teardown path. Parked watcher timers, byte sidecars,
+  fact consumers, exit subscriptions, hidden claims, and runtime-title slots
+  dispose on reveal/exit/worktree shutdown.
+- Remote-runtime and SSH PTYs remain excluded from cold parking. SSH hidden
+  panes still have a main-owned headless model, so mounted hidden-gate restore
+  is valid; live remote viewers veto daemon background thinning. The new
+  two-buffer payload is recomposed before mobile/remote snapshot frames.
+- Wake recovery keeps its focus/visibility/system-resume listener symmetry and
+  cancels its settled animation frame on cleanup. No timeout was added that
+  mutates ACK or delivery counters.
+- The one documented upstream SerializeAddon null-cell/wrapped-row defect
+  remains tolerated. Deep reveal fuzz now uses the same narrow hostile-row
+  predicate as fidelity fuzz, rather than misclassifying that known serializer
+  defect as sequence-reconciliation loss.
+
+### Validation evidence
+
+- Focused ownership/connection/dispatcher tests: 422 passed.
+- Daemon server/batcher/order tests passed, including deep queued-socket exit.
+- Broad main/daemon/runtime/RPC/SSH run: 1,854 passed, 5 skipped. Three stale
+  mocks were updated to assert the new explicit `sequenceChars` argument; the
+  production behavior was already correct.
+- Broad renderer terminal/pane/scheduler/runtime-stream run: 1,934 passed.
+- Final restore/roundtrip/history/adapter/runtime/scheduler sweep: 1,315 passed.
+- Post-protocol completion sweep: 1,106 affected main/daemon tests passed;
+  484 renderer/restore tests passed with 2 expected skips.
+- Scheduler throughput harness passed with `ORCA_TERMINAL_PERF_BENCH=1`.
+- Required hidden-view parking, parked-memory, and sleep/wake E2E trio:
+  7 passed on a fresh v20 Electron build, including byte-identical output
+  across 25 park/reveal cycles.
+- `FUZZ_ITERATIONS=2000` headless-emulator fidelity: passed (120.19s).
+- `FUZZ_ITERATIONS=2000` hidden reveal reconciliation: passed (69.77s). It
+  reproducibly found the SGR boundary bug at seed 16 and the known upstream
+  wrapped-null-cell case at seed 1221 before the final green run.
+- Snapshot roundtrip, retained-tail equivalence, ACK gate, PTY connection, and
+  remote incomplete-escape regression suites passed.
+- Fullscreen real-app headful flow: a real shell wrote normal history, entered
+  a TUI while its worktree was hidden, restored on reveal, then exited with
+  `?1049l` back to the original history. The BrowserWindow was fullscreen;
+  no click/focus occurred before evidence; the restored frame settled for
+  1.5s before capture. Measurements: window 1710×1073 at DPR 2; xterm 133×63;
+  `fitAddon.proposeDimensions()` 133×63; cell width 8px; screen-to-xterm gap
+  11px (the scrollbar/remainder, with grid and proposed dimensions equal).
+  Artifacts: `.tmp/terminal-audit-headful/fullscreen-alt-restore.png` and
+  `.tmp/terminal-audit-headful/fullscreen-alt-restore-metrics.json`.
+- Visible, non-E2E current-build Orca 10MB agent-TUI bench: 10.14 MB/s
+  (986ms for 10.0MB), DSR idle p50/p90/p99 0.64/6.47/57.82ms,
+  DSR-under-load 6.72/9.86/13.87ms, zero timeouts. The pane was 115×39,
+  reported app version 1.4.131-rc.2, and ran on a v20 daemon/session. Result:
+  `tools/benchmarks/results/terminal-pipeline-audit-v20-20260710-2026-07-10T10-54-45-990Z.json`.
+- `pnpm typecheck`, oxlint on every touched TypeScript file,
+  `pnpm check:max-lines-ratchet`, `git diff --check`, and the E2E production
+  build all passed. No max-lines bypass was added.

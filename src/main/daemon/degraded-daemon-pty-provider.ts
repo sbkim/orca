@@ -2,6 +2,7 @@ import type { DaemonPtyAdapter } from './daemon-pty-adapter'
 import type {
   IPtyProvider,
   PtyBackgroundStreamEvent,
+  PtyProviderBufferSnapshot,
   PtyProcessInfo,
   PtySpawnOptions,
   PtySpawnResult
@@ -24,7 +25,11 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   private fallback: ManagedPtyProvider
   private sessionProviders = new Map<string, ManagedPtyProvider>()
   private unsubscribers: (() => void)[] = []
-  private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
+  private dataListeners: ((payload: {
+    id: string
+    data: string
+    sequenceChars?: number
+  }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
 
   constructor(opts: {
@@ -129,6 +134,15 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     return (await this.providerFor(id).getAppliedSize?.(id)) ?? null
   }
 
+  async getBufferSnapshot(
+    id: string,
+    opts?: { scrollbackRows?: number }
+  ): Promise<PtyProviderBufferSnapshot | null> {
+    // Why: a preserved legacy daemon can still thin its monitoring stream;
+    // recovery must reach the adapter that owns that session's full model.
+    return (await this.providerFor(id).getBufferSnapshot?.(id, opts)) ?? null
+  }
+
   async clearBuffer(id: string): Promise<void> {
     await this.providerFor(id).clearBuffer(id)
   }
@@ -168,7 +182,9 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
     return this.fallback.getProfiles()
   }
 
-  onData(callback: (payload: { id: string; data: string }) => void): () => void {
+  onData(
+    callback: (payload: { id: string; data: string; sequenceChars?: number }) => void
+  ): () => void {
     this.dataListeners.push(callback)
     return () => {
       const idx = this.dataListeners.indexOf(callback)

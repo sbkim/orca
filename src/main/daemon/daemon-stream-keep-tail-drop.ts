@@ -18,6 +18,9 @@ import type { DaemonEvent, DataGapEvent } from './types'
 export type StreamQueueEntry = {
   sessionId: string
   data: string
+  /** Original PTY characters represented by data. Salvaged query copies are
+   * delivered bytes but represent zero new positions in the source stream. */
+  sequenceChars?: number
   control?: DaemonEvent
 }
 
@@ -85,6 +88,7 @@ export function dropOldestQueuedForSession(
     return
   }
   const totalDropped = toDrop
+  let droppedSequenceChars = 0
   let salvaged = ''
   const salvageIntoCap = (dropped: string): void => {
     if (salvaged.length >= DROPPED_QUERY_SALVAGE_MAX_CHARS) {
@@ -107,6 +111,7 @@ export function dropOldestQueuedForSession(
     }
     if (entry.data.length <= toDrop) {
       toDrop -= entry.data.length
+      droppedSequenceChars += entry.sequenceChars ?? entry.data.length
       salvageIntoCap(entry.data)
       if (insertGapAt === -1) {
         insertGapAt = i
@@ -116,8 +121,14 @@ export function dropOldestQueuedForSession(
     } else {
       const cut = clampToSafeSplitIndex(entry.data, 0, toDrop)
       if (cut > 0) {
+        const entrySequenceChars = entry.sequenceChars ?? entry.data.length
+        const cutSequenceChars = entrySequenceChars === 0 ? 0 : cut
+        droppedSequenceChars += cutSequenceChars
         salvageIntoCap(entry.data.slice(0, cut))
         entry.data = entry.data.slice(cut)
+        const remainingSequenceChars = entrySequenceChars - cutSequenceChars
+        entry.sequenceChars =
+          remainingSequenceChars === entry.data.length ? undefined : remainingSequenceChars
         if (insertGapAt === -1) {
           insertGapAt = i
         }
@@ -135,7 +146,9 @@ export function dropOldestQueuedForSession(
     Math.max(0, (batch.queuedCharsBySession.get(sessionId) ?? 0) - dropped)
   )
   if (existingGap) {
+    const priorSequenceChars = existingGap.payload.sequenceChars ?? existingGap.payload.droppedChars
     existingGap.payload.droppedChars += dropped
+    existingGap.payload.sequenceChars = priorSequenceChars + droppedSequenceChars
   } else {
     recordDaemonStreamBacklogEvent('backgroundKeepTailDrop', {
       sessionIdSuffix: sessionId.slice(-10),
@@ -148,7 +161,7 @@ export function dropOldestQueuedForSession(
         type: 'event',
         event: 'dataGap',
         sessionId,
-        payload: { droppedChars: dropped }
+        payload: { droppedChars: dropped, sequenceChars: droppedSequenceChars }
       }
     })
     insertGapAt = Math.max(0, insertGapAt) + 1
@@ -159,7 +172,7 @@ export function dropOldestQueuedForSession(
     const at = existingGap
       ? batch.queue.findIndex((e) => e.control === existingGap) + 1
       : insertGapAt
-    batch.queue.splice(at, 0, { sessionId, data: salvaged })
+    batch.queue.splice(at, 0, { sessionId, data: salvaged, sequenceChars: 0 })
     batch.queuedChars += salvaged.length
     batch.queuedCharsBySession.set(
       sessionId,

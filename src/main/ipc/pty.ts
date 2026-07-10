@@ -1101,6 +1101,7 @@ export function clearProviderPtyState(id: string): void {
   // not outlive the PTY or a reused map entry could silently gate a new one.
   clearHiddenRendererPtyDeliveryState(id)
   clearBackgroundedDeliverySyncForPty(id)
+  providerSnapshotRequiredPtys.delete(id)
   // Why: the Phase-5 ConPTY DA1 spawn record must not leak onto a reused id.
   clearNativeWindowsConptyPty(id)
   const paneKey = ptyPaneKey.get(id)
@@ -1198,6 +1199,9 @@ let resetRendererInFlightDeliveryGate: () => void = () => {}
 // Why: the backgrounded-delivery dedupe map lives in the registerPtyHandlers
 // closure but teardown funnels through module-scope clearProviderPtyState.
 let clearBackgroundedDeliverySyncForPty: (id: string) => void = () => {}
+// Why: after daemon keep-tail thinning, main's mirror contains only the kept
+// tail. Recovery must keep consulting the daemon's complete model until exit.
+const providerSnapshotRequiredPtys = new Set<string>()
 
 // Why: the "Restart daemon" path needs to re-bind provider→renderer listeners
 // against the freshly-created adapter after replaceDaemonProvider swaps the
@@ -1618,14 +1622,12 @@ export function registerPtyHandlers(
   // provider transport keep-tail thins backgrounded ptys' monitoring stream
   // under backlog; this sync tells it which ptys qualify.
   // Why keyed on the visibility registry (NOT gate marks or gate-effective
-  // shouldDrop): both of those flap during pane parking — the parked watcher
-  // and the unmounting pane share one un-ref-counted hidden bit, and eager
-  // pre-mount buffers toggle delivery interest — and a flap un-thins a
-  // flooding pane mid-burst. reportPanePtyVisibility is the stable,
-  // churn-free "does any visible view show this pty" signal. Remote view
-  // subscribers (mobile/web live terminals) consume raw bytes from main's
-  // fan-out, so their presence vetoes thinning outright. Dedupe keeps
-  // visibility-sync churn off the wire; `?? false` also swallows the initial
+  // shouldDrop): delivery claims and raw-byte sidecars describe transport
+  // ownership, while thinning asks the semantic question "does any visible
+  // view show this PTY?" Remote view subscribers (mobile/web live terminals)
+  // consume raw bytes from main's fan-out, so their presence vetoes thinning
+  // outright. Dedupe keeps visibility-sync churn off the wire; `?? false`
+  // also swallows the initial
   // not-background state.
   const backgroundedDeliverySyncByPty = new Map<string, boolean>()
   function syncPtyBackgroundedDelivery(id: string, caller: string): void {
@@ -2431,7 +2433,8 @@ export function registerPtyHandlers(
           return
         }
         if (payload.kind === 'dataGap') {
-          runtime?.notePtyDataGap(payload.id)
+          providerSnapshotRequiredPtys.add(payload.id)
+          runtime?.notePtyDataGap(payload.id, payload.sequenceChars ?? payload.droppedChars)
           sendModelRestoreNeededMarker(
             payload.id,
             'hidden-drop',
@@ -2453,9 +2456,16 @@ export function registerPtyHandlers(
     localDataUnsub = localProvider.onData((payload) => {
       const outputSeq = isLocalProvider
         ? runtime?.getPtyOutputSequence(payload.id)
-        : runtime?.onPtyData(payload.id, payload.data, Date.now())
+        : runtime?.onPtyData(
+            payload.id,
+            payload.data,
+            Date.now(),
+            payload.sequenceChars ?? payload.data.length
+          )
       const rendererData = answerStartupTerminalColorQueriesForPty(payload.id, payload.data)
-      const preservesSeq = rendererData === payload.data
+      const preservesSeq =
+        rendererData === payload.data &&
+        (payload.sequenceChars === undefined || payload.sequenceChars === payload.data.length)
       const startSeq = preservesSeq ? getChunkStartSeq(outputSeq, payload.data) : undefined
       if (mainWindow.isDestroyed()) {
         // Why: clear the pending flush timer so it doesn't fire after the window
@@ -3327,6 +3337,7 @@ export function registerPtyHandlers(
       pendingDeliveryStartSeq?: number
       source?: 'headless' | 'renderer'
       alternateScreen?: boolean
+      scrollbackAnsi?: string
       pendingEscapeTailAnsi?: string
     } | null> => {
       if (!runtime || typeof args?.id !== 'string' || args.id.length === 0) {
@@ -3334,9 +3345,23 @@ export function registerPtyHandlers(
       }
       const scrollbackRows = normalizeSnapshotScrollbackRows(args.opts?.scrollbackRows)
       try {
-        const snapshot = await runtime.serializeHiddenOutputRecoveryBuffer(args.id, {
-          scrollbackRows
-        })
+        const runtimeSeqBeforeSnapshot = runtime.getPtyOutputSequence(args.id)
+        const providerSnapshotRequired = providerSnapshotRequiredPtys.has(args.id)
+        const providerSnapshot = providerSnapshotRequired
+          ? await tryGetProviderForPty(args.id)?.getBufferSnapshot?.(args.id, {
+              scrollbackRows
+            })
+          : null
+        // Why: after a data gap, main's model contains only the retained tail.
+        // Returning it as a full snapshot would silently erase older scrollback.
+        if (providerSnapshotRequired && !providerSnapshot) {
+          return null
+        }
+        const snapshot =
+          providerSnapshot ??
+          (await runtime.serializeHiddenOutputRecoveryBuffer(args.id, {
+            scrollbackRows
+          }))
         if (!snapshot || typeof snapshot.seq !== 'number') {
           return snapshot
         }
@@ -3352,7 +3377,10 @@ export function registerPtyHandlers(
         }
         return {
           ...snapshot,
-          pendingDeliveryStartSeq: Math.min(pending?.startSeq ?? snapshot.seq, snapshot.seq)
+          pendingDeliveryStartSeq: Math.min(
+            pending?.startSeq ?? (providerSnapshot ? runtimeSeqBeforeSnapshot : snapshot.seq),
+            snapshot.seq
+          )
         }
       } catch {
         return null
@@ -4629,8 +4657,8 @@ export function registerPtyHandlers(
     if (typeof args.id !== 'string' || !args.id) {
       return
     }
-    // Why: explicit delivery-interest signal from renderer sidecars / eager
-    // pre-mount buffers — any interest suppresses the hidden-delivery gate so
+    // Why: explicit delivery-interest signal from renderer byte sidecars —
+    // any interest suppresses the hidden-delivery gate so
     // raw-byte consumers keep receiving while the view is hidden or parked.
     // Deliberately NOT synced to the daemon backlog pacer: interest consumers
     // tolerate paced data, and interest churn must not un-pace a flood.

@@ -63,6 +63,7 @@ type SnapshotFrameOptions = {
 
 type SerializedSnapshot = {
   data: string
+  scrollbackAnsi?: string
   cols: number
   rows: number
   seq?: number
@@ -502,13 +503,12 @@ async function serializeBudgetedRequestedSnapshot(
     if (!serialized) {
       return null
     }
-    const overByteBudget = terminalStreamByteLengthExceeds(
-      serialized.data,
-      REQUESTED_SNAPSHOT_BYTE_BUDGET
-    )
+    const data = (serialized.scrollbackAnsi ?? '') + serialized.data
+    const overByteBudget = terminalStreamByteLengthExceeds(data, REQUESTED_SNAPSHOT_BYTE_BUDGET)
     if (!overByteBudget || rows === 0) {
       return {
         ...serialized,
+        data,
         scrollbackRows: rows,
         truncatedByByteBudget: rows < requestedRows || overByteBudget
       }
@@ -557,7 +557,14 @@ async function serializeBudgetedMobileSnapshot(
 ): Promise<SerializedSnapshot> {
   if (!isMobile) {
     const serialized = await runtime.serializeTerminalBuffer(ptyId, { scrollbackRows: 0 })
-    return serialized ? { ...serialized, scrollbackRows: 0, truncatedByByteBudget: false } : null
+    return serialized
+      ? {
+          ...serialized,
+          data: (serialized.scrollbackAnsi ?? '') + serialized.data,
+          scrollbackRows: 0,
+          truncatedByByteBudget: false
+        }
+      : null
   }
   const candidates = [MOBILE_SUBSCRIBE_SCROLLBACK_ROWS, 500, 250, 100, 25, 0]
   for (const rows of candidates) {
@@ -565,13 +572,12 @@ async function serializeBudgetedMobileSnapshot(
     if (!serialized) {
       return null
     }
-    const overByteBudget = terminalStreamByteLengthExceeds(
-      serialized.data,
-      MOBILE_SNAPSHOT_BYTE_BUDGET
-    )
+    const data = (serialized.scrollbackAnsi ?? '') + serialized.data
+    const overByteBudget = terminalStreamByteLengthExceeds(data, MOBILE_SNAPSHOT_BYTE_BUDGET)
     if (!overByteBudget || rows === 0) {
       return {
         ...serialized,
+        data,
         scrollbackRows: rows,
         truncatedByByteBudget: rows < MOBILE_SUBSCRIBE_SCROLLBACK_ROWS || overByteBudget
       }

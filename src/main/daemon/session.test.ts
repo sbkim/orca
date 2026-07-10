@@ -282,6 +282,15 @@ describe('Session', () => {
       expect(session.getSnapshot()?.snapshotAnsi).not.toContain('orca-shell-ready')
     })
 
+    it('publishes an absolute output sequence with live snapshots', () => {
+      createSession()
+      subprocess.simulateData('first')
+      subprocess.simulateData('🟢second')
+
+      expect(session.getSnapshot()?.outputSequence).toBe('first🟢second'.length)
+      expect(session.takePendingOutput(true)?.snapshot?.outputSequence).toBe('first🟢second'.length)
+    })
+
     it('releases held marker-prefix bytes before flushing queued input on timeout', () => {
       createSession({ shellReadySupported: true, shellReadyTimeoutMs: 100 })
       const received: string[] = []

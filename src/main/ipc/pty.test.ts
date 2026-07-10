@@ -558,6 +558,10 @@ describe('registerPtyHandlers', () => {
     const resumeProducer = vi.fn()
     let dataHandler: ((payload: { id: string; data: string }) => void) | null = null
     let exitHandler: ((payload: { id: string; code: number }) => void) | null = null
+    let backgroundStreamHandler:
+      | ((payload: { id: string; kind: 'dataGap'; droppedChars: number }) => void)
+      | null = null
+    const getBufferSnapshot = vi.fn()
     setLocalPtyProvider({
       spawn,
       write,
@@ -580,6 +584,13 @@ describe('registerPtyHandlers', () => {
         return () => {}
       }),
       onReplay: vi.fn(() => () => {}),
+      onBackgroundStreamEvent: vi.fn(
+        (handler: (payload: { id: string; kind: 'dataGap'; droppedChars: number }) => void) => {
+          backgroundStreamHandler = handler
+          return () => {}
+        }
+      ),
+      getBufferSnapshot,
       onExit: vi.fn((handler: (payload: { id: string; code: number }) => void) => {
         exitHandler = handler
         return () => {}
@@ -594,8 +605,11 @@ describe('registerPtyHandlers', () => {
       write,
       pauseProducer,
       resumeProducer,
+      getBufferSnapshot,
       emitData: (id: string, data: string) => dataHandler?.({ id, data }),
-      emitExit: (id: string, code = 0) => exitHandler?.({ id, code })
+      emitExit: (id: string, code = 0) => exitHandler?.({ id, code }),
+      emitDataGap: (id: string, droppedChars: number) =>
+        backgroundStreamHandler?.({ id, kind: 'dataGap', droppedChars })
     }
   }
 
@@ -3417,7 +3431,12 @@ describe('registerPtyHandlers', () => {
       daemon.emitExit(result.id, 0)
 
       expect(daemon.spawn).toHaveBeenCalledTimes(1)
-      expect(runtime.onPtyData).toHaveBeenCalledWith(result.id, 'daemon output', expect.any(Number))
+      expect(runtime.onPtyData).toHaveBeenCalledWith(
+        result.id,
+        'daemon output',
+        expect.any(Number),
+        'daemon output'.length
+      )
       expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:data', {
         id: result.id,
         data: 'daemon output',
@@ -8695,7 +8714,8 @@ describe('registerPtyHandlers', () => {
         expect(runtime.onPtyData).toHaveBeenCalledWith(
           result.id,
           'hidden output',
-          expect.any(Number)
+          expect.any(Number),
+          'hidden output'.length
         )
         expect(mainWindow.webContents.send).toHaveBeenCalledTimes(1)
         // Why out-of-band: an in-band empty pty:data chunk is ambiguous with
@@ -9246,7 +9266,8 @@ describe('registerPtyHandlers', () => {
         expect(runtime.onPtyData).toHaveBeenCalledWith(
           'daemon-session',
           'pre-spawn prompt\x1b[c',
-          expect.any(Number)
+          expect.any(Number),
+          'pre-spawn prompt\x1b[c'.length
         )
         expect(mainWindow.webContents.send).toHaveBeenCalledTimes(1)
         expect(mainWindow.webContents.send).toHaveBeenCalledWith('pty:modelRestoreNeeded', {
@@ -10580,6 +10601,7 @@ describe('registerPtyHandlers', () => {
     it('returns a hidden-output recovery snapshot with clamped scrollback', async () => {
       const runtime = {
         setPtyController: vi.fn(),
+        getPtyOutputSequence: vi.fn(() => 42),
         serializeHiddenOutputRecoveryBuffer: vi.fn().mockResolvedValue({
           data: 'snapshot\r\n',
           cols: 120,
@@ -10613,6 +10635,88 @@ describe('registerPtyHandlers', () => {
         pendingDeliveryStartSeq: 42,
         source: 'headless'
       })
+    })
+
+    it('uses the complete provider model after daemon stream thinning', async () => {
+      const provider = installObservableDaemonTestProvider()
+      provider.getBufferSnapshot.mockResolvedValue({
+        data: 'complete daemon scrollback\r\n',
+        cols: 100,
+        rows: 30,
+        seq: 900,
+        source: 'headless'
+      })
+      const runtime = {
+        setPtyController: vi.fn(),
+        getPtyOutputSequence: vi.fn(() => 640),
+        notePtyDataGap: vi.fn(),
+        onPtyExit: vi.fn(),
+        serializeHiddenOutputRecoveryBuffer: vi.fn().mockResolvedValue({
+          data: 'kept tail only\r\n',
+          cols: 100,
+          rows: 30,
+          seq: 640,
+          source: 'headless'
+        })
+      }
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never, runtime as never)
+      provider.emitDataGap('daemon-pty', 512)
+
+      const result = await handlers.get('pty:getMainBufferSnapshot')!(null, {
+        id: 'daemon-pty',
+        opts: { scrollbackRows: 5000 }
+      })
+
+      expect(runtime.notePtyDataGap).toHaveBeenCalledWith('daemon-pty', 512)
+      expect(provider.getBufferSnapshot).toHaveBeenCalledWith('daemon-pty', {
+        scrollbackRows: 5000
+      })
+      expect(runtime.serializeHiddenOutputRecoveryBuffer).not.toHaveBeenCalled()
+      expect(result).toEqual({
+        data: 'complete daemon scrollback\r\n',
+        cols: 100,
+        rows: 30,
+        seq: 900,
+        source: 'headless',
+        // Bytes between main's current absolute seq and the daemon snapshot
+        // may still be queued on the stream socket and must dedupe on arrival.
+        pendingDeliveryStartSeq: 640
+      })
+      provider.emitExit('daemon-pty')
+    })
+
+    it("never paints main's incomplete tail when a required provider snapshot is unavailable", async () => {
+      const provider = installObservableDaemonTestProvider()
+      provider.getBufferSnapshot.mockResolvedValue(null)
+      const runtime = {
+        setPtyController: vi.fn(),
+        getPtyOutputSequence: vi.fn(() => 640),
+        notePtyDataGap: vi.fn(),
+        onPtyExit: vi.fn(),
+        serializeHiddenOutputRecoveryBuffer: vi.fn().mockResolvedValue({
+          data: 'kept tail only\r\n',
+          cols: 100,
+          rows: 30,
+          seq: 640,
+          source: 'headless'
+        })
+      }
+      handlers.clear()
+      registerPtyHandlers(mainWindow as never, runtime as never)
+      provider.emitDataGap('daemon-pty', 512)
+
+      const result = await handlers.get('pty:getMainBufferSnapshot')!(null, {
+        id: 'daemon-pty',
+        opts: { scrollbackRows: 5000 }
+      })
+
+      expect(provider.getBufferSnapshot).toHaveBeenCalledWith('daemon-pty', {
+        scrollbackRows: 5000
+      })
+      expect(runtime.serializeHiddenOutputRecoveryBuffer).not.toHaveBeenCalled()
+      expect(result).toBeNull()
+      provider.emitExit('daemon-pty')
     })
 
     it('reports where the undelivered pending backlog starts alongside the snapshot', async () => {

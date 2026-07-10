@@ -35,8 +35,23 @@ export type PtyTransientFact =
 
 export type PtyBackgroundStreamEvent =
   | { id: string; kind: 'backgroundMarker'; background: boolean; scanSeedAnsi?: string }
-  | { id: string; kind: 'dataGap'; droppedChars: number }
+  | { id: string; kind: 'dataGap'; droppedChars: number; sequenceChars?: number }
   | { id: string; kind: 'transientFact'; fact: PtyTransientFact }
+
+export type PtyProviderBufferSnapshot = {
+  data: string
+  /** Authoritative normal buffer captured beside an alternate-screen frame. */
+  scrollbackAnsi?: string
+  cols: number
+  rows: number
+  cwd?: string | null
+  lastTitle?: string
+  seq: number
+  source: 'headless'
+  oscLinks?: TerminalOscLinkRange[]
+  alternateScreen?: boolean
+  pendingEscapeTailAnsi?: string
+}
 
 export type PtySpawnOptions = {
   cols: number
@@ -162,6 +177,12 @@ export type IPtyProvider = {
    * to drop. Only transports that thin implement it.
    */
   onBackgroundStreamEvent?: (callback: (payload: PtyBackgroundStreamEvent) => void) => () => void
+  /** Authoritative provider-owned model snapshot. Daemon providers expose this
+   * after their monitoring stream gaps; other providers may omit it. */
+  getBufferSnapshot?: (
+    id: string,
+    opts?: { scrollbackRows?: number }
+  ) => Promise<PtyProviderBufferSnapshot | null>
   /**
    * The size the PTY has ACTUALLY applied, not the last size requested.
    * resize() is fire-and-forget for remote providers (daemon/SSH `notify`),
@@ -188,7 +209,9 @@ export type IPtyProvider = {
   listProcesses(): Promise<PtyProcessInfo[]>
   getDefaultShell(): Promise<string>
   getProfiles(): Promise<{ name: string; path: string }[]>
-  onData(callback: (payload: { id: string; data: string }) => void): () => void
+  onData(
+    callback: (payload: { id: string; data: string; sequenceChars?: number }) => void
+  ): () => void
   onReplay(callback: (payload: { id: string; data: string }) => void): () => void
   onExit(callback: (payload: { id: string; code: number }) => void): () => void
 }

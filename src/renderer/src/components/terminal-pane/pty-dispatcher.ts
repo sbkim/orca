@@ -6,7 +6,6 @@
  * and the eager-buffer reconnection logic share.
  */
 import { TERMINAL_SCROLLBACK_SESSION_BUFFER_BYTE_LIMIT } from '../../../../shared/terminal-scrollback-limits'
-import { acquirePtyDeliveryInterest } from './pty-delivery-interest'
 import {
   clearProcessedPtyCharTotal,
   deliverPtyDataWithDeferredAck,
@@ -305,11 +304,6 @@ export function registerEagerPtyBuffer(
   onExit: (ptyId: string, code: number) => void
 ): EagerPtyHandle {
   ensurePtyDispatcher()
-  // Why: an eager buffer means a pane mount is (potentially) pending — the
-  // hidden-delivery gate must keep bytes flowing until the pane attaches and
-  // takes over, so the buffer holds delivery interest for its lifetime.
-  const releaseDeliveryInterest = acquirePtyDeliveryInterest(ptyId)
-
   // Why: a head index instead of Array.shift() — shift() is O(n), making
   // pre-attach buffering quadratic under many small chunks. Compaction is deferred.
   const chunks: EagerBufferChunk[] = []
@@ -337,7 +331,6 @@ export function registerEagerPtyBuffer(
   const exitHandler = (code: number): void => {
     // Shell died before TerminalPane attached — clean up and notify the store
     // so the tab's ptyId is cleared and connectPanePty falls through to connect().
-    releaseDeliveryInterest()
     // Identity-guarded like dispose(): never delete a handler a transport has
     // since registered for this id (#7894 detach/attach remount race).
     if (ptyDataHandlers.get(ptyId) === dataHandler) {
@@ -366,7 +359,6 @@ export function registerEagerPtyBuffer(
     dispose() {
       // Why: dispose runs at pane attach (mount completed) — the pane's own
       // visibility sync now owns the hidden-delivery decision for this PTY.
-      releaseDeliveryInterest()
       // Only remove if the current handler is still the temp one (compare by
       // reference). After attach() replaces the handler this becomes a no-op.
       if (ptyDataHandlers.get(ptyId) === dataHandler) {

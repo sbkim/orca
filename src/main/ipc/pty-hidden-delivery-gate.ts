@@ -6,7 +6,7 @@
  * main then drops renderer-bound delivery AFTER model ingestion — the runtime
  * already parsed the chunk, and reveal restores from the model snapshot via
  * the existing seq-guarded machinery. Any renderer party that still needs raw
- * bytes (dispatcher sidecars, eager pre-mount buffers) registers delivery
+ * bytes (dispatcher sidecars) registers delivery
  * interest, which suppresses the gate for that PTY.
  * See docs/reference/terminal-side-effect-authority.md (Open Items).
  */
@@ -19,8 +19,8 @@ export type HiddenPtyDeliveryGateSettings = Pick<
 
 const hiddenRendererPtys = new Set<string>()
 // Why: sidecar consumers (paste-draft pacing, background agent launches,
-// automation observers, the kill-switch-off parked 2031 responder) and eager
-// pre-mount buffers need live bytes even while no visible view exists. Any
+// automation observers, and the kill-switch-off parked 2031 responder) need
+// live bytes even while no visible view exists. Any
 // registered interest suppresses the gate for that PTY.
 const deliveryInterestRendererPtys = new Set<string>()
 // Why: reveal must restore from the model only when bytes were actually

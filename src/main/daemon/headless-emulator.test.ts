@@ -141,6 +141,31 @@ describe('HeadlessEmulator', () => {
         replay.dispose()
       }
     })
+
+    it('preserves the normal buffer behind an alternate-screen snapshot', async () => {
+      emulator = new HeadlessEmulator({ cols: 40, rows: 6 })
+      await emulator.write('shell history one\r\nshell history two')
+      await emulator.write('\x1b[?1049h\x1b[2J\x1b[HTUI frame')
+
+      const snapshot = emulator.getSnapshot()
+      expect(snapshot.scrollbackAnsi).toContain('shell history one')
+      expect(snapshot.snapshotAnsi).toContain('TUI frame')
+      expect(snapshot.snapshotAnsi).not.toContain('shell history one')
+
+      const replay = new HeadlessEmulator({ cols: snapshot.cols, rows: snapshot.rows })
+      try {
+        await replay.write(
+          snapshot.scrollbackAnsi + snapshot.rehydrateSequences + snapshot.snapshotAnsi
+        )
+        expect(replay.getVisibleLines().join('\n')).toContain('TUI frame')
+
+        await replay.write('\x1b[?1049l')
+        expect(replay.getVisibleLines().join('\n')).toContain('shell history one')
+        expect(replay.getVisibleLines().join('\n')).toContain('shell history two')
+      } finally {
+        replay.dispose()
+      }
+    })
   })
 
   describe('OSC-7 CWD tracking', () => {

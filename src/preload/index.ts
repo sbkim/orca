@@ -937,6 +937,7 @@ const api = {
       pendingDeliveryStartSeq?: number
       source?: 'headless' | 'renderer'
       alternateScreen?: boolean
+      scrollbackAnsi?: string
       pendingEscapeTailAnsi?: string
     } | null> => ipcRenderer.invoke('pty:getMainBufferSnapshot', { id, opts }),
 

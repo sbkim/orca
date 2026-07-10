@@ -111,6 +111,7 @@ export class Session {
   private pendingOutputBytes = 0
   private pendingOutputOverflowed = false
   private pendingOutputSeq = 0
+  private outputSequence = 0
   private producerPaused = false
   private producerPauseFailsafeTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -285,11 +286,11 @@ export class Session {
     this.releaseProducerPause({ resume: true })
   }
 
-  getSnapshot(): TerminalSnapshot | null {
+  getSnapshot(opts: { scrollbackRows?: number } = {}): TerminalSnapshot | null {
     if (this._disposed) {
       return null
     }
-    return this.emulator.getSnapshot()
+    return { ...this.emulator.getSnapshot(opts), outputSequence: this.outputSequence }
   }
 
   getPartialEscapeTailAnsi(): string {
@@ -337,7 +338,7 @@ export class Session {
         : records,
       seq: this.pendingOutputSeq,
       overflowed,
-      snapshot: includeSnapshot ? this.emulator.getSnapshot() : null
+      snapshot: includeSnapshot ? this.getSnapshot() : null
     }
   }
 
@@ -548,6 +549,10 @@ export class Session {
       return
     }
 
+    // Why: daemon stream thinning can omit bytes before main sees them. The
+    // absolute count lets an authoritative snapshot cover those gaps while
+    // renderer reconciliation deduplicates any queued post-snapshot tail.
+    this.outputSequence += data.length
     // Feed data to headless emulator for state tracking
     this.emulator.write(data)
     this.recordPendingOutput({ kind: 'output', data })

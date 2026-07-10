@@ -4,7 +4,7 @@ import { recordDaemonStreamBacklogEvent } from './daemon-stream-backlog-probe'
 import {
   clampToSafeSplitIndex,
   encodeStreamDataEvent,
-  splitStreamDataForNdjson
+  writeStreamDataEvents
 } from './daemon-stream-data-split'
 import {
   backgroundSessionDropCapChars,
@@ -260,10 +260,15 @@ export class DaemonStreamDataBatcher {
           ? entry.data.length
           : clampToSafeSplitIndex(entry.data, 0, BULK_WRITE_SLICE_CHARS)
       const slice = entry.data.slice(0, end)
+      const entrySequenceChars = entry.sequenceChars ?? entry.data.length
+      const sliceSequenceChars = entrySequenceChars === 0 ? 0 : slice.length
       if (end >= entry.data.length) {
         batch.queue.shift()
       } else {
         entry.data = entry.data.slice(end)
+        const remainingSequenceChars = entrySequenceChars - sliceSequenceChars
+        entry.sequenceChars =
+          remainingSequenceChars === entry.data.length ? undefined : remainingSequenceChars
       }
       batch.queuedChars -= slice.length
       const sessionHeldAfter =
@@ -273,7 +278,8 @@ export class DaemonStreamDataBatcher {
       } else {
         batch.queuedCharsBySession.set(entry.sessionId, sessionHeldAfter)
       }
-      this.writeStreamDataEvent(socket, entry.sessionId, slice)
+      writeStreamDataEvents(socket, entry.sessionId, slice, this.maxLineBytes, sliceSequenceChars)
+      this.onAfterSocketWrite?.()
     }
     if (retained.length > 0) {
       batch.queue = retained
@@ -358,7 +364,14 @@ export class DaemonStreamDataBatcher {
         client.streamSocket.write(encodeNdjson(entry.control))
         this.onAfterSocketWrite?.()
       } else {
-        this.writeStreamDataEvent(client.streamSocket, entry.sessionId, entry.data)
+        writeStreamDataEvents(
+          client.streamSocket,
+          entry.sessionId,
+          entry.data,
+          this.maxLineBytes,
+          entry.sequenceChars ?? entry.data.length
+        )
+        this.onAfterSocketWrite?.()
       }
     }
   }
@@ -375,15 +388,5 @@ export class DaemonStreamDataBatcher {
       }
       this.pendingByClient.delete(id)
     }
-  }
-
-  private writeStreamDataEvent(streamSocket: Socket, sessionId: string, data: string): void {
-    // Why: createNdjsonParser rejects oversized lines. Terminal output can
-    // burst faster than the batch interval, so writer-side chunking prevents
-    // the daemon from dropping its own stream events at the receiver.
-    for (const chunk of splitStreamDataForNdjson(sessionId, data, this.maxLineBytes)) {
-      streamSocket.write(encodeStreamDataEvent(sessionId, chunk))
-    }
-    this.onAfterSocketWrite?.()
   }
 }

@@ -5429,8 +5429,8 @@ export class OrcaRuntimeService {
    * Handles incoming data from a PTY process, running agent detection,
    * updating terminal tail buffers, and triggering foreground agent refreshes.
    */
-  onPtyData(ptyId: string, data: string, at: number): number {
-    const outputSequence = (this.ptyOutputSequenceById.get(ptyId) ?? 0) + data.length
+  onPtyData(ptyId: string, data: string, at: number, sequenceChars = data.length): number {
+    const outputSequence = (this.ptyOutputSequenceById.get(ptyId) ?? 0) + sequenceChars
     this.ptyOutputSequenceById.set(ptyId, outputSequence)
     const osc7Metadata = this.recordOsc7MetadataForPty(ptyId, data)
     const cwd = osc7Metadata.cwd
@@ -5797,7 +5797,14 @@ export class OrcaRuntimeService {
    *  carry so a half-open escape from before the gap cannot corrupt what
    *  follows, and drop the mobile headless mirror — it rebuilds from the
    *  delivered tail / snapshot seeds instead of parsing a gapped stream. */
-  notePtyDataGap(ptyId: string): void {
+  notePtyDataGap(ptyId: string, droppedChars = 0): void {
+    if (droppedChars > 0) {
+      // Why: the daemon snapshot's seq counts bytes its monitoring stream
+      // dropped. Advancing without parsing preserves that absolute domain so
+      // post-snapshot live chunks can be reconciled instead of duplicated.
+      const outputSequence = (this.ptyOutputSequenceById.get(ptyId) ?? 0) + droppedChars
+      this.ptyOutputSequenceById.set(ptyId, outputSequence)
+    }
     const pty = this.getOrCreatePtyWorktreeRecord(ptyId)
     if (pty) {
       pty.tailPendingAnsi = ''
@@ -6389,6 +6396,7 @@ export class OrcaRuntimeService {
     source?: 'headless' | 'renderer'
     oscLinks?: TerminalOscLinkRange[]
     alternateScreen?: boolean
+    scrollbackAnsi?: string
     pendingEscapeTailAnsi?: string
   } | null> {
     return this.serializeTerminalBufferFromAvailableState(ptyId, opts)
@@ -6407,6 +6415,7 @@ export class OrcaRuntimeService {
     source?: 'headless' | 'renderer'
     oscLinks?: TerminalOscLinkRange[]
     alternateScreen?: boolean
+    scrollbackAnsi?: string
   } | null> {
     return this.serializeHeadlessTerminalBuffer(ptyId, { ...opts, includeEmpty: true })
   }
@@ -6424,6 +6433,7 @@ export class OrcaRuntimeService {
     source?: 'headless' | 'renderer'
     oscLinks?: TerminalOscLinkRange[]
     alternateScreen?: boolean
+    scrollbackAnsi?: string
     pendingEscapeTailAnsi?: string
   } | null> {
     const headlessSnapshot = await this.serializeHeadlessTerminalBuffer(ptyId, {
@@ -6896,6 +6906,7 @@ export class OrcaRuntimeService {
     source?: 'headless'
     oscLinks?: TerminalOscLinkRange[]
     alternateScreen?: boolean
+    scrollbackAnsi?: string
     // Why: dangling mid-escape tail the restorer must write LAST, after any
     // reset, so the next live chunk completes it instead of rendering it
     // literally (Bug E / #7329).
@@ -6906,16 +6917,10 @@ export class OrcaRuntimeService {
       return null
     }
     await state.writeChain
-    // Why: when an alternate-screen TUI (Claude Code, vim, etc.) is currently
-    // active, the visible content is the alt-screen snapshot — replaying any
-    // normal-buffer scrollback before it can duplicate shell prompts and
-    // flatten SGR attributes when the mobile xterm replays the data. Force
-    // scrollbackRows=0 in that case. When the buffer is in normal mode the
-    // caller can request scrollback so the user can scroll up to see prior
-    // agent output.
-    const requested = opts.scrollbackRows ?? 0
+    // Why: normal history is separated from an active alternate frame, so the
+    // caller's scrollback policy can be honored without painting it into alt.
     const isAlternateScreen = state.emulator.isAlternateScreen
-    const scrollbackRows = isAlternateScreen ? 0 : requested
+    const scrollbackRows = opts.scrollbackRows ?? 0
     const snapshot = state.emulator.getSnapshot({ scrollbackRows })
     const data = snapshot.rehydrateSequences + snapshot.snapshotAnsi
     return data.length > 0 || opts.includeEmpty === true
@@ -6928,6 +6933,7 @@ export class OrcaRuntimeService {
           seq: state.outputSequence,
           source: 'headless' as const,
           oscLinks: snapshot.oscLinks,
+          scrollbackAnsi: snapshot.scrollbackAnsi,
           ...(snapshot.pendingEscapeTailAnsi
             ? { pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi }
             : {}),

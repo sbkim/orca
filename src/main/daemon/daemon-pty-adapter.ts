@@ -22,6 +22,7 @@ import {
 import type {
   IPtyProvider,
   PtyBackgroundStreamEvent,
+  PtyProviderBufferSnapshot,
   PtyProcessInfo,
   PtySpawnOptions,
   PtySpawnResult
@@ -72,7 +73,11 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // lock, each would fork its own daemon process. This promise coalesces
   // concurrent respawns so only the first caller forks; the rest await it.
   private respawnPromise: Promise<void> | null = null
-  private dataListeners: ((payload: { id: string; data: string }) => void)[] = []
+  private dataListeners: ((payload: {
+    id: string
+    data: string
+    sequenceChars?: number
+  }) => void)[] = []
   private exitListeners: ((payload: { id: string; code: number }) => void)[] = []
   private backgroundStreamListeners: ((payload: PtyBackgroundStreamEvent) => void)[] = []
   private removeEventListener: (() => void) | null = null
@@ -107,6 +112,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
   // Why: producer pause/resume notifications require v19+; legacy daemons
   // must never see them, so gating makes them silent no-ops there.
   private supportsProducerFlowControl: boolean
+  private supportsAuthoritativeBufferSnapshots: boolean
   private pausedProducerSessionIds = new Set<string>()
   // Why tracked here: the daemon's background set (keep-tail stream thinning
   // + transient-fact scan authority) dies with the daemon process/socket;
@@ -141,6 +147,7 @@ export class DaemonPtyAdapter implements IPtyProvider {
     this.supportsCheckpoints = this.protocolVersion >= 4
     this.supportsIncrementalCheckpoints = this.protocolVersion >= 13
     this.supportsProducerFlowControl = this.protocolVersion >= 19
+    this.supportsAuthoritativeBufferSnapshots = this.protocolVersion >= 20
     this.client.onDisconnected(() => {
       for (const id of this.pausedProducerSessionIds) {
         this.producerResumesOwedOnReconnect.add(id)
@@ -169,6 +176,12 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
 
     await this.ensureConnected()
+    // Why before createOrAttach: a preserved v19 daemon may remember this
+    // session as backgrounded. Ordered control delivery clears it before any
+    // newly attached stream bytes can be thinned without a recoverable seq.
+    if (!this.supportsAuthoritativeBufferSnapshots) {
+      this.setPtyBackgrounded(sessionId, false)
+    }
 
     // Why: detect crash-recovery history before spawning a replacement PTY so
     // the revived shell inherits the recovered cwd and dimensions instead of
@@ -327,7 +340,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
     }
 
     const isAltScreen = result.snapshot.modes.alternateScreen
-    const snapshotPayload = result.snapshot.rehydrateSequences + result.snapshot.snapshotAnsi
+    const snapshotPayload =
+      result.snapshot.scrollbackAnsi +
+      result.snapshot.rehydrateSequences +
+      result.snapshot.snapshotAnsi
     // Why kitty flags ride beside the payload, not inside it: the snapshot
     // string reaches renderer xterms too, where POST_REPLAY_REATTACH_RESET's
     // deliberate kitty reset must win. Only the runtime emulator re-seed
@@ -355,6 +371,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
 
   async attach(id: string): Promise<void> {
     await this.ensureConnected()
+    if (!this.supportsAuthoritativeBufferSnapshots) {
+      this.setPtyBackgrounded(id, false)
+    }
 
     await this.client.request<CreateOrAttachResult>('createOrAttach', {
       sessionId: id,
@@ -395,18 +414,20 @@ export class DaemonPtyAdapter implements IPtyProvider {
   }
 
   // Why fire-and-forget (like pausePty): a delivery hint for the daemon's
-  // keep-tail stream thinning. A pre-thinning v19 daemon swallows the unknown
-  // notification, degrading to today's unthinned behavior.
+  // keep-tail stream thinning.
   setPtyBackgrounded(id: string, background: boolean): void {
     if (!this.supportsProducerFlowControl) {
       return
     }
-    if (background) {
+    // Why: preserved v19 daemons can thin but cannot return the absolute
+    // snapshot sequence needed to recover a gap. Clear their stale hint too.
+    const safeBackground = this.supportsAuthoritativeBufferSnapshots && background
+    if (safeBackground) {
       this.backgroundedSessionIds.add(id)
     } else {
       this.backgroundedSessionIds.delete(id)
     }
-    this.client.notify('setSessionBackground', { sessionId: id, background })
+    this.client.notify('setSessionBackground', { sessionId: id, background: safeBackground })
   }
 
   async shutdown(id: string, opts: { immediate?: boolean; keepHistory?: boolean }): Promise<void> {
@@ -522,6 +543,44 @@ export class DaemonPtyAdapter implements IPtyProvider {
         { sessionId: id }
       )
       return result.size ?? null
+    } catch {
+      return null
+    }
+  }
+
+  async getBufferSnapshot(
+    id: string,
+    opts: { scrollbackRows?: number } = {}
+  ): Promise<PtyProviderBufferSnapshot | null> {
+    if (!this.supportsAuthoritativeBufferSnapshots) {
+      return null
+    }
+    try {
+      const result = await this.client.request<GetSnapshotResult>('getSnapshot', {
+        sessionId: id,
+        ...(typeof opts.scrollbackRows === 'number' ? { scrollbackRows: opts.scrollbackRows } : {})
+      })
+      const snapshot = result.snapshot
+      // Why: older v19 daemons have no absolute output sequence. Their snapshot
+      // cannot safely reconcile stream bytes still queued on the other socket.
+      if (!snapshot || typeof snapshot.outputSequence !== 'number') {
+        return null
+      }
+      return {
+        data: snapshot.rehydrateSequences + snapshot.snapshotAnsi,
+        scrollbackAnsi: snapshot.scrollbackAnsi,
+        cols: snapshot.cols,
+        rows: snapshot.rows,
+        cwd: snapshot.cwd,
+        lastTitle: snapshot.lastTitle,
+        seq: snapshot.outputSequence,
+        source: 'headless',
+        oscLinks: snapshot.oscLinks,
+        alternateScreen: snapshot.modes.alternateScreen,
+        ...(snapshot.pendingEscapeTailAnsi
+          ? { pendingEscapeTailAnsi: snapshot.pendingEscapeTailAnsi }
+          : {})
+      }
     } catch {
       return null
     }
@@ -691,7 +750,9 @@ export class DaemonPtyAdapter implements IPtyProvider {
     return shells.filter((s) => existsSync(s)).map((s) => ({ name: basename(s), path: s }))
   }
 
-  onData(callback: (payload: { id: string; data: string }) => void): () => void {
+  onData(
+    callback: (payload: { id: string; data: string; sequenceChars?: number }) => void
+  ): () => void {
     this.dataListeners.push(callback)
     return () => {
       const idx = this.dataListeners.indexOf(callback)
@@ -1155,7 +1216,13 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.markSessionDirty(event.sessionId)
         // oxlint-disable-next-line unicorn/no-useless-spread -- copy-safe: listeners may unsubscribe during iteration
         for (const listener of [...this.dataListeners]) {
-          listener({ id: event.sessionId, data: event.payload.data })
+          listener({
+            id: event.sessionId,
+            data: event.payload.data,
+            ...(event.payload.sequenceChars === undefined
+              ? {}
+              : { sequenceChars: event.payload.sequenceChars })
+          })
         }
       } else if (event.event === 'sessionBackgroundMarker') {
         this.emitBackgroundStreamEvent({
@@ -1170,7 +1237,10 @@ export class DaemonPtyAdapter implements IPtyProvider {
         this.emitBackgroundStreamEvent({
           id: event.sessionId,
           kind: 'dataGap',
-          droppedChars: event.payload.droppedChars
+          droppedChars: event.payload.droppedChars,
+          ...(event.payload.sequenceChars === undefined
+            ? {}
+            : { sequenceChars: event.payload.sequenceChars })
         })
       } else if (event.event === 'transientFact') {
         this.emitBackgroundStreamEvent({

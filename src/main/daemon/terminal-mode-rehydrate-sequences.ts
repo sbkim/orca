@@ -8,7 +8,9 @@ import type { TerminalModes } from './types'
 export function buildRehydrateSequences(modes: TerminalModes): string {
   const seqs: string[] = []
   if (modes.alternateScreen) {
-    seqs.push('\x1b[?1049h')
+    // Why: normal-buffer serialization can leave its pen active, while the
+    // separately serialized alt body assumes it starts from default SGR.
+    seqs.push('\x1b[0m\x1b[?1049h')
   }
   if (modes.bracketedPaste) {
     seqs.push('\x1b[?2004h')

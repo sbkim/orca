@@ -192,7 +192,7 @@ export function normalBufferRowsTrimmed(terminal: Terminal): string[] {
 // normal-buffer restores wipe screen+scrollback+home; alt-screen restores
 // clear only the alt screen so the normal buffer's scrollback survives.
 export const SNAPSHOT_REPLAY_PREAMBLE_NORMAL = '\x1b[2J\x1b[3J\x1b[H'
-export const SNAPSHOT_REPLAY_PREAMBLE_ALT = '\x1b[?1049h\x1b[2J\x1b[H'
+export const SNAPSHOT_REPLAY_PREAMBLE_ALT = '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H'
 
 // Twin of POST_REPLAY_LIVE_SNAPSHOT_RESET (layout-serialization.ts) — the
 // renderer suite pins equality against the real constant so drift fails fast.
@@ -200,6 +200,7 @@ export const POST_REPLAY_LIVE_SNAPSHOT_RESET_PARITY = '\x1b[0 q\x1b[?25h\x1b[?10
 
 export type ParityMainSnapshot = {
   data: string
+  scrollbackAnsi?: string
   cols: number
   rows: number
   seq: number
@@ -214,8 +215,8 @@ export type ParityMainSnapshot = {
 /** Mirror of the production main-buffer snapshot the renderer restore path
  *  consumes: HeadlessEmulator.getSnapshot (snapshotAnsi normalization +
  *  rehydrateSequences + absolute-cursor/DECSC epilogue) composed exactly like
- *  OrcaRuntime.serializeHeadlessTerminalBuffer (alt forces scrollback 0,
- *  data = rehydrateSequences + snapshotAnsi). The renderer fuzz cannot import
+ *  OrcaRuntime.serializeHeadlessTerminalBuffer (normal buffer separated from
+ *  an active alt frame). The renderer fuzz cannot import
  *  HeadlessEmulator itself — tsconfig.tc.web.json excludes src/main/daemon. */
 export function buildParityMainBufferSnapshot(
   parity: ParityTerminal,
@@ -230,11 +231,7 @@ export function buildParityMainBufferSnapshot(
 ): ParityMainSnapshot {
   const { terminal } = parity
   const alternateScreen = terminal.buffer.active.type === 'alternate'
-  // Why scrollback 0 on alt: serializeHeadlessTerminalBuffer forces it so
-  // normal-buffer scrollback cannot replay underneath an alt-screen TUI frame.
-  const scrollback = alternateScreen
-    ? 0
-    : (opts.scrollbackRows ?? DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT)
+  const scrollback = opts.scrollbackRows ?? DESKTOP_TERMINAL_SCROLLBACK_ROWS_DEFAULT
   // Same composition as HeadlessEmulator.getSnapshot: absolute-cursor CUP for
   // the wrap-pending relative-restore defect plus the DECSC register epilogue.
   let snapshotAnsi = serializeWithAbsoluteCursor(
@@ -243,18 +240,20 @@ export function buildParityMainBufferSnapshot(
     { scrollback },
     readSavedCursorRegister(terminal)
   )
+  let scrollbackAnsi: string | undefined
   if (alternateScreen) {
-    // Why: HeadlessEmulator.normalizeSnapshotAnsiForModes drops the
-    // serializer's duplicate ?1049h; rehydrateSequences re-enters alt.
+    // Why: HeadlessEmulator splits the normal buffer from the active alt frame;
+    // rehydrateSequences owns the transition between them.
     const marker = '\x1b[?1049h'
     const start = snapshotAnsi.lastIndexOf(marker)
     if (start !== -1) {
+      scrollbackAnsi = snapshotAnsi.slice(0, start)
       snapshotAnsi = snapshotAnsi.slice(start + marker.length)
     }
   }
   const seqs: string[] = []
   if (alternateScreen) {
-    seqs.push('\x1b[?1049h')
+    seqs.push('\x1b[0m\x1b[?1049h')
   }
   if (terminal.modes.bracketedPasteMode) {
     seqs.push('\x1b[?2004h')
@@ -272,7 +271,8 @@ export function buildParityMainBufferSnapshot(
     cols: terminal.cols,
     rows: terminal.rows,
     seq,
-    alternateScreen
+    alternateScreen,
+    ...(scrollbackAnsi !== undefined ? { scrollbackAnsi } : {})
   }
   if (opts.pendingDeliveryStartSeq !== undefined) {
     snapshot.pendingDeliveryStartSeq = opts.pendingDeliveryStartSeq

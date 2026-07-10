@@ -276,12 +276,12 @@ export class TerminalHost {
   // Why: unlike getAliveSession (which throws), this returns null for dead/missing
   // sessions. Checkpoint is best-effort — a session that exited between the timer
   // firing and the RPC arriving should not throw.
-  getSnapshot(sessionId: string): TerminalSnapshot | null {
+  getSnapshot(sessionId: string, opts: { scrollbackRows?: number } = {}): TerminalSnapshot | null {
     const session = this.sessions.get(sessionId)
     if (!session || !session.isAlive) {
       return null
     }
-    return session.getSnapshot()
+    return session.getSnapshot(opts)
   }
 
   // Why: scan-authority handoff seed (null-not-throw like getSnapshot) — the

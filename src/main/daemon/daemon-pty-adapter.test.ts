@@ -253,6 +253,66 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     })
   })
 
+  describe('background stream thinning compatibility', () => {
+    it('reports background state on the authoritative-snapshot protocol', () => {
+      const notifySpy = vi.spyOn(DaemonClient.prototype, 'notify')
+      try {
+        adapter.setPtyBackgrounded('current-session', true)
+        expect(notifySpy).toHaveBeenCalledWith('setSessionBackground', {
+          sessionId: 'current-session',
+          background: true
+        })
+      } finally {
+        notifySpy.mockRestore()
+      }
+    })
+
+    it('keeps preserved v19 sessions unthinned because their snapshots have no sequence', () => {
+      const notifySpy = vi.spyOn(DaemonClient.prototype, 'notify')
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 19 })
+      try {
+        legacy.setPtyBackgrounded('legacy-session', true)
+        expect(notifySpy).toHaveBeenCalledWith('setSessionBackground', {
+          sessionId: 'legacy-session',
+          background: false
+        })
+      } finally {
+        legacy.dispose()
+        notifySpy.mockRestore()
+      }
+    })
+
+    it('clears a preserved v19 background hint before attaching its stream', async () => {
+      const ensureConnectedSpy = vi
+        .spyOn(DaemonClient.prototype, 'ensureConnected')
+        .mockResolvedValue()
+      const requestSpy = vi.spyOn(DaemonClient.prototype, 'request').mockResolvedValue({
+        isNew: true,
+        pid: null,
+        shellState: 'unsupported',
+        snapshot: null
+      } as never)
+      const notifySpy = vi.spyOn(DaemonClient.prototype, 'notify')
+      const legacy = new DaemonPtyAdapter({ socketPath, tokenPath, protocolVersion: 19 })
+      try {
+        await legacy.spawn({ sessionId: 'legacy-session', cols: 80, rows: 24 })
+
+        expect(notifySpy).toHaveBeenCalledWith('setSessionBackground', {
+          sessionId: 'legacy-session',
+          background: false
+        })
+        expect(notifySpy.mock.invocationCallOrder[0]).toBeLessThan(
+          requestSpy.mock.invocationCallOrder[0]
+        )
+      } finally {
+        legacy.dispose()
+        notifySpy.mockRestore()
+        requestSpy.mockRestore()
+        ensureConnectedSpy.mockRestore()
+      }
+    })
+  })
+
   describe('getAppliedSize', () => {
     it('reports the spawn dims before any resize', async () => {
       const { id } = await adapter.spawn({ cols: 80, rows: 24 })
@@ -290,6 +350,23 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       expect(lastSubprocess.resize).not.toHaveBeenCalledWith(80, 24)
       const applied = await adapter.getAppliedSize(id)
       expect(applied?.cols).not.toBe(80)
+    })
+  })
+
+  describe('getBufferSnapshot', () => {
+    it('returns the daemon model with its absolute stream sequence', async () => {
+      const { id } = await adapter.spawn({ cols: 80, rows: 24 })
+      lastSubprocess._simulateData('complete hidden output\r\n')
+
+      const snapshot = await adapter.getBufferSnapshot(id, { scrollbackRows: 123 })
+
+      expect(snapshot).toMatchObject({
+        data: expect.stringContaining('complete hidden output'),
+        cols: 80,
+        rows: 24,
+        seq: 'complete hidden output\r\n'.length,
+        source: 'headless'
+      })
     })
   })
 

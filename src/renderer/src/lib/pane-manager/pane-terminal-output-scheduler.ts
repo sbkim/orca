@@ -14,6 +14,10 @@ import {
 import { runGuardedWriteCompletionStep } from './xterm-write-callback-guard'
 import { recordRendererCrashBreadcrumb } from '@/lib/crash-breadcrumb-recorder'
 import {
+  discardInFlightTerminalOutputAckCredits,
+  registerTerminalOutputAckCredits
+} from './pane-terminal-output-ack-credit'
+import {
   TERMINAL_OUTPUT_BACKLOG_MIN_CAP_CHARS,
   terminalOutputBacklogCapChars
 } from '../../../../shared/terminal-scrollback-policy'
@@ -29,8 +33,8 @@ type WriteTerminalOutputOptions = {
   beforeWrite?: TerminalOutputBeforeWrite
   onParsed?: TerminalOutputParsedCallback
   /** Parse-deferred delivery ACK (terminal-pty-ack-gate). The scheduler MUST
-   *  invoke it exactly when the chunk's bytes are consumed — written to xterm
-   *  OR discarded by any drop path. A missed credit permanently shrinks
+   *  invoke it exactly when the chunk's bytes are parsed by xterm OR discarded
+   *  by any drop path. A missed credit permanently shrinks
    *  main's in-flight window for this PTY (the callback is fire-once, so
    *  double invocation is safe; omission is not). */
   ackCredit?: () => void
@@ -595,20 +599,9 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
     }
 
     data += chunk.data.slice(0, remaining)
-    if (chunk.onParsed) {
-      parsedCallbacks.push(chunk.onParsed)
-    }
-    if (chunk.ackCredit) {
-      // Why on the first slice: the credit is fire-once for the whole
-      // delivered chunk; the remainder must not retain it or a later discard
-      // path would try (harmlessly) to double-fire while the queue still
-      // holds a stale reference.
-      ackCredits.push(chunk.ackCredit)
-    }
     entry.chunks[entry.chunkIndex] = {
       ...chunk,
-      data: chunk.data.slice(remaining),
-      ackCredit: undefined
+      data: chunk.data.slice(remaining)
     }
     entry.queuedChars -= remaining
     remaining = 0
@@ -869,17 +862,19 @@ function makeParseClockPacer(): () => void {
 
 function composeParsedCallback(
   onParsed: TerminalOutputParsedCallback | undefined,
+  ackCreditsParsed: (() => void) | undefined,
   pacer: (() => void) | undefined
 ): TerminalOutputParsedCallback | undefined {
-  if (!pacer) {
-    return onParsed
-  }
-  if (!onParsed) {
-    return pacer
+  if (!onParsed && !ackCreditsParsed && !pacer) {
+    return undefined
   }
   return () => {
-    onParsed()
-    pacer()
+    try {
+      onParsed?.()
+    } finally {
+      ackCreditsParsed?.()
+      pacer?.()
+    }
   }
 }
 
@@ -889,6 +884,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
     return null
   }
   const pacer = entry.highPriority ? makeParseClockPacer() : undefined
+  const ackCreditsParsed = registerTerminalOutputAckCredits(entry.terminal, queuedWrite.ackCredits)
   try {
     entry.beforeWrite?.(queuedWrite.data)
     if (queuedWrite.foreground) {
@@ -900,20 +896,21 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
         {
           forceViewportRefresh: queuedWrite.forceForegroundRefresh,
           followupViewportRefresh: queuedWrite.followupForegroundRefresh,
-          onParsed: composeParsedCallback(queuedWrite.onParsed, pacer)
+          onParsed: composeParsedCallback(queuedWrite.onParsed, ackCreditsParsed, pacer)
         }
       )
     } else {
       writeBackgroundTerminalChunk(
         entry.terminal,
         queuedWrite.data,
-        composeParsedCallback(queuedWrite.onParsed, pacer)
+        composeParsedCallback(queuedWrite.onParsed, ackCreditsParsed, pacer)
       )
     }
   } catch {
     // Why: pane.terminal.dispose() can race with a queued late-arriving PTY ping;
     // a write to a disposed terminal throws. Drop the entry rather than crashing
     // the scheduler for other panes still draining.
+    ackCreditsParsed?.()
     fireQueuedAckCredits(entry)
     entry.chunks.length = 0
     entry.chunkIndex = 0
@@ -922,15 +919,6 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
     clearForegroundCoalesce(entry)
     recordQueueDebugPressure()
     return null
-  } finally {
-    // Why here and not in the parse callback: submission cadence is already
-    // parse-clocked (the pacer re-arms drains only after xterm confirms the
-    // previous batch parsed), and firing outside xterm's write-callback chain
-    // cannot wedge the terminal. Fires on the disposed-throw path too — a
-    // dropped chunk still consumed its delivery.
-    for (const creditAck of queuedWrite.ackCredits) {
-      creditAck()
-    }
   }
   return queuedWrite.foreground ? 'foreground' : 'background'
 }
@@ -1154,6 +1142,10 @@ export function writeTerminalOutput(
     if (debugEnabled) {
       debugState.foregroundWriteCount++
     }
+    const ackCreditsParsed = registerTerminalOutputAckCredits(
+      terminal,
+      options.ackCredit ? [options.ackCredit] : []
+    )
     try {
       options.beforeWrite?.(data)
       writeForegroundTerminalChunkWithIntent(
@@ -1162,12 +1154,14 @@ export function writeTerminalOutput(
         {
           forceViewportRefresh: options.forceForegroundRefresh === true,
           followupViewportRefresh: options.followupForegroundRefresh === true,
-          onParsed: options.onParsed
+          onParsed: composeParsedCallback(options.onParsed, ackCreditsParsed, undefined)
         }
       )
-    } finally {
-      // Why finally: a disposed-terminal throw still consumed the delivery.
-      options.ackCredit?.()
+    } catch (error) {
+      // beforeWrite can throw before xterm owns the callback; consume the
+      // delivery here. xterm write throws are caught by the foreground writer.
+      ackCreditsParsed?.()
+      throw error
     }
     return
   }
@@ -1232,6 +1226,7 @@ export function flushTerminalOutput(
     if (debugEnabled) {
       debugState.flushWriteCount++
     }
+    const ackCreditsParsed = registerTerminalOutputAckCredits(terminal, queuedWrite.ackCredits)
     try {
       entry.beforeWrite?.(queuedWrite.data)
       if (queuedWrite.foreground) {
@@ -1243,28 +1238,27 @@ export function flushTerminalOutput(
           {
             forceViewportRefresh: queuedWrite.forceForegroundRefresh,
             followupViewportRefresh: queuedWrite.followupForegroundRefresh,
-            onParsed: queuedWrite.onParsed
+            onParsed: composeParsedCallback(queuedWrite.onParsed, ackCreditsParsed, undefined)
           }
         )
       } else {
-        writeBackgroundTerminalChunk(terminal, queuedWrite.data, queuedWrite.onParsed)
+        writeBackgroundTerminalChunk(
+          terminal,
+          queuedWrite.data,
+          composeParsedCallback(queuedWrite.onParsed, ackCreditsParsed, undefined)
+        )
       }
     } catch {
       // Why: pane.terminal.dispose() can race with a queued late-arriving PTY ping;
       // a write to a disposed terminal throws. Drop the entry rather than crashing
       // the scheduler for other panes still draining. Consumed + abandoned
       // chunks both credit their deliveries.
-      for (const creditAck of queuedWrite.ackCredits) {
-        creditAck()
-      }
+      ackCreditsParsed?.()
       fireQueuedAckCredits(entry)
       clearForegroundHoldSafety(entry)
       clearForegroundCoalesce(entry)
       recordQueueDebugPressure()
       return
-    }
-    for (const creditAck of queuedWrite.ackCredits) {
-      creditAck()
     }
     if (options?.maxChars !== undefined && flushedChars >= options.maxChars) {
       break
@@ -1341,6 +1335,7 @@ export function discardTerminalOutput(terminal: TerminalOutputTarget): void {
     // them or main's in-flight window leaks (see fireQueuedAckCredits).
     fireQueuedAckCredits(entry)
   }
+  discardInFlightTerminalOutputAckCredits(terminal)
   queuedByTerminal.delete(terminal)
   discardForegroundRenderSettle(terminal)
   recordQueueDebugPressure()

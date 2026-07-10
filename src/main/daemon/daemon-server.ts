@@ -364,9 +364,16 @@ export class DaemonServer {
               })
             },
             onExit: (code) => {
-              // Why: exit tears down renderer handlers; flush final output first
-              // so the last few milliseconds of PTY data are not stranded.
+              // Why: exit tears down renderer handlers, so it must ride the
+              // ordered queue behind final output even when the shallow socket
+              // gate holds that output for a later drain pass.
               this.log.log('session-exited', { sessionId: p.sessionId, code })
+              this.streamDataBatcher.enqueueControlEvent(clientId, p.sessionId, {
+                type: 'event',
+                event: 'exit',
+                sessionId: p.sessionId,
+                payload: { code }
+              })
               this.streamDataBatcher.flush(clientId)
               recordDaemonStreamBacklogEvent('sessionExit', {
                 sessionIdSuffix: p.sessionId.slice(-10)
@@ -374,16 +381,6 @@ export class DaemonServer {
               this.transientFactRelay.onSessionExit(p.sessionId)
               this.streamClientIdBySessionId.delete(p.sessionId)
               this.lastInputAtBySessionId.delete(p.sessionId)
-              if (client?.streamSocket) {
-                client.streamSocket.write(
-                  encodeNdjson({
-                    type: 'event',
-                    event: 'exit',
-                    sessionId: p.sessionId,
-                    payload: { code }
-                  })
-                )
-              }
             }
           }
         })
@@ -522,7 +519,12 @@ export class DaemonServer {
 
       case 'getSnapshot': {
         const snapshotStart = performance.now()
-        const snapshot = this.host.getSnapshot(request.payload.sessionId)
+        const requestedScrollbackRows = request.payload.scrollbackRows
+        const scrollbackRows =
+          typeof requestedScrollbackRows === 'number' && Number.isFinite(requestedScrollbackRows)
+            ? Math.max(0, Math.min(50_000, Math.floor(requestedScrollbackRows)))
+            : undefined
+        const snapshot = this.host.getSnapshot(request.payload.sessionId, { scrollbackRows })
         const snapshotMs = performance.now() - snapshotStart
         if (snapshotMs >= 25) {
           // Serialize stalls block the daemon's single thread — every pty's
@@ -585,13 +587,12 @@ export class DaemonServer {
     // Why: write/resize are notification-heavy and intentionally do not wait
     // for replies. If their target session is gone, this synthetic exit is the
     // only signal the renderer gets to clear stale terminal pane bindings.
-    client.streamSocket.write(
-      encodeNdjson({
-        type: 'event',
-        event: 'exit',
-        sessionId,
-        payload: { code }
-      })
-    )
+    this.streamDataBatcher.enqueueControlEvent(client.clientId, sessionId, {
+      type: 'event',
+      event: 'exit',
+      sessionId,
+      payload: { code }
+    })
+    this.streamDataBatcher.flush(client.clientId)
   }
 }

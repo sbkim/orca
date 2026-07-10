@@ -7,9 +7,9 @@ import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery
 // when daemon-baked behavior cannot be delivered by on-disk wrapper refresh.
 // Why: bump when adding daemon wire behavior so same-version old daemons do
 // not silently accept the handshake and then reject new RPCs.
-export const PROTOCOL_VERSION = 19
+export const PROTOCOL_VERSION = 20
 export const PREVIOUS_DAEMON_PROTOCOL_VERSIONS = [
-  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18
+  1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
 ] as const
 
 // ─── Session State Machine ──────────────────────────────────────────
@@ -27,8 +27,8 @@ export type TerminalSnapshot = {
    *  exactly as live (Bug E / #7329, notes/garble-fuzz-divergences.md). Its
    *  bytes are already counted by the snapshot seq. */
   pendingEscapeTailAnsi?: string
-  /** Scrollback portion only (rows above the visible viewport). Write this
-   *  to preserve history without interfering with TUI repaints. */
+  /** Normal buffer captured separately while snapshotAnsi holds an active
+   *  alternate buffer. Empty for normal-screen snapshots. */
   scrollbackAnsi: string
   oscLinks?: TerminalOscLinkRange[]
   rehydrateSequences: string
@@ -38,6 +38,9 @@ export type TerminalSnapshot = {
   rows: number
   scrollbackLines: number
   lastTitle?: string
+  /** Absolute UTF-16 character count ingested by this live daemon session.
+   *  Optional because persisted snapshots and older v19 daemons lack it. */
+  outputSequence?: number
 }
 
 export type TerminalModes = {
@@ -160,9 +163,9 @@ export type ResumePtyRequest = {
   }
 }
 
-// Why not a protocol bump: notifications with unknown types are swallowed by
-// older daemons (handleRequest suppresses errors for notify ids), so this
-// degrades to no-pacing against an adopted pre-upgrade daemon.
+// Why the notification stays backward-tolerated: unknown notify types are
+// swallowed by old daemons. The adapter's v20 capability gate separately
+// prevents v19 thinning without a sequence-safe recovery snapshot.
 export type SetSessionBackgroundRequest = {
   id: string
   type: 'setSessionBackground'
@@ -255,6 +258,7 @@ export type GetSnapshotRequest = {
   type: 'getSnapshot'
   payload: {
     sessionId: string
+    scrollbackRows?: number
   }
 }
 

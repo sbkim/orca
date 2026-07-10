@@ -387,12 +387,26 @@ describe('DaemonStreamDataBatcher', () => {
       vi.advanceTimersByTime(2)
 
       const messages = streamSocket.write.mock.calls.map(
-        ([line]) => JSON.parse(String(line)) as { event: string; payload: { data?: string } }
+        ([line]) =>
+          JSON.parse(String(line)) as {
+            event: string
+            payload: { data?: string; droppedChars?: number; sequenceChars?: number }
+          }
       )
       expect(messages[0]?.event).toBe('dataGap')
       // The salvaged query rides right after the gap, before the kept tail.
       expect(messages[1]?.event).toBe('data')
       expect(messages[1]?.payload.data).toBe(dsr)
+      expect(messages[1]?.payload.sequenceChars).toBe(0)
+      const originalSequenceChars = messages.reduce(
+        (sum, message) =>
+          sum +
+          (message.event === 'dataGap'
+            ? (message.payload.sequenceChars ?? 0)
+            : (message.payload.sequenceChars ?? message.payload.data?.length ?? 0)),
+        0
+      )
+      expect(originalSequenceChars).toBe(`flood${dsr}${'x'.repeat(900 * 1024)}`.length + 300 * 1024)
     } finally {
       vi.useRealTimers()
     }

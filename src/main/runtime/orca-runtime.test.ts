@@ -7029,6 +7029,16 @@ describe('OrcaRuntimeService', () => {
     expect(serializeBuffer).not.toHaveBeenCalled()
   })
 
+  it('advances the absolute output sequence across a daemon stream gap', () => {
+    const runtime = createRuntime()
+    runtime.onPtyData('pty-gap', 'before', Date.now())
+
+    runtime.notePtyDataGap('pty-gap', 4096)
+    runtime.onPtyData('pty-gap', 'after', Date.now())
+
+    expect(runtime.getPtyOutputSequence('pty-gap')).toBe('before'.length + 4096 + 'after'.length)
+  })
+
   it('emits explicit OSC 9999 agent status from runtime PTY data', () => {
     const statuses: RuntimeTerminalAgentStatusEvent[] = []
     const runtime = new OrcaRuntimeService(store, undefined, {

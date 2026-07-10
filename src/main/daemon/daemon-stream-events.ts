@@ -5,7 +5,7 @@ export type DataEvent = {
   type: 'event'
   event: 'data'
   sessionId: string
-  payload: { data: string }
+  payload: { data: string; sequenceChars?: number }
 }
 
 export type ExitEvent = {
@@ -25,8 +25,8 @@ export type TerminalErrorEvent = {
 // Why these ride the stream socket (not control): each marks a POSITION in a
 // session's byte stream — scan-authority handoffs and dropped ranges are only
 // meaningful relative to the data events around them. Old mains ignore
-// unknown stream events, and only new mains send setSessionBackground, so no
-// protocol bump (same reasoning as SetSessionBackgroundRequest).
+// unknown stream events, and only new mains send setSessionBackground. The
+// v20 bump is for sequence-safe recovery snapshots, not these tolerated events.
 
 /** Scan-authority handoff marker: bytes before this event were (not) scanned
  *  by the daemon's transient-fact relay; main flips its own scanners at
@@ -48,7 +48,7 @@ export type DataGapEvent = {
   type: 'event'
   event: 'dataGap'
   sessionId: string
-  payload: { droppedChars: number }
+  payload: { droppedChars: number; sequenceChars?: number }
 }
 
 /** Notification-bearing fact detected by the daemon while it holds scan

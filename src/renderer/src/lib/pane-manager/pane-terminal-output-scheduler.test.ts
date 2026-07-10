@@ -78,10 +78,14 @@ describe('pane terminal output scheduler', () => {
       return { fire: () => (fired += 1), count: () => fired }
     }
 
-    it('credits when a queued chunk is drained', async () => {
+    it('credits when a queued chunk finishes parsing', async () => {
       vi.useFakeTimers()
       const { writeTerminalOutput } = await loadScheduler()
       const terminal = createTerminal()
+      let parsed: (() => void) | undefined
+      terminal.write.mockImplementation((_data: string, callback?: () => void) => {
+        parsed = callback
+      })
       const credit = makeCredit()
 
       writeTerminalOutput(terminal, 'queued', {
@@ -93,6 +97,8 @@ describe('pane terminal output scheduler', () => {
 
       vi.advanceTimersByTime(0)
       expect(terminal.write).toHaveBeenCalledWith('queued', expect.any(Function))
+      expect(credit.count()).toBe(0)
+      parsed?.()
       expect(credit.count()).toBe(1)
     })
 
@@ -114,6 +120,37 @@ describe('pane terminal output scheduler', () => {
       const written = terminal.write.mock.calls.map((call) => String(call[0])).join('')
       expect(written).toContain('q'.repeat(40 * 1024))
       expect(credit.count()).toBe(1)
+    })
+
+    it('defers split-chunk credit and onParsed until the final slice parses', async () => {
+      vi.useFakeTimers()
+      const { writeTerminalOutput } = await loadScheduler()
+      const terminal = createTerminal()
+      const parseCallbacks: (() => void)[] = []
+      terminal.write.mockImplementation((_data: string, callback?: () => void) => {
+        if (callback) {
+          parseCallbacks.push(callback)
+        }
+      })
+      const credit = makeCredit()
+      const onParsed = vi.fn()
+
+      writeTerminalOutput(terminal, 'q'.repeat(40 * 1024), {
+        foreground: true,
+        latencySensitive: false,
+        ackCredit: credit.fire,
+        onParsed
+      })
+      vi.advanceTimersByTime(0)
+
+      expect(parseCallbacks).toHaveLength(3)
+      parseCallbacks[0]()
+      parseCallbacks[1]()
+      expect(credit.count()).toBe(0)
+      expect(onParsed).not.toHaveBeenCalled()
+      parseCallbacks[2]()
+      expect(credit.count()).toBe(1)
+      expect(onParsed).toHaveBeenCalledTimes(1)
     })
 
     it('credits when the foreground backlog is replaced with the overflow warning', async () => {
@@ -165,13 +202,31 @@ describe('pane terminal output scheduler', () => {
       expect(credit.count()).toBe(1)
     })
 
-    it('credits the immediate foreground path after the write call', async () => {
+    it('credits the immediate foreground path after its parse callback', async () => {
       const { writeTerminalOutput } = await loadScheduler()
       const terminal = createTerminal()
+      let parsed: (() => void) | undefined
+      terminal.write.mockImplementation((_data: string, callback?: () => void) => {
+        parsed = callback
+      })
       const credit = makeCredit()
 
       writeTerminalOutput(terminal, 'now', { foreground: true, ackCredit: credit.fire })
       expect(terminal.write).toHaveBeenCalledWith('now', expect.any(Function))
+      expect(credit.count()).toBe(0)
+      parsed?.()
+      expect(credit.count()).toBe(1)
+    })
+
+    it('credits submitted but unparsed output when the terminal is discarded', async () => {
+      const { writeTerminalOutput, discardTerminalOutput } = await loadScheduler()
+      const terminal = createTerminal()
+      terminal.write.mockImplementation(() => {})
+      const credit = makeCredit()
+
+      writeTerminalOutput(terminal, 'submitted', { foreground: true, ackCredit: credit.fire })
+      expect(credit.count()).toBe(0)
+      discardTerminalOutput(terminal)
       expect(credit.count()).toBe(1)
     })
   })
@@ -393,7 +448,7 @@ describe('pane terminal output scheduler', () => {
     expect(terminal._core.refresh).not.toHaveBeenCalled()
   })
 
-  it('keeps parsed callbacks on large background chunks split by the scheduler', async () => {
+  it('runs parsed callbacks after the final background slice', async () => {
     vi.useFakeTimers()
     const { writeTerminalOutput } = await loadScheduler()
     const terminal = createTerminal()
@@ -415,14 +470,12 @@ describe('pane terminal output scheduler', () => {
     vi.advanceTimersByTime(50)
 
     expect(writes.map((data) => data.length)).toEqual([16 * 1024, 4 * 1024])
-    expect(parseCallbacks).toHaveLength(2)
+    expect(parseCallbacks).toHaveLength(1)
     expect(onParsed).not.toHaveBeenCalled()
 
     parseCallbacks[0]?.()
 
     expect(onParsed).toHaveBeenCalledTimes(1)
-    parseCallbacks[1]?.()
-    expect(onParsed).toHaveBeenCalledTimes(2)
   })
 
   it('defers throughput foreground output to the shared high-priority drain', async () => {

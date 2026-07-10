@@ -13,6 +13,7 @@ import { collectHeadlessOscLinkRanges } from './headless-osc-link-ranges'
 import { buildRehydrateSequences } from './terminal-mode-rehydrate-sequences'
 import { TerminalMouseModeMirror } from './terminal-mouse-mode-mirror'
 import { TerminalOscCwdTitleScanner } from './terminal-osc-cwd-title-scanner'
+import { splitTerminalSnapshotAnsi } from './terminal-snapshot-ansi-buffers'
 import {
   installTerminalViewAttributeResponder,
   type TerminalViewAttributeResponder
@@ -312,18 +313,16 @@ export class HeadlessEmulator {
     // replay wrap-pending; the trailing CUP survives the alt-marker slice.
     // The saved-cursor register rides along so a post-restore DECRC lands
     // where the hidden TUI saved, not at home.
-    const snapshotAnsi = this.normalizeSnapshotAnsiForModes(
-      serializeWithAbsoluteCursor(
-        this.serializer,
-        this.terminal,
-        { scrollback: opts.scrollbackRows },
-        readSavedCursorRegister(this.terminal)
-      ),
-      modes
+    const serializedAnsi = serializeWithAbsoluteCursor(
+      this.serializer,
+      this.terminal,
+      { scrollback: opts.scrollbackRows },
+      readSavedCursorRegister(this.terminal)
     )
+    const { snapshotAnsi, scrollbackAnsi } = splitTerminalSnapshotAnsi(serializedAnsi, modes)
     const snapshot: TerminalSnapshot = {
       snapshotAnsi,
-      scrollbackAnsi: '',
+      scrollbackAnsi,
       oscLinks: collectHeadlessOscLinkRanges(
         this.terminal,
         opts.scrollbackRows,
@@ -418,21 +417,6 @@ export class HeadlessEmulator {
   dispose(): void {
     this.disposed = true
     this.terminal.dispose()
-  }
-
-  private normalizeSnapshotAnsiForModes(snapshotAnsi: string, modes: TerminalModes): string {
-    if (!modes.alternateScreen) {
-      return snapshotAnsi
-    }
-    const alternateScreenMarker = '\x1b[?1049h'
-    const start = snapshotAnsi.lastIndexOf(alternateScreenMarker)
-    if (start === -1) {
-      return snapshotAnsi
-    }
-    // Why: rehydrateSequences already enters the alternate screen and restores
-    // mouse modes. Dropping SerializeAddon's duplicate ?1049h keeps mobile's
-    // "slice from last alt-screen marker" replay from discarding those modes.
-    return snapshotAnsi.slice(start + alternateScreenMarker.length)
   }
 
   private getModes(): TerminalModes {

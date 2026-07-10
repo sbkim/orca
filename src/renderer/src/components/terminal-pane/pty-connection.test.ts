@@ -402,6 +402,7 @@ function createPane(paneId: number) {
         sendFocusMode: false
       },
       options: {
+        scrollback: 5_000,
         ignoreBracketedPasteMode: false,
         theme: {
           foreground: '#eeeeee',
@@ -7239,6 +7240,7 @@ describe('connectPanePty', () => {
         rows: 30,
         seq: 64
       })
+      pane.terminal.options.scrollback = 50_000
 
       dataCallback('hidden output\r\n', { seq: 16, rawLength: 16 })
       expect(setHiddenRendererPty).toHaveBeenCalledWith('pty-id', true)
@@ -7256,7 +7258,7 @@ describe('connectPanePty', () => {
       await flushAsyncTicks(20)
 
       expect(setHiddenRendererPty).toHaveBeenLastCalledWith('pty-id', false)
-      expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
+      expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 50_000 })
       // The unhide IPC must precede the snapshot request (seq-guard contract).
       const unhideOrder = setHiddenRendererPty.mock.invocationCallOrder.at(-1)!
       const snapshotOrder = getMainBufferSnapshot.mock.invocationCallOrder[0]!
@@ -10001,7 +10003,7 @@ describe('connectPanePty', () => {
     disposable.dispose()
   })
 
-  it('clears only the alternate screen when restoring an alternate-screen snapshot', async () => {
+  it('rebuilds normal and alternate buffers from an authoritative alternate snapshot', async () => {
     const { connectPanePty } = await import('./pty-connection')
     const transport = createMockTransport('pty-id')
     const capturedDataCallback: {
@@ -10022,7 +10024,8 @@ describe('connectPanePty', () => {
       cols: 100,
       rows: 30,
       seq: hidden.length + live.length,
-      alternateScreen: true
+      alternateScreen: true,
+      scrollbackAnsi: 'preserved-shell-history\r\n'
     })
 
     const pane = createPane(1)
@@ -10044,23 +10047,25 @@ describe('connectPanePty', () => {
     await flushAsyncTicks(20)
 
     expect(getMainBufferSnapshot).toHaveBeenCalledWith('pty-id', { scrollbackRows: 5000 })
-    // Why: the destructive clear wipes xterm's scrollback. Alt-screen TUIs keep
-    // their history in xterm, so restoring one must NOT emit the clear.
-    expect(pane.terminal.write).not.toHaveBeenCalledWith(
-      '\x1b[2J\x1b[3J\x1b[H',
+    expect(pane.terminal.write).toHaveBeenCalledWith(
+      '\x1b[?1049l\x1b[2J\x1b[3J\x1b[H',
       expect.any(Function)
     )
-    // Why: the snapshot's ?1049h no-ops on an already-alt pane and serialized
-    // frames skip blank cells, so the pre-hide frame bleeds through unless the
-    // alt screen is cleared (without \x1b[3J) before the snapshot paints.
     expect(pane.terminal.write).toHaveBeenCalledWith(
-      '\x1b[?1049h\x1b[2J\x1b[H',
+      'preserved-shell-history\r\n',
+      expect.any(Function)
+    )
+    expect(pane.terminal.write).toHaveBeenCalledWith(
+      '\x1b[0m\x1b[?1049h\x1b[2J\x1b[H',
       expect.any(Function)
     )
     const writes = (pane.terminal.write as ReturnType<typeof vi.fn>).mock.calls.map(
       (call) => call[0]
     )
-    expect(writes.indexOf('\x1b[?1049h\x1b[2J\x1b[H')).toBeLessThan(
+    expect(writes.indexOf('preserved-shell-history\r\n')).toBeLessThan(
+      writes.indexOf('\x1b[0m\x1b[?1049h\x1b[2J\x1b[H')
+    )
+    expect(writes.indexOf('\x1b[0m\x1b[?1049h\x1b[2J\x1b[H')).toBeLessThan(
       writes.indexOf('altscreen-snapshot\r\n')
     )
     expect(pane.terminal.write).toHaveBeenCalledWith('altscreen-snapshot\r\n', expect.any(Function))

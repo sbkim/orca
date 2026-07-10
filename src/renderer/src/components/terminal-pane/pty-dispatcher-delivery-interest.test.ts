@@ -1,7 +1,7 @@
 // Why: the Phase-4 hidden-delivery gate only drops bytes while NO renderer
 // party needs them. These tests pin the dispatcher-side interest signal: every
-// subscribeToPtyData sidecar and every eager pre-mount buffer must surface a
-// ref-counted delivery-interest hold to main, and release it exactly once.
+// subscribeToPtyData sidecar must surface a ref-counted delivery-interest hold
+// to main. Eager buffers are model-recoverable and must not defeat hidden gating.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 describe('pty dispatcher delivery interest', () => {
@@ -69,32 +69,27 @@ describe('pty dispatcher delivery interest', () => {
     expect(setPtyDeliveryInterest).toHaveBeenLastCalledWith('pty-1', false)
   })
 
-  it('holds interest for an eager pre-mount buffer until the pane attach disposes it', async () => {
+  it('does not let an eager pre-mount buffer defeat hidden delivery gating', async () => {
     const { registerEagerPtyBuffer } = await import('./pty-dispatcher')
 
     const handle = registerEagerPtyBuffer('pty-eager', vi.fn())
-    expect(setPtyDeliveryInterest).toHaveBeenCalledWith('pty-eager', true)
+    expect(setPtyDeliveryInterest).not.toHaveBeenCalled()
 
     handle.dispose()
-    expect(setPtyDeliveryInterest).toHaveBeenLastCalledWith('pty-eager', false)
-
-    // Why: dispose + a later exit event must not double-release the hold a
-    // concurrent sidecar may still own.
-    expect(setPtyDeliveryInterest).toHaveBeenCalledTimes(2)
+    expect(setPtyDeliveryInterest).not.toHaveBeenCalled()
   })
 
-  it('releases eager-buffer interest when the PTY exits before any pane mounts', async () => {
+  it('keeps eager buffers outside delivery interest when the PTY exits before mount', async () => {
     const { registerEagerPtyBuffer } = await import('./pty-dispatcher')
 
     registerEagerPtyBuffer('pty-eager', vi.fn())
-    expect(setPtyDeliveryInterest).toHaveBeenCalledWith('pty-eager', true)
+    expect(setPtyDeliveryInterest).not.toHaveBeenCalled()
 
     exitCallback?.({ id: 'pty-eager', code: 0 })
-    expect(setPtyDeliveryInterest).toHaveBeenLastCalledWith('pty-eager', false)
-    expect(setPtyDeliveryInterest).toHaveBeenCalledTimes(2)
+    expect(setPtyDeliveryInterest).not.toHaveBeenCalled()
   })
 
-  it('keeps interest held while a sidecar and an eager buffer overlap', async () => {
+  it('lets a sidecar exclusively own interest while an eager buffer overlaps', async () => {
     const { registerEagerPtyBuffer } = await import('./pty-dispatcher')
     const { subscribeToPtyData } = await import('./pty-data-sidecar-subscriptions')
 

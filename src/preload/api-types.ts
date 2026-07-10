@@ -1282,6 +1282,8 @@ export type PreloadApi = {
       pendingDeliveryStartSeq?: number
       source?: 'headless' | 'renderer'
       alternateScreen?: boolean
+      /** Authoritative normal buffer paired with an alternate-screen frame. */
+      scrollbackAnsi?: string
       /** Trailing incomplete escape the emulator ingested; the restorer must
        *  write it after its post-replay resets, last before live chunks. */
       pendingEscapeTailAnsi?: string

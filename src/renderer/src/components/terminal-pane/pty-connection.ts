@@ -162,9 +162,16 @@ import {
 } from './terminal-capability-replies'
 import { registerPtyModelRestoreNeededHandler } from './pty-model-restore-channel'
 import {
+  acquireHiddenRendererPtyDeliveryClaim,
+  declareRendererPtyDeliveryVisible,
+  releaseRendererPtyVisibilityClaim,
+  setRendererPtyVisibilityClaim
+} from './pty-renderer-delivery-claims'
+import {
   cancelScheduledHiddenOutputRestore,
   scheduleHiddenOutputRestore
 } from './hidden-output-restore-scheduler'
+import { resolveHiddenRestoreScrollbackRows } from './terminal-hidden-restore-scrollback'
 import {
   getExecutionHostIdForWorktree,
   getSettingsForWorktreeRuntimeOwner,
@@ -228,7 +235,6 @@ const STARTUP_DRAFT_PASTE_QUIET_MS = 1500
 export const STARTUP_CWD_FALLBACK_NOTICE =
   '\r\n[Orca opened this terminal at the workspace root because its saved start folder no longer exists.]\r\n'
 const STARTUP_DRAFT_PASTE_TIMEOUT_MS = 8000
-const HIDDEN_OUTPUT_RESTORE_SCROLLBACK_ROWS = 5000
 const HIDDEN_OUTPUT_RESTORE_PENDING_CHARS = 512 * 1024
 const HIDDEN_OUTPUT_RESTORE_DEFERRED_RETRY_MS = 50
 const HIDDEN_OUTPUT_RESTORE_DEFERRED_RETRY_MAX = 3
@@ -2291,7 +2297,7 @@ export function connectPanePty(
       // renderer-visibility registry, so reporting them here is misleading.
       return
     }
-    window.api.pty.setRendererPtyVisible?.(ptyId, visible)
+    setRendererPtyVisibilityClaim(transport, ptyId, visible)
   }
   const bindActivePanePty = (
     ptyId: string,
@@ -4316,16 +4322,9 @@ export function connectPanePty(
     // restores from the snapshot. The marked id is tracked locally so PTY
     // changes (reattach/restart) can never leave a stale id gated.
     let hiddenDeliverySyncedPtyId: string | null = null
-    let hiddenDeliveryMarkedHidden = false
+    let releaseHiddenDeliveryClaim: (() => void) | null = null
     let modelRestoreSubscribedPtyId: string | null = null
     let unregisterModelRestoreNeeded: (() => void) | null = null
-
-    function sendHiddenRendererPtyDelivery(ptyId: string, hidden: boolean): void {
-      recordTerminalFreezeBreadcrumb(hidden ? 'renderer-gate-mark' : 'renderer-gate-unmark', {
-        id: redactPtyIdForDiagnostics(ptyId)
-      })
-      window.api.pty.setHiddenRendererPty?.(ptyId, hidden)
-    }
 
     function isHiddenOutputRestoreFloodSuppressed(): boolean {
       return Date.now() < hiddenOutputRestoreFloodSuppressedUntil
@@ -4432,11 +4431,9 @@ export function connectPanePty(
       const ptyId = transport.getPtyId()
       syncModelRestoreNeededSubscription(ptyId)
       if (hiddenDeliverySyncedPtyId !== null && hiddenDeliverySyncedPtyId !== ptyId) {
-        if (hiddenDeliveryMarkedHidden) {
-          sendHiddenRendererPtyDelivery(hiddenDeliverySyncedPtyId, false)
-        }
+        releaseHiddenDeliveryClaim?.()
+        releaseHiddenDeliveryClaim = null
         hiddenDeliverySyncedPtyId = null
-        hiddenDeliveryMarkedHidden = false
       }
       if (!isHiddenDeliveryGateManagedPty(ptyId) || !canUseHiddenOutputSnapshot(ptyId)) {
         return
@@ -4445,24 +4442,23 @@ export function connectPanePty(
       const isFirstSyncForPty = hiddenDeliverySyncedPtyId !== ptyId
       hiddenDeliverySyncedPtyId = ptyId
       if (shouldHide) {
-        if (!hiddenDeliveryMarkedHidden) {
-          hiddenDeliveryMarkedHidden = true
-          sendHiddenRendererPtyDelivery(ptyId, true)
+        if (!releaseHiddenDeliveryClaim) {
+          releaseHiddenDeliveryClaim = acquireHiddenRendererPtyDeliveryClaim(ptyId)
         }
-      } else if (hiddenDeliveryMarkedHidden || isFirstSyncForPty) {
+      } else if (releaseHiddenDeliveryClaim) {
+        releaseHiddenDeliveryClaim()
+        releaseHiddenDeliveryClaim = null
+      } else if (isFirstSyncForPty) {
         // Why: clear unconditionally on the first sync for a PTY — a stale
         // main-side hidden bit can survive a renderer reload for
         // daemon-backed PTYs that keep their session id.
-        hiddenDeliveryMarkedHidden = false
-        sendHiddenRendererPtyDelivery(ptyId, false)
+        declareRendererPtyDeliveryVisible(ptyId)
       }
     }
     releaseHiddenRendererPtyDelivery = (): void => {
-      if (hiddenDeliverySyncedPtyId !== null && hiddenDeliveryMarkedHidden) {
-        sendHiddenRendererPtyDelivery(hiddenDeliverySyncedPtyId, false)
-      }
+      releaseHiddenDeliveryClaim?.()
+      releaseHiddenDeliveryClaim = null
       hiddenDeliverySyncedPtyId = null
-      hiddenDeliveryMarkedHidden = false
       unregisterModelRestoreNeeded?.()
       unregisterModelRestoreNeeded = null
       modelRestoreSubscribedPtyId = null
@@ -5436,6 +5432,7 @@ export function connectPanePty(
       rows: number
       seq?: number
       alternateScreen?: boolean
+      scrollbackAnsi?: string
       pendingEscapeTailAnsi?: string
     }): void {
       const scrollIntent = captureTerminalWriteScrollIntent(pane.terminal)
@@ -5467,13 +5464,19 @@ export function connectPanePty(
         // clearing on restore loses scroll-up after a hidden->visible return.
         // Mirrors the attach-time guard in pty-transport.ts.
         writeReplayData('\x1b[2J\x1b[3J\x1b[H')
+      } else if (snapshot.scrollbackAnsi !== undefined) {
+        // Why: SerializeAddon captures normal and alternate buffers together.
+        // Rebuild normal while it is active, then return to a clean alt frame.
+        writeReplayData('\x1b[?1049l\x1b[2J\x1b[3J\x1b[H')
+        writeReplayData(snapshot.scrollbackAnsi)
+        writeReplayData('\x1b[0m\x1b[?1049h\x1b[2J\x1b[H')
       } else {
         // Why: the snapshot's own ?1049h is a no-op when the pane is already on
         // the alternate screen, and the serialized frame skips blank cells — so
         // without clearing the alt screen the pre-hide frame bleeds through
         // every cell the final frame leaves blank. \x1b[2J on the alt buffer
         // does not touch the normal buffer's scrollback the TUI returns to.
-        writeReplayData('\x1b[?1049h\x1b[2J\x1b[H')
+        writeReplayData('\x1b[0m\x1b[?1049h\x1b[2J\x1b[H')
       }
       writeReplayData(snapshot.data)
       // Why: status/title-corroborated live agents own ?25l/?1004h (a forced
@@ -5598,7 +5601,7 @@ export function connectPanePty(
           let snapshot: PtyBufferSnapshot | null = null
           try {
             snapshot = await serializeHiddenOutputSnapshot(currentPtyId, {
-              scrollbackRows: HIDDEN_OUTPUT_RESTORE_SCROLLBACK_ROWS
+              scrollbackRows: resolveHiddenRestoreScrollbackRows(pane.terminal.options.scrollback)
             })
           } catch {
             snapshot = null
@@ -6853,7 +6856,7 @@ export function connectPanePty(
       unregisterBacklogRecovery = null
       unregisterDocumentVisibilityRecovery?.()
       unregisterDocumentVisibilityRecovery = null
-      reportPanePtyVisibility(activePanePtyBinding ?? transport.getPtyId(), false)
+      releaseRendererPtyVisibilityClaim(transport)
       // Why: a parked-tab watcher may take over this PTY's facts in the same
       // effect flush; the pane's consumer must be gone before that handoff.
       dropSideEffectFactConsumer()

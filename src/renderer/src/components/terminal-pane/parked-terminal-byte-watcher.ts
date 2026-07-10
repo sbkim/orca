@@ -37,6 +37,7 @@ import {
   registerTerminalSideEffectFactConsumer
 } from './terminal-side-effect-facts-handler'
 import { dispatchTerminalNotification } from './use-notification-dispatch'
+import { acquireHiddenRendererPtyDeliveryClaim } from './pty-renderer-delivery-claims'
 
 // Why: mirrors AGENT_TASK_COMPLETE_NOTIFICATION_GRACE_MS in pty-connection.ts.
 // The parked path must keep the live path's BEL-vs-completion race window so
@@ -289,9 +290,9 @@ export function startParkedTerminalByteWatcher(
   // Why: parked tabs are the canonical hidden view — mark the PTY gated so
   // main stops renderer byte delivery; dispose clears the bit before the
   // reveal remount re-registers pane handlers (existing dispose ordering).
-  if (hiddenDeliveryGateActive) {
-    ;(globalThis as { window?: Window }).window?.api?.pty?.setHiddenRendererPty?.(ptyId, true)
-  }
+  const releaseHiddenDeliveryClaim = hiddenDeliveryGateActive
+    ? acquireHiddenRendererPtyDeliveryClaim(ptyId)
+    : null
 
   // Why (byte-parser mode only): with main authority the watcher consumes
   // pty:sideEffect facts exclusively and registers NO byte parsers here —
@@ -318,9 +319,7 @@ export function startParkedTerminalByteWatcher(
     // Why: unhide BEFORE the reveal remount registers pane handlers — main
     // resumes delivery and (if bytes were dropped) emits the restore marker
     // the remounted pane's restore machinery consumes.
-    if (hiddenDeliveryGateActive) {
-      ;(globalThis as { window?: Window }).window?.api?.pty?.setHiddenRendererPty?.(ptyId, false)
-    }
+    releaseHiddenDeliveryClaim?.()
     stopMode2031Responder?.()
     unsubscribeByteParsers?.()
     unregisterFactConsumer?.()
