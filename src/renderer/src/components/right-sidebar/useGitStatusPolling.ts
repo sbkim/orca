@@ -229,6 +229,12 @@ export function useGitStatusPolling(options: { enabled?: boolean } = {}): void {
     }
 
     const pollStale = async (): Promise<void> => {
+      // Why: a backoff-deferred run can fire long after the window hides; skip
+      // the probe instead of running SSH/RPC work nobody can see. The
+      // becoming-visible run catches up via the change-signal lane.
+      if (!isWindowVisible()) {
+        return
+      }
       for (const { id, path } of staleConflictWorktrees) {
         try {
           const connectionId = getConnectionId(id) ?? undefined
