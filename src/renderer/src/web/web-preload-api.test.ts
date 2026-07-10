@@ -1699,7 +1699,7 @@ describe('web worktree preload API', () => {
     vi.doUnmock('./web-runtime-client')
   })
 
-  it('forwards lock override and archive-hook intent through worktree removal', async () => {
+  it('forwards force and archive-hook intent through worktree removal', async () => {
     const runtimeCalls: { method: string; params: unknown }[] = []
     vi.doMock('./web-runtime-client', () => ({
       WebRuntimeClient: class {

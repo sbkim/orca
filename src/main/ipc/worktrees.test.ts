@@ -5,6 +5,7 @@ import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { CreateWorktreeResult, GitWorktreeInfo, Worktree } from '../../shared/types'
+import * as localWorktreeFilesystem from '../local-worktree-filesystem'
 
 const ORIGINAL_PLATFORM = process.platform
 const removeWorktreeLinkedPathsMock = vi.hoisted(() => vi.fn())
@@ -6349,18 +6350,16 @@ describe('registerWorktreeHandlers', () => {
     expect(store.removeWorktreeMeta).not.toHaveBeenCalled()
   })
 
-  it('keeps metadata when Windows long-path recovery deletes the directory but prune fails', async () => {
+  it('refuses Windows recovery while Git still reports the row and keeps metadata', async () => {
     setPlatform('win32')
     mockKnownFeatureWorktree()
     store.getWorktreeMeta.mockReturnValue(makeWorktreeMeta())
+    const removePathSpy = vi
+      .spyOn(localWorktreeFilesystem, 'removeLocalWorktreePath')
+      .mockResolvedValue(undefined)
     removeWorktreeMock.mockRejectedValue(
       Object.assign(new Error('git worktree remove failed'), {
         stderr: 'error: failed to delete deep/file.txt: Filename too long'
-      })
-    )
-    gitExecFileAsyncMock.mockRejectedValue(
-      Object.assign(new Error('git prune failed'), {
-        stderr: 'fatal: unable to lock worktree admin dir'
       })
     )
 
@@ -6369,8 +6368,12 @@ describe('registerWorktreeHandlers', () => {
         worktreeId: 'repo-1::/workspace/feature-wt',
         force: true
       })
-    ).rejects.toThrow('Git still has stale worktree registration')
+    ).rejects.toThrow(
+      'Failed to force delete worktree at /workspace/feature-wt. error: failed to delete deep/file.txt: Filename too long'
+    )
 
+    expect(removePathSpy).not.toHaveBeenCalled()
+    expect(gitExecFileAsyncMock).not.toHaveBeenCalledWith(['worktree', 'prune'], expect.anything())
     expect(store.removeWorktreeMeta).not.toHaveBeenCalled()
     expect(mainWindow.webContents.send).not.toHaveBeenCalledWith('worktrees:changed', {
       repoId: 'repo-1'

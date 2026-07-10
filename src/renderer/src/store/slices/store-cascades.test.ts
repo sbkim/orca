@@ -417,7 +417,7 @@ describe('removeWorktree cascade', () => {
     })
   })
 
-  it('offers force delete for locked worktree removal errors', async () => {
+  it('does not offer force delete for locked worktree removal errors', async () => {
     const store = createTestStore()
     const worktreeId = 'repo1::/workspace/feature-wt'
     const error =

@@ -73,6 +73,7 @@ import {
   unregisterSshFilesystemProvider
 } from '../providers/ssh-filesystem-dispatch'
 import { registerSshGitProvider, unregisterSshGitProvider } from '../providers/ssh-git-dispatch'
+import * as localWorktreeFilesystem from '../local-worktree-filesystem'
 import {
   DEFAULT_REPO_BADGE_COLOR,
   FLOATING_TERMINAL_WORKTREE_ID,
@@ -25917,7 +25918,7 @@ describe('OrcaRuntimeService', () => {
     }
   })
 
-  it('keeps runtime metadata when long-path recovery deletes the directory but prune fails', async () => {
+  it('refuses runtime Windows recovery while Git still reports the row and keeps metadata', async () => {
     setPlatform('win32')
     const removeWorktreeMeta = vi.fn()
     const runtimeStore = {
@@ -25925,11 +25926,13 @@ describe('OrcaRuntimeService', () => {
       removeWorktreeMeta
     }
     const runtime = new OrcaRuntimeService(runtimeStore as never)
-    const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockRejectedValue(
-      Object.assign(new Error('git prune failed'), {
-        stderr: 'fatal: unable to lock worktree admin dir'
-      })
-    )
+    const gitSpy = vi.spyOn(gitRunner, 'gitExecFileAsync').mockResolvedValue({
+      stdout: '',
+      stderr: ''
+    })
+    const removePathSpy = vi
+      .spyOn(localWorktreeFilesystem, 'removeLocalWorktreePath')
+      .mockResolvedValue(undefined)
     vi.mocked(getEffectiveHooks).mockReturnValue(null)
     vi.mocked(removeWorktree).mockRejectedValue(
       Object.assign(new Error('git worktree remove failed'), {
@@ -25939,8 +25942,10 @@ describe('OrcaRuntimeService', () => {
 
     try {
       await expect(runtime.removeManagedWorktree(TEST_WORKTREE_ID, true)).rejects.toThrow(
-        'Git still has stale worktree registration'
+        `Failed to force delete worktree at ${TEST_WORKTREE_PATH}. error: failed to delete deep/file.txt: Filename too long`
       )
+      expect(removePathSpy).not.toHaveBeenCalled()
+      expect(gitSpy).not.toHaveBeenCalledWith(['worktree', 'prune'], expect.anything())
       expect(removeWorktreeMeta).not.toHaveBeenCalled()
     } finally {
       gitSpy.mockRestore()
