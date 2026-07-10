@@ -44,7 +44,7 @@ import {
   getDiffCommentPopoverTop
 } from '../diff-comments/diff-comment-popover-position'
 import { isLinuxUserAgent } from '../terminal-pane/pane-helpers'
-import { installEditorSaveShortcut } from './editor-shortcuts'
+import { installEditorFindShortcut, installEditorSaveShortcut } from './editor-shortcuts'
 import { Plus } from 'lucide-react'
 import {
   getMonacoMarkdownSelectionAnnotationTarget,
@@ -390,13 +390,14 @@ export default function MonacoEditor({
         return model.getValueInRange(selection)
       })
 
-      const cleanupSaveShortcut = installEditorSaveShortcut(
-        editorInstance.getContainerDomNode(),
-        () => {
-          const value = editorInstance.getValue()
-          propsRef.current.onSave(value)
-        }
-      )
+      const editorDomNode = editorInstance.getContainerDomNode()
+      const cleanupSaveShortcut = installEditorSaveShortcut(editorDomNode, () => {
+        const value = editorInstance.getValue()
+        propsRef.current.onSave(value)
+      })
+      const cleanupFindShortcut = installEditorFindShortcut(editorDomNode, () => {
+        void editorInstance.getAction('actions.find')?.run()
+      })
       const searchInFilesAction = editorInstance.addAction({
         id: 'orca.searchInFiles',
         label: translate('auto.components.editor.MonacoEditor.fd68ae03b3', 'Search in Files'),
@@ -442,7 +443,6 @@ export default function MonacoEditor({
           }
         })
       }
-      const editorDomNode = editorInstance.getContainerDomNode()
       editorDomNode.addEventListener('paste', onLargeTextPaste, { capture: true })
 
       // Track cursor line for "copy path to line" feature
@@ -496,6 +496,7 @@ export default function MonacoEditor({
         scrollStateSub.dispose()
         gutterMouseDownSub.dispose()
         cleanupSaveShortcut()
+        cleanupFindShortcut()
         editorDomNode.removeEventListener('paste', onLargeTextPaste, { capture: true })
         searchInFilesAction.dispose()
         autoHeightSub?.dispose()
