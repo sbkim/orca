@@ -127,6 +127,23 @@ Three cooperating layers, innermost first:
   daemon session ids embed worktree paths. Recording happens only on rare
   transitions; the table/report is built only when read. This exists so a
   field freeze report never needs a follow-up ask.
+- **Hidden/parked exit teardown completeness** (pty-connection.ts kept-exit
+  guard + `terminal-parked-tab-watchers.ts` exit sidecar): two invariants that
+  keep a split pane's death near the hidden/park boundary from stranding state
+  (field incident: a closed setup-split leaf persisted in `root` with no
+  binding and remounted as a permanently blank pane, unreachable by
+  dead-session reconcile — it skips ptyId-null panes by design).
+  (1) The "keep a fresh split whose newborn PTY died" branch is **gated on
+  `isVisibleRef`** — hidden panes' bytes are gate-withheld, so "no output"
+  proves nothing there; a hidden newborn death must `closePane`, or the kept
+  pane becomes a binding-less ghost. (2) A PTY exit that lands **while parked**
+  reaches ONLY the parked watcher's exit sidecar (hosts' `onPtyExit` needs a
+  mounted TerminalPane), so the sidecar itself collapses the dead leaf out of
+  the stored layout via `detachTerminalLayoutLeaf` — a stale binding left
+  behind reattaches on reveal and the daemon re-creates the exited session id
+  as a fresh shell (silent pane resurrection). E2e:
+  `terminal-pane-close-layout-consistency.spec.ts` sweeps close/exit at every
+  lifecycle phase and asserts leaves(root) == bindings == live panes.
 - **Producer flow control** (protocol v19 `pausePty`/`resumePty`, 256KB pause /
   32KB resume watermarks, keyed off **pendingData only** — never renderer
   counters; kill switch `PRODUCER_FLOW_CONTROL_ENABLED`, ipc/pty.ts): when main's

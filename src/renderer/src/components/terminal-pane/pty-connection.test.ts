@@ -2167,6 +2167,32 @@ describe('connectPanePty', () => {
     expect(manager.setActivePane).toHaveBeenCalledWith(1, { focus: true })
   })
 
+  it('closes a hidden split pane whose PTY exits before output instead of keeping a ghost', async () => {
+    // Why (regression, ghost blank pane): the keep above is a visible-failure
+    // UX. A hidden pane's bytes are withheld by the hidden-delivery gate, so
+    // "no output" proves nothing there — keeping it strands a binding-less
+    // pane that remounts as a permanently blank ghost on reveal.
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport('pty-pane-2')
+    transportFactoryQueue.push(transport)
+    const manager = createManager(2, 2)
+    const deps = createDeps({
+      restoredLeafId: LEAF_2,
+      isVisibleRef: { current: false },
+      paneTransportsRef: { current: new Map([[1, createMockTransport('pty-pane-1')]]) }
+    })
+
+    connectPanePty(createPane(2) as never, manager as never, deps as never)
+    const onPtyExit = createdTransportOptions[0]?.onPtyExit as ((ptyId: string) => void) | undefined
+    expect(onPtyExit).toBeTypeOf('function')
+
+    onPtyExit?.('pty-pane-2')
+
+    expect(deps.clearExitedPanePtyLayoutBinding).toHaveBeenCalledWith(2, 'pty-pane-2')
+    expect(deps.onPtyExitRef.current).not.toHaveBeenCalled()
+    expect(manager.closePane).toHaveBeenCalledWith(2)
+  })
+
   it('keeps a worktree sole terminal mounted when its freshly-spawned PTY exits before input (direnv failure)', async () => {
     // Why (regression): a PR worktree can ship an .envrc whose direnv command
     // fails, so the only terminal's login shell exits non-zero immediately. The

@@ -2108,6 +2108,7 @@ export function connectPanePty(
       return
     }
     if (
+      deps.isVisibleRef.current &&
       hadExistingPaneTransportAtConnect &&
       !restoredPtyIdForTransport &&
       !Number.isFinite(lastTerminalInputAt) &&
@@ -2115,6 +2116,10 @@ export function connectPanePty(
     ) {
       // Why: a freshly split pane can lose its newborn PTY during setup; keep
       // the split visible so the failed session does not immediately collapse.
+      // Hidden panes must close instead: the hidden-delivery gate withholds
+      // their bytes, so "no output" is meaningless there, and keeping one
+      // strands a binding-less pane the exit path never revisits — it remounts
+      // as a permanently blank ghost on reveal.
       focusSurvivingPtyPaneAfterKeptExit()
       return
     }

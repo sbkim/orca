@@ -14,6 +14,7 @@ import { isTerminalLeafId } from '../../../../shared/stable-pane-id'
 import type { TerminalTab } from '../../../../shared/types'
 import { useAppStore } from '@/store'
 import { collectLeafIdsInOrder } from './terminal-layout-leaf-ids'
+import { detachTerminalLayoutLeaf } from './terminal-layout-leaf-detach'
 import { subscribeToPtyExit } from './pty-dispatcher'
 import { startParkedTerminalByteWatcher } from './parked-terminal-byte-watcher'
 import { isSnapshotBackedTerminalPty } from './terminal-hidden-view-parking'
@@ -146,6 +147,15 @@ function startParkedTabWatchers(worktreeId: string, tab: ParkableTerminalTabMode
     // Why: a PTY that exits while parked has no pane to run exit cleanup; at
     // minimum its watcher must not outlive it.
     const unsubscribeExit = subscribeToPtyExit(ptyId, () => {
+      // Why: while parked this sidecar is the ONLY exit observer — the hosts'
+      // onPtyExit runs from a mounted TerminalPane. Run the observed-exit
+      // teardown's data half here for a multi-leaf tab, or the dead leaf's
+      // stale binding reattaches on reveal and the daemon re-creates the
+      // exited session id as a fresh shell, resurrecting the pane.
+      if (disposersByPtyId.size > 1) {
+        useAppStore.getState().clearRuntimePaneTitle(tab.id, pane.paneId)
+        collapseParkedExitedLeaf(tab.id, ptyId)
+      }
       disposersByPtyId.get(ptyId)?.()
       disposersByPtyId.delete(ptyId)
       // Why: with the last watcher gone there is nothing left to watch or
@@ -198,7 +208,32 @@ export function shouldDeferParkedPtyExitTabClose(tabId: string, ptyId: string): 
   // removes the dead PTY's watcher — so the watcher count still includes the
   // exiting PTY. More than one watcher (or an exit for an unwatched PTY)
   // means live sibling leaves remain.
-  return remaining > 1 || !entry.disposersByPtyId.has(ptyId)
+  const defer = remaining > 1 || !entry.disposersByPtyId.has(ptyId)
+  if (defer) {
+    collapseParkedExitedLeaf(tabId, ptyId)
+  }
+  return defer
+}
+
+// Why: deferring the tab close is not enough — a stale leaf binding left in
+// the stored layout reattaches on reveal, and the daemon re-creates the exited
+// session id as a fresh shell, resurrecting a pane whose shell already ended.
+// With no PaneManager mounted, the observed-exit teardown's data half runs
+// here instead: collapse the leaf out of the stored layout so the reveal
+// replays only the surviving panes.
+function collapseParkedExitedLeaf(tabId: string, ptyId: string): void {
+  const state = useAppStore.getState()
+  const layout = state.terminalLayoutsByTabId[tabId]
+  const leafId =
+    capturedPanesByTabId.get(tabId)?.panes.find((pane) => pane.ptyId === ptyId)?.leafId ??
+    Object.entries(layout?.ptyIdsByLeafId ?? {}).find(([, boundPtyId]) => boundPtyId === ptyId)?.[0]
+  if (!leafId) {
+    return
+  }
+  const detached = detachTerminalLayoutLeaf(layout, leafId)
+  if (detached) {
+    state.setTabLayout(tabId, detached.sourceLayout)
+  }
 }
 
 /**
