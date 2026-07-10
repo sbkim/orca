@@ -2312,7 +2312,7 @@ describe('OrcaRuntimeService', () => {
       if (args[0] === 'rev-parse' && args[1] === '--verify') {
         return { stdout: 'base-sha\n', stderr: '' }
       }
-      if (args[0] === 'fetch') {
+      if (args.includes('fetch')) {
         return refresh.promise
       }
       return { stdout: '', stderr: '' }
@@ -2325,7 +2325,16 @@ describe('OrcaRuntimeService', () => {
 
       await vi.waitFor(() => {
         expect(gitSpy).toHaveBeenCalledWith(
-          ['fetch', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main'],
+          [
+            '-c',
+            'maintenance.auto=false',
+            '-c',
+            'gc.auto=0',
+            'fetch',
+            '--no-tags',
+            'origin',
+            '+refs/heads/main:refs/remotes/origin/main'
+          ],
           {
             cwd: TEST_REPO_PATH,
             useConfiguredSshCommandForNetwork: true,
@@ -2443,7 +2452,7 @@ describe('OrcaRuntimeService', () => {
       if (args[0] === 'rev-parse' && args.includes('refs/remotes/origin/main^{commit}')) {
         return { stdout: 'base-sha\n', stderr: '' }
       }
-      if (args[0] === 'fetch') {
+      if (args.includes('fetch')) {
         throw new Error('network unavailable')
       }
       return { stdout: '', stderr: '' }
@@ -2505,7 +2514,7 @@ describe('OrcaRuntimeService', () => {
       if (args[0] === 'rev-parse' && args.includes('refs/heads/develop^{commit}')) {
         return { stdout: 'develop-sha\n', stderr: '' }
       }
-      if (args[0] === 'fetch') {
+      if (args.includes('fetch')) {
         throw new Error('network unavailable')
       }
       return { stdout: '', stderr: '' }
@@ -2559,7 +2568,7 @@ describe('OrcaRuntimeService', () => {
       if (args[0] === 'rev-parse' && args.includes('refs/heads/team/feature^{commit}')) {
         return { stdout: 'team-feature-sha\n', stderr: '' }
       }
-      if (args[0] === 'fetch') {
+      if (args.includes('fetch')) {
         throw new Error('network unavailable')
       }
       return { stdout: '', stderr: '' }
@@ -2580,7 +2589,16 @@ describe('OrcaRuntimeService', () => {
         false
       )
       expect(gitSpy).not.toHaveBeenCalledWith(
-        ['fetch', '--no-tags', 'team', '+refs/heads/feature:refs/remotes/team/feature'],
+        [
+          '-c',
+          'maintenance.auto=false',
+          '-c',
+          'gc.auto=0',
+          'fetch',
+          '--no-tags',
+          'team',
+          '+refs/heads/feature:refs/remotes/team/feature'
+        ],
         expect.any(Object)
       )
     } finally {
@@ -2604,7 +2622,7 @@ describe('OrcaRuntimeService', () => {
       if (args[0] === 'rev-parse' && args[1] === '--verify') {
         throw new Error('missing ref')
       }
-      if (args[0] === 'fetch') {
+      if (args.includes('fetch')) {
         throw new Error('network unavailable')
       }
       return { stdout: '', stderr: '' }
