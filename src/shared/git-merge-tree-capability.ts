@@ -13,6 +13,8 @@ export function isUnsupportedMergeTreeWriteTreeError(error: unknown): boolean {
   return (
     /(?:unknown|invalid|unrecognized) option(?::|\s+)[`']?(?:--?)?write-tree[`']?(?:\s|$)/i.test(
       output
-    ) || /usage:\s*git merge-tree\s+<base-tree>\s+<branch1>\s+<branch2>/i.test(output)
+    ) ||
+    /unknown rev [`']?--write-tree[`']?(?:\s|$)/i.test(output) ||
+    /usage:\s*git merge-tree\s+<base-tree>\s+<branch1>\s+<branch2>/i.test(output)
   )
 }

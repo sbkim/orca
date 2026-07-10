@@ -169,7 +169,7 @@ describe('branchHasNoUnmergedChangesOnAnyTarget', () => {
 
   it('does not repeat a rejected merge-tree --write-tree proof on old Git', async () => {
     const unsupported = Object.assign(new Error('unknown option'), {
-      stderr: 'usage: git merge-tree <base-tree> <branch1> <branch2>'
+      stderr: 'fatal: unknown rev --write-tree'
     })
     const runGit = baseProofResponses({
       'merge-tree --write-tree target refs/heads/feature/test': unsupported,

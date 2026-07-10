@@ -254,6 +254,9 @@ async function loadConflictingFiles(
             })
             return parseMergeTreeNameOnlyOutput(result.stdout)
           } catch (error) {
+            if (isUnsupportedMergeTreeWriteTreeError(error)) {
+              throw error
+            }
             // Why: `git merge-tree --write-tree` exits 1 for conflicts but still
             // writes the useful file list; only option rejection reaches fallback.
             const stdoutFromError = getGitErrorOutput(error, 'stdout')

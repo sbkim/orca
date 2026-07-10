@@ -334,7 +334,7 @@ describe('getPRConflictSummary caching', () => {
       'merge-tree': () =>
         Promise.reject(
           Object.assign(new Error('unknown option'), {
-            stderr: 'usage: git merge-tree <base-tree> <branch1> <branch2>'
+            stdout: 'usage: git merge-tree <base-tree> <branch1> <branch2>'
           })
         )
     })
