@@ -1,5 +1,8 @@
 import type { PRConflictSummary } from '../../shared/types'
-import { isUnsupportedMergeTreeWriteTreeError } from '../../shared/git-merge-tree-capability'
+import {
+  isUnsupportedMergeTreeMergeBaseError,
+  isUnsupportedMergeTreeWriteTreeError
+} from '../../shared/git-merge-tree-capability'
 import { gitExecFileAsync } from '../git/runner'
 import {
   clearGitCapabilityStateForTests,
@@ -267,7 +270,7 @@ async function loadConflictingFiles(
           }
         },
         () => loadConflictingFilesWithLegacyMergeTree(repoPath, legacyArgs, localGitOptions),
-        isUnsupportedMergeBaseOption
+        isUnsupportedMergeTreeMergeBaseError
       ),
     async () => {
       // Why: Git before 2.38 cannot derive a reliable real-merge conflict list;
@@ -314,13 +317,4 @@ function getGitErrorOutput(error: unknown, key: 'stdout' | 'stderr'): string {
   }
   const output = (error as Partial<Record<'stdout' | 'stderr', unknown>>)[key]
   return typeof output === 'string' ? output : ''
-}
-
-function isUnsupportedMergeBaseOption(error: unknown): boolean {
-  const output = `${getGitErrorOutput(error, 'stderr')}\n${
-    error instanceof Error ? error.message : ''
-  }`
-  return /(?:unknown|unrecognized) option(?::|\s+)[`']?(?:--?)?merge-base[`']?(?:\s|$)/i.test(
-    output
-  )
 }

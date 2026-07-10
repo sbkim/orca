@@ -51,9 +51,12 @@ its own WSL/SSH routing, cancellation, tracing, redaction, process cleanup, and
 bounded output handling. Replacing the runner would move—not remove—the
 capability problem.
 
-## Reliability Follow-up
+## CI Contract
 
-The strongest remaining gate is a small old-Git contract matrix that runs the
-capability tests against Git 2.25, a pre-2.36 release, and current Git. Keep the
-unit tests regardless: they cover localized error text, WSL/SSH isolation, and
-concurrent probes that a single container run does not exercise.
+PR checks run the capability contract against real Git 2.25.5, 2.38.1, and
+2.49.1 binaries. This spans the core-workflow baseline, the transitional
+`merge-tree --write-tree` behavior before `--merge-base`, and current Git.
+
+Keep the unit tests alongside that matrix. They cover concurrent probes,
+native/WSL/SSH/relay isolation, and error-stream shapes that a single real
+binary invocation cannot exercise deterministically.

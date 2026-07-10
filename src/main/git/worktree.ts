@@ -15,6 +15,11 @@ import type {
 } from '../../shared/types'
 import { parseGitRevListAheadBehindCounts } from '../../shared/git-rev-list-output'
 import { parseWslUncPath } from '../../shared/wsl-paths'
+import {
+  hasUnsupportedRevParsePathFormatEcho,
+  isUnsupportedRevParsePathFormatError,
+  isUnsupportedWorktreeListZError
+} from '../../shared/git-worktree-command-capabilities'
 import { getLocalGitCapabilityCache } from './git-capability-state'
 import { gitExecFileAsync, translateWslOutputPaths } from './runner'
 import { resolveGitDir } from './status'
@@ -108,22 +113,6 @@ function getErrorText(error: unknown): string {
 
 function isNotGitRepositoryError(error: unknown): boolean {
   return /not a git repository/i.test(getErrorText(error))
-}
-
-function isUnsupportedWorktreeListZError(error: unknown): boolean {
-  // `-z` is this command's only flag older Git (<2.36) lacks, so its usage
-  // exit 129 signals the rejection in any locale; stderr match is a fallback.
-  if (getErrorCode(error) === '129') {
-    return true
-  }
-
-  return /(?:unknown|invalid|unrecognized) (?:switch|option).*`?-?z'?/i.test(getErrorText(error))
-}
-
-function isUnsupportedRevParsePathFormatError(error: unknown): boolean {
-  return /(?:unknown|invalid|unrecognized).*(?:--path-format|path-format)/i.test(
-    getErrorText(error)
-  )
 }
 
 function isBranchCheckedOutInWorktreeError(error: unknown): boolean {
@@ -404,10 +393,6 @@ function parseRepoLocation(repoPath: string, output: string): RepoLocation | und
   }
 }
 
-function echoedUnsupportedPathFormatOption(output: string): boolean {
-  return output.split(/\r?\n/).some((line) => line.startsWith('--path-format'))
-}
-
 async function readRepoLocation(
   repoPath: string,
   resolveBasePath: string,
@@ -425,7 +410,7 @@ async function readRepoLocation(
           ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
           gitExecOptions(repoPath, options)
         )
-        if (echoedUnsupportedPathFormatOption(stdout)) {
+        if (hasUnsupportedRevParsePathFormatEcho(stdout)) {
           // Why: some old Git versions echo the unknown option and exit zero;
           // remember that compatibility signal even though parsing can recover.
           capabilities.rememberUnsupported('rev-parse-path-format')

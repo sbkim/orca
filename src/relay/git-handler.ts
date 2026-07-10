@@ -62,6 +62,10 @@ import { syncForkDefaultBranch, validateGitForkSyncExpectedUpstream } from '../s
 import { InFlightPromiseDedupe, stableInFlightKey } from '../shared/in-flight-promise-dedupe'
 import { GIT_FETCH_SKIP_AUTO_MAINTENANCE_CONFIG_ARGS } from '../shared/git-fetch-auto-maintenance'
 import { GitCapabilityCache } from '../shared/git-capability-cache'
+import {
+  hasUnsupportedRevParsePathFormatEcho,
+  isUnsupportedRevParsePathFormatError
+} from '../shared/git-worktree-command-capabilities'
 import { GitResponseStreamRegistry } from './git-response-stream'
 import { GIT_RESPONSE_STREAM_THRESHOLD } from './protocol'
 
@@ -76,26 +80,6 @@ function resolveSubmoduleStatusArea(
     return params.area
   }
   return 'unstaged'
-}
-
-function getErrorText(error: unknown): string {
-  if (typeof error === 'object' && error !== null) {
-    const parts: string[] = []
-    if ('message' in error && typeof error.message === 'string') {
-      parts.push(error.message)
-    }
-    if ('stderr' in error && typeof error.stderr === 'string') {
-      parts.push(error.stderr)
-    }
-    return parts.join('\n')
-  }
-  return String(error)
-}
-
-function isUnsupportedRevParsePathFormatError(error: unknown): boolean {
-  return /(?:unknown|invalid|unrecognized).*(?:--path-format|path-format)/i.test(
-    getErrorText(error)
-  )
 }
 
 function isWindowsAbsolutePath(value: string): boolean {
@@ -1286,7 +1270,7 @@ export class GitHandler {
             ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-common-dir'],
             repoPath
           )
-          if (stdout.split(/\r?\n/).some((line) => line.startsWith('--path-format'))) {
+          if (hasUnsupportedRevParsePathFormatEcho(stdout)) {
             // Why: some old Git versions echo the unknown option and exit zero;
             // remember that signal even though the trailing paths remain usable.
             this.gitCapabilities.rememberUnsupported('rev-parse-path-format')

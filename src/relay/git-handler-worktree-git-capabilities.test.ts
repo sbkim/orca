@@ -50,6 +50,35 @@ describe('relay worktree Git capabilities', () => {
     ])
   })
 
+  it('re-probes after a relay handler is replaced', async () => {
+    const mockOldGit = (target: GitHandler) =>
+      vi.spyOn(target as unknown as GitSpyTarget, 'git').mockImplementation((args: string[]) => {
+        if (args.includes('-z')) {
+          return Promise.reject(
+            Object.assign(new Error('git usage error'), {
+              code: 129,
+              stderr: 'usage: git worktree list [<options>]\n'
+            })
+          )
+        }
+        return Promise.resolve({ stdout: WORKTREE_LIST_OUTPUT, stderr: '' })
+      })
+    const firstGit = mockOldGit(handler)
+    const replacementDispatcher = createMockDispatcher()
+    const replacementHandler = new GitHandler(
+      replacementDispatcher as unknown as RelayDispatcher,
+      new RelayContext()
+    )
+    const replacementGit = mockOldGit(replacementHandler)
+
+    await dispatcher.callRequest('git.listWorktrees', { repoPath: '/repo' })
+    await dispatcher.callRequest('git.listWorktrees', { repoPath: '/repo' })
+    await replacementDispatcher.callRequest('git.listWorktrees', { repoPath: '/repo' })
+
+    expect(firstGit.mock.calls.filter(([args]) => args.includes('-z'))).toHaveLength(1)
+    expect(replacementGit.mock.calls.filter(([args]) => args.includes('-z'))).toHaveLength(1)
+  })
+
   it('does not repeat a known-unsupported rev-parse --path-format probe', async () => {
     const gitSpy = vi
       .spyOn(handler as unknown as GitSpyTarget, 'git')
