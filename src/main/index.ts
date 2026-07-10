@@ -124,6 +124,7 @@ import {
 import { normalizeClaudeRuntimeSelection } from './claude-accounts/runtime-selection'
 import { codexHookService } from './codex/hook-service'
 import { codexLaunchNeedsDirectApprovalPromotion } from './codex/codex-launch-hook-upkeep'
+import { getDefaultWslDistro } from './wsl'
 import { ClaudeAccountService } from './claude-accounts/service'
 import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service'
 import {
@@ -698,25 +699,48 @@ async function startServeAgentHookServer(): Promise<void> {
 // the system home (#7896), so it must keep running on every Codex launch. Shared
 // so both the awaited commit-message path and the fire-and-forget sync PTY launch
 // path run it; enabled installs stay presence-gated per the persisted off switch.
-async function maintainCodexLaunchHooks(): Promise<void> {
+async function maintainCodexLaunchHooks(
+  runtimeHomePath: string | null,
+  target?: CodexAccountSelectionTarget
+): Promise<void> {
+  const hookTarget =
+    target?.runtime === 'wsl'
+      ? {
+          runtime: 'wsl' as const,
+          wslDistro: target.wslDistro?.trim() || getDefaultWslDistro()
+        }
+      : target
   const hooksEnabled = isAgentStatusHooksEnabled(store?.getSettings())
   try {
+    // Why: launch prep is reachable after startup via PTY/runtime paths; honor
+    // the persisted off switch so those launches cannot reinstall removed hooks.
     let launchStatus: AgentHookInstallStatus | undefined
     if (hooksEnabled) {
-      const statuses = await installManagedAgentHooks(store?.getSettings(), {
-        shouldHydrateShellPath: app.isPackaged && process.platform !== 'win32',
-        onInstallError: recordManagedHookInstallFailure,
-        agents: ['codex']
-      })
-      launchStatus = statuses.find((status) => status.agent === 'codex')
-      // Why: presence-gating can skip the managed install; #7896 approval
-      // promotion must still run on every Codex launch, so promote directly when
-      // install() itself never ran (a completed install() already promoted).
-      if (codexLaunchNeedsDirectApprovalPromotion(launchStatus)) {
-        codexHookService.promoteRuntimeHookApprovals()
+      // Why: WSL runtime-home installs (#7969) run codex inside the distro, where
+      // the Windows-side PATH probe can't see it — that path is never presence-
+      // gated. It is also synchronous (no await before it), so it still completes
+      // before spawn even on the fire-and-forget sync launch path.
+      const runtimeHomeStatus = codexHookService.installForRuntimeHome(runtimeHomePath, hookTarget)
+      if (runtimeHomeStatus) {
+        launchStatus = runtimeHomeStatus
+      } else {
+        const statuses = await installManagedAgentHooks(store?.getSettings(), {
+          shouldHydrateShellPath: app.isPackaged && process.platform !== 'win32',
+          onInstallError: recordManagedHookInstallFailure,
+          agents: ['codex']
+        })
+        launchStatus = statuses.find((status) => status.agent === 'codex')
+        // Why: presence-gating can skip the managed install; #7896 approval
+        // promotion must still run on every Codex launch, so promote directly when
+        // install() itself never ran (a completed install() already promoted).
+        if (codexLaunchNeedsDirectApprovalPromotion(launchStatus)) {
+          codexHookService.promoteRuntimeHookApprovals()
+        }
       }
     } else {
-      launchStatus = codexHookService.refreshRuntimeUserHooks()
+      launchStatus =
+        codexHookService.refreshRuntimeUserHooksForRuntimeHome(runtimeHomePath, hookTarget) ??
+        codexHookService.refreshRuntimeUserHooks()
     }
     if (launchStatus?.state === 'error') {
       console.warn(
@@ -742,7 +766,7 @@ async function prepareCodexRuntimeHomeForLaunch(
   target?: CodexAccountSelectionTarget
 ): Promise<string | null> {
   const runtimeHomePath = codexRuntimeHome!.prepareForCodexLaunch(target)
-  await maintainCodexLaunchHooks()
+  await maintainCodexLaunchHooks(runtimeHomePath, target)
   return runtimeHomePath
 }
 
@@ -750,8 +774,9 @@ function getSelectedCodexHomePath(target?: CodexAccountSelectionTarget): string 
   const runtimeHomePath = codexRuntimeHome!.prepareForCodexLaunch(target)
   // Why: the sync PTY spawn path can't await; run per-launch hook upkeep in the
   // background so #7896 approval promotion and user-hook refresh keep happening
-  // on every Codex launch without blocking spawn.
-  void maintainCodexLaunchHooks()
+  // on every Codex launch without blocking spawn. The WSL runtime-home install is
+  // synchronous, so it still lands before spawn even here.
+  void maintainCodexLaunchHooks(runtimeHomePath, target)
   return runtimeHomePath
 }
 
@@ -2086,7 +2111,9 @@ app.whenReady().then(async () => {
   // a random OS-assigned port — breaking deterministic mobile pairing/repro
   // scripts against the dev instance. Pin the first dev instance to 6769 so
   // ws://127.0.0.1:6769 is stable; a second dev instance still falls back via
-  // ws-transport's EADDRINUSE handler.
+  // ws-transport's EADDRINUSE handler. Note: once an instance has ever fallen
+  // back, the persisted fallback port is re-bound in preference to 6769
+  // (STA-1511) until mobile-ws-fallback-port.json is removed from userData.
   const devWsPort = is.dev && !isE2E ? 6769 : undefined
   let serveOptions: ServeOptions | null = null
   try {
