@@ -1,4 +1,5 @@
 import type { DaemonPtyAdapter } from './daemon-pty-adapter'
+import { shutdownDegradedFallbackSessions } from './degraded-daemon-fallback-shutdown'
 import type {
   IPtyProvider,
   PtyBackgroundStreamEvent,
@@ -277,28 +278,7 @@ export class DegradedDaemonPtyProvider implements IPtyProvider {
   }
 
   async shutdownFallbackSessions(): Promise<number> {
-    const ids = [...this.sessionProviders]
-      .filter(([, provider]) => provider === this.fallback)
-      .map(([id]) => id)
-    const results = await Promise.allSettled(
-      ids.map(async (id) => {
-        await this.fallback.shutdown(id, { immediate: true })
-        this.sessionProviders.delete(id)
-      })
-    )
-    // Why: this runs first in the daemon-restart sequence. A throw here would
-    // abort the whole restart and leave "Restart daemon" — the user's recovery
-    // path for a wedged terminal — unusable, recreating the original lockup. So
-    // it is best-effort: log failures, keep restarting, and only count the
-    // sessions that actually shut down.
-    const failed = results.filter((result) => result.status === 'rejected')
-    if (failed.length > 0) {
-      console.warn(
-        `[daemon] ${failed.length} local fallback PTY session(s) failed to shut down during daemon restart; continuing restart`,
-        ...failed.map((result) => (result as PromiseRejectedResult).reason)
-      )
-    }
-    return results.length - failed.length
+    return shutdownDegradedFallbackSessions(this.sessionProviders, this.fallback)
   }
 
   getCurrentDaemonSessionIds(): string[] {
