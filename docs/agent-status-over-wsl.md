@@ -1,6 +1,11 @@
 # Agent Status over WSL (STA-1515)
 
-Status: implemented (relay + WSL-side installers; see Implementation map below).
+Status: implemented and rig-validated (2026-07-09 round 3, Windows 11 + WSL2 NAT):
+Claude end-to-end live — provisioning, working→done in the store, completion toast,
+loopback-only posture, and restart resume over a daemon-surviving PTY with the
+instance-keyed endpoint dir reused across restarts. Residual: Codex's done/Stop leg
+unproven live (rig had no real Codex credentials; the CLI's auth-error path emits no
+Stop) — everything that fired behaved correctly; confirm on an authed rig.
 Owner: brennanb2025. Linear: STA-1515.
 Precedent this mirrors: the SSH agent-hook relay (`src/relay/agent-hook-server.ts`,
 `src/shared/agent-hook-relay.ts`, ingest at `agentHookServer.ingestRemote` in
