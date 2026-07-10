@@ -141,7 +141,7 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
     const dictationId = createMobileDictationId()
     activeIdRef.current = dictationId
 
-    const started = await startMobileDictationDesktopSession({
+    await startMobileDictationDesktopSession({
       client,
       dictationId,
       generation,
@@ -154,17 +154,24 @@ export function useMobileDictation(options: UseMobileDictationOptions): UseMobil
         }
       },
       setIdle: () => setStatus('idle'),
-      keepAwakeOwner
+      keepAwakeOwner,
+      commitRecordingStart: () => {
+        acceptingChunksRef.current = true
+        pendingChunksRef.current.clear()
+        pendingAudioBudgetRef.current.reset()
+        if (!toggleRecording(true)) {
+          return false
+        }
+        setStatus('recording')
+        return true
+      },
+      rollbackRecordingStart: () => {
+        acceptingChunksRef.current = false
+        pendingChunksRef.current.clear()
+        pendingAudioBudgetRef.current.reset()
+        toggleRecording(false)
+      }
     })
-    if (!started) {
-      return
-    }
-
-    acceptingChunksRef.current = true
-    pendingChunksRef.current.clear()
-    pendingAudioBudgetRef.current.reset()
-    toggleRecording(true)
-    setStatus('recording')
   }, [keepAwakeOwner])
 
   const stop = useCallback(async () => {

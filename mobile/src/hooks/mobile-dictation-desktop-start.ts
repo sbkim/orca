@@ -12,6 +12,8 @@ type StartMobileDictationDesktopSessionOptions = {
   clearActiveId: (dictationId: string) => void
   setIdle: () => void
   keepAwakeOwner: MobileDictationKeepAwakeOwner
+  commitRecordingStart: () => boolean
+  rollbackRecordingStart: () => void
 }
 
 function isCurrentStart(options: StartMobileDictationDesktopSessionOptions): boolean {
@@ -92,5 +94,32 @@ export async function startMobileDictationDesktopSession(
     return false
   }
 
+  try {
+    // Commit in the same continuation as the final stale check; returning first
+    // would let a queued cancel resurrect microphone recording after cleanup.
+    if (!options.commitRecordingStart()) {
+      throw new Error('Failed to start microphone recording')
+    }
+  } catch (err) {
+    const wasCurrent = isCurrentStart(options)
+    // Native recording can partially start before throwing, so stop audio before
+    // releasing the wake tag and remote session.
+    try {
+      options.rollbackRecordingStart()
+    } catch {
+      // Continue releasing independently owned resources after native audio failure.
+    }
+    options.clearActiveId(dictationId)
+    await Promise.allSettled([
+      keepAwakeOwner.release(dictationId),
+      client.sendRequest('speech.dictation.cancel', { dictationId })
+    ])
+    const shouldReport = wasCurrent && canReportStartFailure(options)
+    setIdleIfGenerationCurrent(options)
+    if (!shouldReport) {
+      return false
+    }
+    throw err
+  }
   return true
 }

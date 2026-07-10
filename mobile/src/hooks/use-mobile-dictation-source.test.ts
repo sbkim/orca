@@ -115,6 +115,8 @@ describe('useMobileDictation source invariants', () => {
     expect(acquireIndex).toBeGreaterThan(desktopStartIndex)
     expect(desktopSessionIndex).toBeGreaterThanOrEqual(0)
     expect(toggleRecordingIndex).toBeGreaterThan(desktopSessionIndex)
+    expect(hookStartBody).toContain('commitRecordingStart: () => {')
+    expect(startBody).toContain('options.commitRecordingStart()')
 
     const beforeAcquire = startBody.slice(desktopStartIndex, acquireIndex)
     expect(beforeAcquire).toContain('isCurrentStart(options)')
