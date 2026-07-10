@@ -20,13 +20,13 @@ describe('pruneSupersededSshRepoRows', () => {
       repo({ id: 'shared', connectionId: 'ssh-dead' }),
       repo({ id: 'shared', connectionId: 'ssh-live' })
     ]
-    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-live']))
+    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-live']), true)
     expect(result.map((r) => r.connectionId)).toEqual(['ssh-live'])
   })
 
   it('KEEPS a lone project-only ghost (no live sibling) so it can still be forgotten', () => {
     const repos = [repo({ id: 'ghost', connectionId: 'ssh-dead' })]
-    const result = pruneSupersededSshRepoRows(repos, new Set())
+    const result = pruneSupersededSshRepoRows(repos, new Set(), true)
     expect(result).toHaveLength(1)
     expect(result[0].connectionId).toBe('ssh-dead')
   })
@@ -35,13 +35,13 @@ describe('pruneSupersededSshRepoRows', () => {
     // A repo id on both local and a removed SSH host: the local row is the live
     // sibling, so the SSH ghost is a re-adoption/duplicate leftover → drop it.
     const repos = [repo({ id: 'shared' }), repo({ id: 'shared', connectionId: 'ssh-dead' })]
-    const result = pruneSupersededSshRepoRows(repos, new Set())
+    const result = pruneSupersededSshRepoRows(repos, new Set(), true)
     expect(result.map((r) => r.connectionId ?? 'local')).toEqual(['local'])
   })
 
   it('leaves live SSH rows untouched', () => {
     const repos = [repo({ id: 'a', connectionId: 'ssh-live' }), repo({ id: 'b' })]
-    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-live']))
+    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-live']), true)
     expect(result).toHaveLength(2)
   })
 
@@ -50,7 +50,51 @@ describe('pruneSupersededSshRepoRows', () => {
       repo({ id: 'shared', connectionId: 'runtime-ssh-abc' }),
       repo({ id: 'shared', connectionId: 'ssh-live' })
     ]
-    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-live']))
+    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-live']), true)
     expect(result).toHaveLength(2)
+  })
+
+  it('preserves unknown SSH rows until the local target catalog is hydrated', () => {
+    const repos = [
+      repo({ id: 'shared', connectionId: 'ssh-dead' }),
+      repo({ id: 'shared', connectionId: 'ssh-live' })
+    ]
+
+    const result = pruneSupersededSshRepoRows(repos, new Set(), false)
+
+    expect(result).toEqual(repos)
+  })
+
+  it('prunes unknown direct SSH rows after an empty target catalog is hydrated', () => {
+    const repos = [
+      repo({ id: 'shared', connectionId: 'ssh-dead' }),
+      repo({ id: 'shared', connectionId: 'ssh-live', executionHostId: 'runtime:env-1' })
+    ]
+
+    const result = pruneSupersededSshRepoRows(repos, new Set(), true)
+
+    expect(result).toEqual([repos[1]])
+  })
+
+  it('does not classify runtime-owned rows from the desktop SSH target catalog', () => {
+    const repos = [
+      repo({ id: 'shared', connectionId: 'ssh-remote', executionHostId: 'runtime:env-1' }),
+      repo({ id: 'shared', connectionId: 'ssh-live' })
+    ]
+
+    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-live']), true)
+
+    expect(result).toEqual(repos)
+  })
+
+  it('keeps distinct rows for two live SSH hosts', () => {
+    const repos = [
+      repo({ id: 'shared', connectionId: 'ssh-a' }),
+      repo({ id: 'shared', connectionId: 'ssh-b' })
+    ]
+
+    const result = pruneSupersededSshRepoRows(repos, new Set(['ssh-a', 'ssh-b']), true)
+
+    expect(result).toEqual(repos)
   })
 })

@@ -1,5 +1,9 @@
 import type { Repo } from '../../../../shared/types'
-import { isRuntimeOwnedSshTargetId } from '../../../../shared/execution-host'
+import {
+  getRepoExecutionHostId,
+  isRuntimeOwnedSshTargetId,
+  parseExecutionHostId
+} from '../../../../shared/execution-host'
 
 /**
  * Drops repo rows left stranded on a removed SSH target after re-adoption
@@ -21,11 +25,22 @@ import { isRuntimeOwnedSshTargetId } from '../../../../shared/execution-host'
  */
 export function pruneSupersededSshRepoRows(
   repos: readonly Repo[],
-  knownSshTargetIds: ReadonlySet<string>
+  knownSshTargetIds: ReadonlySet<string>,
+  sshTargetsHydrated: boolean
 ): Repo[] {
+  // Why: an empty pre-hydration map is not authoritative on paired clients.
+  if (!sshTargetsHydrated) {
+    return [...repos]
+  }
+
   const isDeadSshRow = (repo: Repo): boolean => {
     const connectionId = repo.connectionId?.trim()
     if (!connectionId || isRuntimeOwnedSshTargetId(connectionId)) {
+      return false
+    }
+    const executionHost = parseExecutionHostId(getRepoExecutionHostId(repo))
+    // Why: local target metadata cannot classify SSH connections owned by a runtime server.
+    if (executionHost?.kind !== 'ssh' || executionHost.targetId !== connectionId) {
       return false
     }
     return !knownSshTargetIds.has(connectionId)
