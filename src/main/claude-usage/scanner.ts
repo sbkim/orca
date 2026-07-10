@@ -29,6 +29,8 @@ type ClaudeUsageSourceRecord = {
   cwd?: string
   gitBranch?: string
   requestId?: string
+  /** Stable row id when present; preserved across fork-copied history. */
+  uuid?: string
   isSidechain?: boolean
   agentId?: string
   message?: {
@@ -274,13 +276,31 @@ function parseClaudeUsageSourceRecord(
     model: parsed.message?.model ?? null,
     cwd: parsed.cwd ?? null,
     gitBranch: parsed.gitBranch ?? null,
-    dedupeKey:
-      parsed.message?.id && parsed.requestId ? `${parsed.message.id}:${parsed.requestId}` : null,
+    // Why: forks rewrite sessionId but keep message/request ids (and usually
+    // uuid). Prefer the strongest stable identity available so ownership still
+    // works when requestId is missing on older or partial rows.
+    dedupeKey: buildClaudeUsageDedupeKey(parsed),
     inputTokens,
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens
   }
+}
+
+function buildClaudeUsageDedupeKey(parsed: ClaudeUsageSourceRecord): string | null {
+  const messageId = parsed.message?.id?.trim()
+  const requestId = parsed.requestId?.trim()
+  if (messageId && requestId) {
+    return `${messageId}:${requestId}`
+  }
+  if (messageId) {
+    return `msg:${messageId}`
+  }
+  const uuid = parsed.uuid?.trim()
+  if (uuid) {
+    return `uuid:${uuid}`
+  }
+  return null
 }
 
 export function parseClaudeUsageRecord(line: string): ClaudeUsageParsedTurn | null {
@@ -610,6 +630,18 @@ export async function scanClaudeUsageFiles(
   const previousByPath = new Map(previousProcessedFiles.map((file) => [file.path, file]))
   const worktreeLookup = await buildWorktreeLookup(worktrees)
 
+  const currentPaths = new Set(files)
+  // Why: when a file that owned dedupe keys is deleted, remaining forks still
+  // contain those turns but their caches record them as unowned. Only files
+  // that previously deferred claims can reclaim, so invalidate those — not the
+  // entire transcript corpus (histories can be gigabytes).
+  const lostOwnerPath = previousProcessedFiles.some(
+    (file) =>
+      !currentPaths.has(file.path) &&
+      Array.isArray(file.ownedDedupeKeys) &&
+      file.ownedDedupeKeys.length > 0
+  )
+
   const reusedByPath = new Map<string, ClaudeUsagePersistedFile>()
   const pathsToParse: string[] = []
   for (let index = 0; index < files.length; index += FILE_SCAN_BATCH_SIZE) {
@@ -620,13 +652,17 @@ export async function scanClaudeUsageFiles(
         const previous = previousByPath.get(filePath)
         // Why: Claude histories can be gigabytes. Unchanged files should pay
         // only stat cost on refresh while preserving exactly the old projection.
+        // When an owner disappears, only deferred-claim files need reparse.
+        const mustReclaimDeferred = lostOwnerPath && previous?.hasDeferredClaims !== false
         const canReuse =
+          !mustReclaimDeferred &&
           previous &&
           previous.mtimeMs === fileInfo.mtimeMs &&
           previous.size === fileInfo.size &&
           Array.isArray(previous.sessions) &&
           Array.isArray(previous.dailyAggregates) &&
-          Array.isArray(previous.ownedDedupeKeys)
+          Array.isArray(previous.ownedDedupeKeys) &&
+          typeof previous.hasDeferredClaims === 'boolean'
         return canReuse ? previous : null
       })
     )
@@ -650,7 +686,10 @@ export async function scanClaudeUsageFiles(
   const turnOwnerByDedupeKey = new Map<string, string>()
   for (const [filePath, previous] of reusedByPath) {
     for (const dedupeKey of previous.ownedDedupeKeys) {
-      turnOwnerByDedupeKey.set(dedupeKey, filePath)
+      // First cached claim wins so conflicting projections stay deterministic.
+      if (!turnOwnerByDedupeKey.has(dedupeKey)) {
+        turnOwnerByDedupeKey.set(dedupeKey, filePath)
+      }
     }
   }
 
@@ -666,10 +705,12 @@ export async function scanClaudeUsageFiles(
       // rescans assign duplicated turns to the same file deterministically.
       const ownedTurns: ClaudeUsageParsedTurn[] = []
       const ownedDedupeKeys: string[] = []
+      let hasDeferredClaims = false
       for (const turn of turns) {
         if (turn.dedupeKey) {
           const owner = turnOwnerByDedupeKey.get(turn.dedupeKey)
           if (owner !== undefined && owner !== filePath) {
+            hasDeferredClaims = true
             continue
           }
           turnOwnerByDedupeKey.set(turn.dedupeKey, filePath)
@@ -681,7 +722,8 @@ export async function scanClaudeUsageFiles(
       parsedByPath.set(filePath, {
         ...processedFile,
         ...aggregateClaudeUsage(attributed),
-        ownedDedupeKeys
+        ownedDedupeKeys,
+        hasDeferredClaims
       })
     }
     if (index + batch.length < pathsToParse.length) {

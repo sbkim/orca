@@ -90,6 +90,10 @@ export type CodexUsagePersistedFile = CodexUsageProcessedFile & {
    *  token_count records into new files; ownership keeps each record counted
    *  by exactly one cached file across incremental scans. */
   ownedEventKeys: string[]
+  /** True when this file saw events already claimed by another file. When that
+   *  owner disappears, only deferred files need reparse to reclaim — not the
+   *  entire rollout corpus. */
+  hasDeferredClaims: boolean
 }
 
 export type CodexUsagePersistedState = {
@@ -109,8 +113,9 @@ export type CodexUsagePersistedState = {
 export type CodexUsageParsedEvent = {
   sessionId: string
   timestamp: string
-  /** Raw-record identity (session, timestamp, token tuples) used to dedupe
-   *  the same token_count record copied across fork/resume rollout files. */
+  /** Raw-record identity (timestamp + token tuples) used to dedupe the same
+   *  token_count record copied across fork/resume rollout files. Session id is
+   *  omitted because forks rewrite session_meta while copying the record. */
   eventKey: string
   model: string | null
   cwd: string | null

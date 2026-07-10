@@ -284,7 +284,8 @@ describe('OpenCodeUsageStore', () => {
             size: 2,
             sessions: [makeSession()],
             dailyAggregates: [makeDaily()],
-            ownedSessionIds: ['session-1']
+            ownedSessionIds: ['session-1'],
+            hasDeferredClaims: false
           }
         ],
         sessions: [makeSession()],
@@ -302,7 +303,8 @@ describe('OpenCodeUsageStore', () => {
             size: 2,
             sessions: [],
             dailyAggregates: [],
-            ownedSessionIds: []
+            ownedSessionIds: [],
+            hasDeferredClaims: false
           }
         ]
       }).processedDatabases

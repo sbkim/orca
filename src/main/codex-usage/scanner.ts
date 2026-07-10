@@ -389,14 +389,14 @@ function resolveCodexUsageDelta(
 }
 
 function buildCodexUsageEventKey(
-  sessionId: string,
   timestamp: string,
   totalUsage: CodexUsageRawUsage | null,
   lastUsage: CodexUsageRawUsage | null
 ): string {
   // Why: fork/resume copies token_count records byte-for-byte into a new
-  // rollout file. Keying on the raw record (not the derived delta) makes the
-  // copy and the original identical regardless of surrounding parse context.
+  // rollout file, but session_meta.id is often rewritten to the new session.
+  // Key only on the raw record fields (timestamp + usage tuples) so the copy
+  // matches the original regardless of surrounding parse context / session id.
   const tupleOf = (usage: CodexUsageRawUsage | null): string =>
     usage
       ? [
@@ -407,7 +407,7 @@ function buildCodexUsageEventKey(
           usage.totalTokens
         ].join(',')
       : ''
-  return [sessionId, timestamp, tupleOf(totalUsage), tupleOf(lastUsage)].join('|')
+  return [timestamp, tupleOf(totalUsage), tupleOf(lastUsage)].join('|')
 }
 
 function extractString(value: unknown): string | null {
@@ -978,7 +978,7 @@ export function parseCodexUsageRecord(
   return {
     sessionId: context.sessionId,
     timestamp: parsed.timestamp,
-    eventKey: buildCodexUsageEventKey(context.sessionId, parsed.timestamp, totalUsage, lastUsage),
+    eventKey: buildCodexUsageEventKey(parsed.timestamp, totalUsage, lastUsage),
     cwd: context.currentCwd ?? context.sessionCwd,
     model: resolvedModel,
     hasInferredPricing,
@@ -1016,6 +1016,7 @@ export async function parseCodexUsageFile(
   }
 
   const ownedEventKeys = new Set<string>()
+  let hasDeferredClaims = false
   for await (const line of lines) {
     const parsed = parseCodexUsageRecord(line, context)
     if (!parsed) {
@@ -1025,6 +1026,7 @@ export async function parseCodexUsageFile(
     // Events another file already owns are dropped here, but the record still
     // advanced context.previousTotals above, so later deltas stay correct.
     if (options.claimEventKey && !options.claimEventKey(parsed.eventKey)) {
+      hasDeferredClaims = true
       continue
     }
     ownedEventKeys.add(parsed.eventKey)
@@ -1037,7 +1039,8 @@ export async function parseCodexUsageFile(
   return {
     ...processedFile,
     ...aggregateCodexUsage(events),
-    ownedEventKeys: [...ownedEventKeys]
+    ownedEventKeys: [...ownedEventKeys],
+    hasDeferredClaims
   }
 }
 
@@ -1054,18 +1057,34 @@ export async function scanCodexUsageFiles(
   const worktreesWithCanonicalPaths = await buildWorktreesWithCanonicalPaths(worktrees)
   const legacySourceSkipBytesByPath = getLegacySourceSkipBytesByPath(files)
 
+  const currentPaths = new Set(files)
+  // Why: when a rollout that owned event keys is deleted, remaining forks still
+  // contain those records but their caches record them as unowned. Only files
+  // that previously deferred claims can reclaim, so invalidate those — not the
+  // entire rollout corpus.
+  const lostOwnerPath = previousProcessedFiles.some(
+    (file) =>
+      !currentPaths.has(file.path) &&
+      Array.isArray(file.ownedEventKeys) &&
+      file.ownedEventKeys.length > 0
+  )
+
   const reusedByPath = new Map<string, CodexUsagePersistedFile>()
   const pathsToParse: string[] = []
   for (const [index, filePath] of files.entries()) {
     const legacySourceSkipBytes = legacySourceSkipBytesByPath.get(filePath) ?? 0
     const fileInfo = await getProcessedFileInfo(filePath)
     const previous = previousByPath.get(filePath)
+    // When an owner disappears, only deferred-claim files need reparse.
+    const mustReclaimDeferred = lostOwnerPath && previous?.hasDeferredClaims !== false
     const canReuse =
+      !mustReclaimDeferred &&
       legacySourceSkipBytes === 0 &&
       previous &&
       previous.mtimeMs === fileInfo.mtimeMs &&
       previous.size === fileInfo.size &&
-      Array.isArray(previous.ownedEventKeys)
+      Array.isArray(previous.ownedEventKeys) &&
+      typeof previous.hasDeferredClaims === 'boolean'
     if (canReuse) {
       reusedByPath.set(filePath, previous)
     } else {
@@ -1085,7 +1104,10 @@ export async function scanCodexUsageFiles(
   const eventOwnerByKey = new Map<string, string>()
   for (const [filePath, previous] of reusedByPath) {
     for (const eventKey of previous.ownedEventKeys) {
-      eventOwnerByKey.set(eventKey, filePath)
+      // First cached claim wins so conflicting projections stay deterministic.
+      if (!eventOwnerByKey.has(eventKey)) {
+        eventOwnerByKey.set(eventKey, filePath)
+      }
     }
   }
 

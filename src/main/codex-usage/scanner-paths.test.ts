@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { linkSync, lstatSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import type * as NodeOs from 'node:os'
 import { join } from 'node:path'
@@ -328,6 +336,41 @@ describe('listCodexSessionFiles', () => {
     expect(result.sessions[0]?.totalTokens).toBe(22)
   })
 
+  it('dedupes fork copies even when session_meta id is rewritten', async () => {
+    const sessionsDir = join(userDataDir, 'codex-runtime-home', 'home', 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    const originalPath = join(sessionsDir, 'aaaa-original.jsonl')
+    const forkPath = join(sessionsDir, 'bbbb-fork.jsonl')
+    const originalPrefix = [
+      `${JSON.stringify({
+        type: 'session_meta',
+        payload: { id: 'session-original', cwd: join(fakeHomeDir, 'repo') }
+      })}\n`,
+      usageRecord('2026-05-26T12:00:00.000Z', 10),
+      usageRecord('2026-05-26T12:01:00.000Z', 5, 15)
+    ].join('')
+    // Same token_count records, different session_meta id (real resume/fork shape).
+    const forkBody = [
+      `${JSON.stringify({
+        type: 'session_meta',
+        payload: { id: 'session-fork', cwd: join(fakeHomeDir, 'repo') }
+      })}\n`,
+      usageRecord('2026-05-26T12:00:00.000Z', 10),
+      usageRecord('2026-05-26T12:01:00.000Z', 5, 15),
+      usageRecord('2026-05-26T12:02:00.000Z', 7, 22)
+    ].join('')
+    writeFileSync(originalPath, originalPrefix, 'utf-8')
+    writeFileSync(forkPath, forkBody)
+
+    const result = await scanCodexUsageFiles([], [])
+    expect(
+      result.dailyAggregates.reduce((total, aggregate) => total + aggregate.totalTokens, 0)
+    ).toBe(22)
+    expect(result.processedFiles[0]?.ownedEventKeys).toHaveLength(2)
+    expect(result.processedFiles[1]?.ownedEventKeys).toHaveLength(1)
+    expect(result.processedFiles[1]?.hasDeferredClaims).toBe(true)
+  })
+
   it('does not re-count the cumulative session for copied total-only records', async () => {
     const sessionsDir = join(userDataDir, 'codex-runtime-home', 'home', 'sessions')
     mkdirSync(sessionsDir, { recursive: true })
@@ -394,6 +437,85 @@ describe('listCodexSessionFiles', () => {
     expect(
       third.dailyAggregates.reduce((total, aggregate) => total + aggregate.totalTokens, 0)
     ).toBe(22)
+  })
+
+  it('reclaims copied token events when the owning original file is deleted', async () => {
+    const sessionsDir = join(userDataDir, 'codex-runtime-home', 'home', 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    const originalPath = join(sessionsDir, 'aaaa-original.jsonl')
+    const forkPath = join(sessionsDir, 'bbbb-fork.jsonl')
+    const copiedPrefix = [
+      `${JSON.stringify({
+        type: 'session_meta',
+        payload: { id: 'session-1', cwd: join(fakeHomeDir, 'repo') }
+      })}\n`,
+      usageRecord('2026-05-26T12:00:00.000Z', 10),
+      usageRecord('2026-05-26T12:01:00.000Z', 5, 15)
+    ].join('')
+    writeFileSync(originalPath, copiedPrefix, 'utf-8')
+    writeFileSync(forkPath, `${copiedPrefix}${usageRecord('2026-05-26T12:02:00.000Z', 7, 22)}`)
+
+    const first = await scanCodexUsageFiles([], [])
+    expect(
+      first.dailyAggregates.reduce((total, aggregate) => total + aggregate.totalTokens, 0)
+    ).toBe(22)
+    expect(first.processedFiles[0]?.ownedEventKeys).toHaveLength(2)
+    expect(first.processedFiles[0]?.hasDeferredClaims).toBe(false)
+    expect(first.processedFiles[1]?.ownedEventKeys).toHaveLength(1)
+    expect(first.processedFiles[1]?.hasDeferredClaims).toBe(true)
+
+    // Deleting the owner must reparse deferred forks so they can re-claim the
+    // copied prefix instead of permanently under-counting.
+    unlinkSync(originalPath)
+
+    const second = await scanCodexUsageFiles([], first.processedFiles)
+    expect(
+      second.dailyAggregates.reduce((total, aggregate) => total + aggregate.totalTokens, 0)
+    ).toBe(22)
+    expect(second.processedFiles).toHaveLength(1)
+    expect(second.processedFiles[0]?.ownedEventKeys).toHaveLength(3)
+  })
+
+  it('keeps unrelated cached rollouts when a different owner file is deleted', async () => {
+    const sessionsDir = join(userDataDir, 'codex-runtime-home', 'home', 'sessions')
+    mkdirSync(sessionsDir, { recursive: true })
+    const originalPath = join(sessionsDir, 'aaaa-original.jsonl')
+    const forkPath = join(sessionsDir, 'bbbb-fork.jsonl')
+    const unrelatedPath = join(sessionsDir, 'cccc-unrelated.jsonl')
+    const copiedPrefix = [
+      `${JSON.stringify({
+        type: 'session_meta',
+        payload: { id: 'session-1', cwd: join(fakeHomeDir, 'repo') }
+      })}\n`,
+      usageRecord('2026-05-26T12:00:00.000Z', 10),
+      usageRecord('2026-05-26T12:01:00.000Z', 5, 15)
+    ].join('')
+    writeFileSync(originalPath, copiedPrefix, 'utf-8')
+    writeFileSync(forkPath, `${copiedPrefix}${usageRecord('2026-05-26T12:02:00.000Z', 7, 22)}`)
+    writeFileSync(
+      unrelatedPath,
+      [
+        `${JSON.stringify({
+          type: 'session_meta',
+          payload: { id: 'session-9', cwd: join(fakeHomeDir, 'repo') }
+        })}\n`,
+        usageRecord('2026-05-26T13:00:00.000Z', 3)
+      ].join('')
+    )
+
+    const first = await scanCodexUsageFiles([], [])
+    const unrelatedBefore = first.processedFiles.find((file) => file.path === unrelatedPath)
+    expect(unrelatedBefore?.hasDeferredClaims).toBe(false)
+    expect(unrelatedBefore?.ownedEventKeys).toHaveLength(1)
+
+    unlinkSync(originalPath)
+
+    const second = await scanCodexUsageFiles([], first.processedFiles)
+    const unrelatedAfter = second.processedFiles.find((file) => file.path === unrelatedPath)
+    expect(unrelatedAfter).toBe(unrelatedBefore)
+    expect(
+      second.dailyAggregates.reduce((total, aggregate) => total + aggregate.totalTokens, 0)
+    ).toBe(25)
   })
 
   it('treats a leading total-only source suffix record as baseline', async () => {

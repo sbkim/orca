@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -474,5 +474,60 @@ describe('scanOpenCodeUsageDatabases', () => {
     const sessionOne = third.sessions.find((session) => session.sessionId === 'session-1')
     expect(sessionOne?.totalInputTokens).toBe(1000)
     expect(sessionOne?.eventCount).toBe(1)
+  })
+
+  it('lets the live database reclaim sessions after a sticky backup-only claim', async () => {
+    // First scan only has the backup (e.g. live db temporarily missing), so it
+    // owns session-1 at the stale snapshot. When opencode.db reappears with
+    // higher totals it must reclaim the session instead of staying frozen.
+    writeSessionTotalsDb('opencode-backup.db', [['session-1', 400]])
+
+    const first = await scanOpenCodeUsageDatabases([], [])
+    expect(
+      first.dailyAggregates.reduce((total, aggregate) => total + aggregate.inputTokens, 0)
+    ).toBe(400)
+    expect(first.processedDatabases[0]?.ownedSessionIds).toEqual(['session-1'])
+
+    writeSessionTotalsDb('opencode.db', [
+      ['session-1', 1000],
+      ['session-2', 200]
+    ])
+
+    const second = await scanOpenCodeUsageDatabases([], first.processedDatabases)
+    expect(
+      second.dailyAggregates.reduce((total, aggregate) => total + aggregate.inputTokens, 0)
+    ).toBe(1200)
+    const sessionOne = second.sessions.find((session) => session.sessionId === 'session-1')
+    expect(sessionOne?.totalInputTokens).toBe(1000)
+    expect(sessionOne?.eventCount).toBe(1)
+  })
+
+  it('reclaims sessions when the owning live database is deleted', async () => {
+    const canonicalPath = writeSessionTotalsDb('opencode.db', [
+      ['session-1', 1000],
+      ['session-2', 200]
+    ])
+    writeSessionTotalsDb('opencode-backup.db', [
+      ['session-1', 400],
+      ['session-9', 50]
+    ])
+
+    const first = await scanOpenCodeUsageDatabases([], [])
+    expect(
+      first.dailyAggregates.reduce((total, aggregate) => total + aggregate.inputTokens, 0)
+    ).toBe(1250)
+
+    unlinkSync(canonicalPath)
+
+    const second = await scanOpenCodeUsageDatabases([], first.processedDatabases)
+    expect(
+      second.dailyAggregates.reduce((total, aggregate) => total + aggregate.inputTokens, 0)
+    ).toBe(450)
+    expect(second.sessions.map((session) => session.sessionId).sort()).toEqual([
+      'session-1',
+      'session-9'
+    ])
+    const sessionOne = second.sessions.find((session) => session.sessionId === 'session-1')
+    expect(sessionOne?.totalInputTokens).toBe(400)
   })
 })

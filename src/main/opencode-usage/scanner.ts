@@ -852,6 +852,7 @@ export async function parseOpenCodeUsageDatabase(
     db.pragma('query_only = ON')
     const events: OpenCodeUsageAttributedEvent[] = []
     const claimedBySessionId = new Map<string, boolean>()
+    let hasDeferredClaims = false
     for (const row of selectUsageRows(db)) {
       const parsed = parseOpenCodeUsageRow(row)
       if (!parsed) {
@@ -865,6 +866,7 @@ export async function parseOpenCodeUsageDatabase(
         claimedBySessionId.set(parsed.sessionId, owned)
       }
       if (!owned) {
+        hasDeferredClaims = true
         continue
       }
       const attributed = await attributeOpenCodeUsageEvent(parsed, worktrees)
@@ -877,7 +879,8 @@ export async function parseOpenCodeUsageDatabase(
       ...aggregateOpenCodeUsage(events),
       ownedSessionIds: [...claimedBySessionId.entries()]
         .filter(([, owned]) => owned)
-        .map(([sessionId]) => sessionId)
+        .map(([sessionId]) => sessionId),
+      hasDeferredClaims
     }
   } finally {
     db.close()
@@ -898,21 +901,55 @@ export async function scanOpenCodeUsageDatabases(
   )
   const worktreesWithCanonicalPaths = await buildWorktreesWithCanonicalPaths(worktrees)
 
+  const currentPaths = new Set(dbPaths)
+  // Why: when a database that owned sessions is deleted, remaining siblings
+  // still contain those sessions but their caches record them as unowned.
+  // Only databases that previously deferred claims can reclaim.
+  const lostOwnerPath = previousProcessedDatabases.some(
+    (database) =>
+      !currentPaths.has(database.path) &&
+      Array.isArray(database.ownedSessionIds) &&
+      database.ownedSessionIds.length > 0
+  )
+
   const reusedByPath = new Map<string, OpenCodeUsagePersistedDatabase>()
   const pathsToParse: string[] = []
   for (const dbPath of dbPaths) {
     const databaseInfo = await getProcessedDatabaseInfo(dbPath)
     const previous = previousByPath.get(dbPath)
+    // When an owner disappears, only deferred-claim databases need reparse.
+    const mustReclaimDeferred = lostOwnerPath && previous?.hasDeferredClaims !== false
     const canReuse =
+      !mustReclaimDeferred &&
       previous &&
       previous.mtimeMs === databaseInfo.mtimeMs &&
       previous.size === databaseInfo.size &&
-      Array.isArray(previous.ownedSessionIds)
+      Array.isArray(previous.ownedSessionIds) &&
+      typeof previous.hasDeferredClaims === 'boolean'
     if (canReuse) {
       reusedByPath.set(dbPath, previous)
     } else {
       pathsToParse.push(dbPath)
     }
+  }
+
+  // Why: a sticky backup claim from a scan where opencode.db was missing would
+  // otherwise freeze a still-growing session at the backup snapshot when the
+  // live db reappears. Reparse lower-priority siblings whenever a higher-
+  // priority path is being re-evaluated so the live db can reclaim sessions
+  // without double-counting cached backup aggregates.
+  const demotedReusePaths: string[] = []
+  for (const dbPath of reusedByPath.keys()) {
+    const higherPriorityParsing = pathsToParse.some(
+      (candidate) => compareOpenCodeClaimPriority(candidate, dbPath) < 0
+    )
+    if (higherPriorityParsing) {
+      demotedReusePaths.push(dbPath)
+    }
+  }
+  for (const dbPath of demotedReusePaths) {
+    reusedByPath.delete(dbPath)
+    pathsToParse.push(dbPath)
   }
 
   // Why: `opencode-*.db` siblings are typically stale copies of `opencode.db`
