@@ -75,13 +75,6 @@ export const mobilePrSidebarStyles = StyleSheet.create({
     fontSize: typography.metaSize,
     fontWeight: '700'
   },
-  openWebButton: {
-    minWidth: 32,
-    minHeight: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.button
-  },
   prTitle: {
     color: colors.textPrimary,
     fontSize: typography.titleSize,

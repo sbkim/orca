@@ -9,6 +9,7 @@ export default function HistoryRedirect() {
     hostId?: string | string[]
     worktreeId?: string | string[]
     name?: string | string[]
+    origin?: string | string[]
   }>()
   return (
     <Redirect
@@ -18,6 +19,7 @@ export default function HistoryRedirect() {
           hostId: firstParam(params.hostId),
           worktreeId: firstParam(params.worktreeId),
           name: firstParam(params.name),
+          origin: firstParam(params.origin),
           tab: 'history'
         }
       }}

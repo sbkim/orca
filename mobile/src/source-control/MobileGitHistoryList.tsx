@@ -99,7 +99,14 @@ export const MobileGitHistoryList = memo(function MobileGitHistoryList({
     (row: MobileCommitRow) => {
       const next = expanded === row.id ? null : row.id
       setExpanded(next)
-      if (next && client && !filesById[row.id]) {
+      if (next && !filesById[row.id]) {
+        // No client (disconnected while cached rows stay visible): resolve to an
+        // empty file list so the row shows "No file changes" instead of a spinner
+        // that never completes — no request can be made.
+        if (!client) {
+          setFilesById((prev) => ({ ...prev, [row.id]: [] }))
+          return
+        }
         setFilesById((prev) => ({ ...prev, [row.id]: 'loading' }))
         void client
           .sendRequest('git.commitCompare', { worktree: `id:${worktreeId}`, commitId: row.id })

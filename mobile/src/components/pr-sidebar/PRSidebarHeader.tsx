@@ -55,8 +55,8 @@ export function PRSidebarHeader({ pr, details, titleAction }: Props) {
               onPress={openPr}
               hitSlop={8}
               accessibilityRole="link"
-              accessibilityLabel={`Open pull request #${pr.number} on the web`}
-              style={({ pressed }) => [styles.openWebButton, pressed && { opacity: 0.6 }]}
+              accessibilityLabel={`Open pull request #${pr.number} in browser`}
+              style={({ pressed }) => [styles.iconButton, pressed && { opacity: 0.6 }]}
             >
               <ExternalLink size={16} color={colors.textSecondary} strokeWidth={2.2} />
             </Pressable>

@@ -133,12 +133,16 @@ export function MobileSourceControlPanel({
   }, [worktreeId])
   const statusBranch = status?.branch ?? null
   const statusHead = status?.head ?? branchCompareResult?.summary.headOid ?? null
-  if (statusBranch) {
-    lastPrBranchRef.current = statusBranch
-  }
-  if (statusHead) {
-    lastPrHeadRef.current = statusHead
-  }
+  // Write last-known identity in an effect, not the render body: a discarded
+  // concurrent render must not leave the fallback holding a never-committed value.
+  useEffect(() => {
+    if (statusBranch) {
+      lastPrBranchRef.current = statusBranch
+    }
+    if (statusHead) {
+      lastPrHeadRef.current = statusHead
+    }
+  }, [statusBranch, statusHead])
   const prBranch = statusBranch ?? lastPrBranchRef.current
   const prHeadSha = statusHead ?? lastPrHeadRef.current
   const prController = useMobilePrSidebarController({
