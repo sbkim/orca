@@ -935,11 +935,16 @@ export async function scanOpenCodeUsageDatabases(
 
   // Why: a sticky backup claim from a scan where opencode.db was missing would
   // otherwise freeze a still-growing session at the backup snapshot when the
-  // live db reappears. Reparse lower-priority siblings whenever a higher-
-  // priority path is being re-evaluated so the live db can reclaim sessions
-  // without double-counting cached backup aggregates.
+  // live db reappears. Reparse a lower-priority sibling only when it still owns
+  // sessions a higher-priority path could reclaim; a sibling that owns nothing
+  // (the common case once the live db has claimed every shared session) has no
+  // claim to give back, so reparsing it every time the live db changes is pure
+  // work.
   const demotedReusePaths: string[] = []
-  for (const dbPath of reusedByPath.keys()) {
+  for (const [dbPath, reused] of reusedByPath) {
+    if ((reused.ownedSessionIds?.length ?? 0) === 0) {
+      continue
+    }
     const higherPriorityParsing = pathsToParse.some(
       (candidate) => compareOpenCodeClaimPriority(candidate, dbPath) < 0
     )

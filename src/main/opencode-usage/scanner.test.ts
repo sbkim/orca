@@ -476,6 +476,34 @@ describe('scanOpenCodeUsageDatabases', () => {
     expect(sessionOne?.eventCount).toBe(1)
   })
 
+  it('reuses a fully-duplicate backup instead of reparsing it when the live db changes', async () => {
+    // The backup only holds stale copies of sessions the canonical db already
+    // owns, so it owns nothing. When the live db changes it must not be
+    // demoted back into the parse set — there is no claim to reclaim.
+    const canonicalPath = writeSessionTotalsDb('opencode.db', [['session-1', 1000]])
+    writeSessionTotalsDb('opencode-backup.db', [['session-1', 400]])
+
+    const first = await scanOpenCodeUsageDatabases([], [])
+    const firstBackup = first.processedDatabases.find((database) =>
+      database.path.endsWith('opencode-backup.db')
+    )
+    expect(firstBackup?.ownedSessionIds).toEqual([])
+
+    const db = new Database(canonicalPath)
+    insertSessionTotalsRow(db, 'session-2', 200)
+    db.close()
+
+    const second = await scanOpenCodeUsageDatabases([], first.processedDatabases)
+    const secondBackup = second.processedDatabases.find((database) =>
+      database.path.endsWith('opencode-backup.db')
+    )
+    // A reused cache entry is the same object; a reparse would produce a new one.
+    expect(secondBackup).toBe(firstBackup)
+    expect(
+      second.dailyAggregates.reduce((total, aggregate) => total + aggregate.inputTokens, 0)
+    ).toBe(1200)
+  })
+
   it('lets the live database reclaim sessions after a sticky backup-only claim', async () => {
     // First scan only has the backup (e.g. live db temporarily missing), so it
     // owns session-1 at the stale snapshot. When opencode.db reappears with
