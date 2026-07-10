@@ -1349,6 +1349,11 @@ type RuntimeNotifier = {
   ): Promise<RuntimeMarkdownSaveTabResult>
   closeTerminal(tabId: string, paneRuntimeId?: number): void
   sleepWorktree(worktreeId: string): void
+  // Why: a phone opening a worktree wakes its slept agents by asking the host
+  // renderer to run its own navigation-free wake (experimental agent sleep);
+  // the runtime has no in-memory sleeping records or wake authority. Optional to
+  // match the many renderer-backed notifier methods only the real bridge wires.
+  resumeSleepingAgents?(worktreeId: string): void
   terminalFitOverrideChanged(
     ptyId: string,
     mode: 'mobile-fit' | 'desktop-fit',
@@ -13296,7 +13301,7 @@ export class OrcaRuntimeService {
 
   async activateManagedWorktree(
     worktreeSelector: string,
-    opts: { notifyClients?: boolean } = {}
+    opts: { notifyClients?: boolean; clientKind?: 'mobile' | 'runtime' } = {}
   ): Promise<{
     repoId: string
     worktreeId: string
@@ -13328,6 +13333,13 @@ export class OrcaRuntimeService {
       })
       await this.refreshMobileSessionPtyRecords()
       this.notifyMobileSessionTabsChanged(worktree.id)
+      // Why: a phone open must also wake the worktree's slept agents (experimental
+      // agent sleep). Only the host renderer holds the sleeping records + wake
+      // authority, so fire-and-forget ask it — mobile-scoped so web/desktop are
+      // unaffected, and only when a renderer is attached to receive it.
+      if (opts.clientKind === 'mobile' && this.getAvailableAuthoritativeWindow()) {
+        this.notifier?.resumeSleepingAgents?.(worktree.id)
+      }
     }
     return { repoId: repo.id, worktreeId: worktree.id, activated: true }
   }
