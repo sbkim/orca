@@ -1731,7 +1731,10 @@
         "searchIssues": "이슈 검색",
         "useIssueNumber": "이슈 #{{value0}} 사용",
         "noMatchingIssuesLoaded": "일치하는 이슈를 불러오지 않았습니다.",
-        "editReviewersWithCurrent": "리뷰어 편집: {{value0}}"
+        "editReviewersWithCurrent": "리뷰어 편집: {{value0}}",
+        "linearEmptyAttributeFilter": "No issues match the selected filters. Clear a filter or try different criteria.",
+        "linearEmptyUnfilteredScope": "No issues in this workspace scope. Try searching or adjusting teams.",
+        "linearFetchMore": "Fetch more"
       },
       "Terminal": {
         "73768427cf": "닫기",
@@ -3028,7 +3031,8 @@
             "f077f586db": "다시 묻지 않기",
             "c0e972d726": "취소",
             "06741a2f3d": "MiniMax 사용량 세부 정보 열기",
-            "3bbf140864": "MiniMax 사용량"
+            "3bbf140864": "MiniMax 사용량",
+            "remoteServerLabel": "원격 서버"
           },
           "StatusBarUsageEmptyCta": {
             "828c764a79": "계정 연결",
@@ -4641,7 +4645,17 @@
           "87412c2a68": "{{value0}}개 세션을 종료했습니다.",
           "a2f040ac1c": "{{value0}}개 세션을 종료했습니다.",
           "63520148e2": "{{value0}}개 세션이 종료를 거부했습니다.",
-          "cc0a26cb14": "{{value0}}개 세션이 종료를 거부했습니다."
+          "cc0a26cb14": "{{value0}}개 세션이 종료를 거부했습니다.",
+          "71a8d342b0": "Terminal tabs absent: {{value0}}/{{value1}}. Failed close attempts: {{value2}}. Exact PTY shutdown requests accepted: {{value3}}; failed: {{value4}}.",
+          "2e57c1a940": "The daemon shutdown result is unverified because its management request failed.",
+          "993af6052c": "Daemon management reported exited: {{value0}}/{{value1}}; still present before exact cleanup: {{value2}}.",
+          "1f0d8ac762": "Terminal cleanup finished with errors.",
+          "80b6ea14cf": "Terminal cleanup finished with warnings.",
+          "47cd2a50e9": "No sessions or terminal tabs were reported.",
+          "c34fb1098d": "Terminal tabs closed and shutdown requested.",
+          "d9657ac204": "Terminal session shutdown requested.",
+          "e8f25bd903": "Couldn’t finish terminal cleanup.",
+          "a702d4196e": "This closes every terminal tab across all workspaces and requests shutdown for its current terminal sessions. Any unsaved terminal work is lost. The daemon itself keeps running, and new terminals can be opened immediately. This can't be undone."
         }
       },
       "setup": {
@@ -4774,7 +4788,13 @@
           "435df0ee51": "Request Headers에서 Cookie 값을 복사합니다.",
           "7492fb3bba": "여기에 붙여넣고 저장을 클릭합니다.",
           "9fec52de4b": "Cookie 복사 방법",
-          "4e32e030b2": "로컬에 저장됩니다. Orca는 사용량 새로 고침을 위해 platform.minimax.io로만 전송합니다."
+          "4e32e030b2": "로컬에 저장됩니다. Orca는 사용량 새로 고침을 위해 platform.minimax.io로만 전송합니다.",
+          "remoteServerFallback": "원격 서버",
+          "loadAccountsFailed": "프로바이더 계정을 불러오지 못했습니다.",
+          "remoteScopeAccounts": "{{value0}}에서 관리하는 계정을 표시하고 있습니다. 계정 추가나 재인증은 해당 서버에서 진행하세요.",
+          "remoteScopeAuthContext": "각 계정은 {{value0}}에 자체 로그인 컨텍스트를 유지합니다.",
+          "remoteEmptyClaudeAccounts": "{{value0}}에 관리되는 Claude 계정이 없습니다. 해당 서버의 시스템 기본 Claude 로그인을 사용하며, 계정 추가는 그 서버에서 진행하세요.",
+          "remoteEmptyCodexAccounts": "{{value0}}에 관리되는 Codex 계정이 없습니다. 해당 서버의 시스템 기본 Codex 로그인을 사용하며, 계정 추가는 그 서버에서 진행하세요."
         },
         "AdvancedPane": {
           "40b29e0bf3": "다시 시작",
@@ -8896,6 +8916,26 @@
           "reviewFirst": "Review first",
           "singular": "Global saves won't change 1 repository with its own recipe.",
           "tooltipTitle": "Repository overrides"
+        },
+        "linear": {
+          "agent": {
+            "skill": {
+              "install": {
+                "cta": {
+                  "copiedCommand": "Copied command.",
+                  "copyFailed": "Failed to copy command.",
+                  "skillLabel": "Agent skill:",
+                  "checking": "Checking...",
+                  "installed": "Installed",
+                  "notInstalled": "Not installed",
+                  "recheck": "Re-check",
+                  "installedDescription": "Agent skill installed. To update it, run:",
+                  "description": "Let your agents read and edit Linear tasks.",
+                  "copyCommand": "Copy command"
+                }
+              }
+            }
+          }
         }
       },
       "right": {
@@ -12727,6 +12767,29 @@
             }
           }
         }
+      },
+      "linear-issue-attribute-filter-dropdowns": {
+        "removeFilter": "Remove {{value0}} filter",
+        "teamRequired": "Select a team to load status, assignees, and labels for this workspace.",
+        "filters": "Filters",
+        "allWorkspacesTitle": "Select one workspace",
+        "allWorkspacesBody": "Status, assignee, and label filters use ids from a single Linear workspace. Choose one workspace to filter by those attributes.",
+        "optionsFromTeam": "Options from {{team}}",
+        "clearAll": "Clear all filters"
+      },
+      "linear-issue-attribute-filter-sections": {
+        "status": "Status",
+        "priority": "Priority",
+        "assignee": "Assignee",
+        "unassigned": "Unassigned",
+        "labels": "Labels",
+        "countSelected": "{{count}} selected",
+        "selected": "selected",
+        "searchPriority": "Filter priority…",
+        "searchStatus": "Filter status…",
+        "searchLabels": "Filter labels…",
+        "searchAssignee": "Filter assignee…",
+        "back": "Back"
       }
     },
     "i18n": {
