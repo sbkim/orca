@@ -3008,10 +3008,17 @@ export class OrcaRuntimeService {
           // Why: the incoming graph already rebound this PTY to a live leaf (e.g.
           // a woken agent re-keyed to a new leaf during renderer reload). Keeping
           // the old leaf too would put two leaves on ONE PTY, which emit the same
-          // terminal handle and crash paired clients. Drop the stale leaf but
-          // leave the shared handle intact — it belongs to the live leaf now, so
-          // don't invalidate it; just release this dead leaf key's alias.
-          this.handleByLeafKey.delete(oldLeafKey)
+          // terminal handle and crash paired clients. Drop the stale leaf; if its
+          // handle is the shared ptyId-keyed one it belongs to the live leaf now,
+          // so release only this dead leaf key's alias. A leaf-unique handle has
+          // no next owner — invalidate it so in-flight CLI waiters fail fast
+          // instead of hanging on a dead leaf.
+          const oldHandle = this.handleByLeafKey.get(oldLeafKey)
+          if (oldHandle !== undefined && oldHandle === this.handleByPtyId.get(oldLeaf.ptyId)) {
+            this.handleByLeafKey.delete(oldLeafKey)
+          } else {
+            this.invalidateLeafHandle(oldLeafKey)
+          }
         } else {
           this.invalidateLeafHandle(oldLeafKey)
         }

@@ -1728,6 +1728,67 @@ describe('OrcaRuntimeService', () => {
     expect(after.terminals[0].ptyId).toBe('pty-agent')
   })
 
+  it('invalidates a re-keyed leaf-unique handle so in-flight waiters fail fast', async () => {
+    const runtime = createRuntime()
+    const tabId = 'tab-1'
+    // No preAllocateHandleForPty: a plain terminal's handle is leaf-unique, so a
+    // re-key leaves it with no next owner and it must go stale immediately.
+    runtime.attachWindow(TEST_WINDOW_ID)
+    runtime.syncWindowGraph(TEST_WINDOW_ID, {
+      tabs: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Shell',
+          activeLeafId: 'leaf-old',
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: 'leaf-old',
+          paneRuntimeId: 1,
+          ptyId: 'pty-plain'
+        }
+      ]
+    })
+    const before = await runtime.listTerminals(`id:${TEST_WORKTREE_ID}`)
+    expect(before.terminals).toHaveLength(1)
+    const staleHandle = before.terminals[0].handle
+    const waiting = runtime.waitForTerminal(staleHandle, { condition: 'exit', timeoutMs: 30_000 })
+
+    // Re-key WITHOUT a renderer reload (e.g. a pane moved across tabs) while the
+    // same PTY stays live under a new leaf.
+    runtime.syncWindowGraph(TEST_WINDOW_ID, {
+      tabs: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Shell',
+          activeLeafId: 'leaf-new',
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId,
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: 'leaf-new',
+          paneRuntimeId: 2,
+          ptyId: 'pty-plain'
+        }
+      ]
+    })
+
+    // The waiter must fail fast, not hang until timeout on a dead leaf.
+    await expect(waiting).rejects.toThrow('terminal_handle_stale')
+    const after = await runtime.listTerminals(`id:${TEST_WORKTREE_ID}`)
+    expect(after.terminals).toHaveLength(1)
+    expect(after.terminals[0].handle).not.toBe(staleHandle)
+  })
+
   it('emits one mobile session terminal tab per live PTY even if two tabs resolve to it', () => {
     const runtime = createRuntime()
     const internals = runtime as unknown as {
