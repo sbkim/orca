@@ -3,13 +3,29 @@ import type {
   ClaudeRateLimitAccountsState,
   CodexRateLimitAccountsState
 } from '../../../../shared/types'
-import { providerAccountMatchesView } from './provider-account-visibility'
+import {
+  providerAccountIsActiveInView,
+  providerAccountMatchesView
+} from './provider-account-visibility'
 
 const codexWslAccount = {
   id: 'codex-wsl',
   email: 'wsl@example.com',
   managedHomeRuntime: 'wsl',
   wslDistro: 'Ubuntu',
+  providerAccountId: null,
+  workspaceLabel: null,
+  workspaceAccountId: null,
+  createdAt: 1,
+  updatedAt: 1,
+  lastAuthenticatedAt: 1
+} satisfies CodexRateLimitAccountsState['accounts'][number]
+
+const codexHostAccount = {
+  id: 'codex-host',
+  email: 'host@example.com',
+  managedHomeRuntime: 'host',
+  wslDistro: null,
   providerAccountId: null,
   workspaceLabel: null,
   workspaceAccountId: null,
@@ -88,5 +104,96 @@ describe('providerAccountMatchesView', () => {
         localOptions
       )
     ).toBe(false)
+  })
+
+  it('hides WSL accounts while remote owner platform is still unknown', () => {
+    // Why: unknown platform is fail-closed so stale WSL rows do not flash on a
+    // non-Windows remote while capabilities load.
+    expect(
+      providerAccountMatchesView(
+        codexWslAccount,
+        { runtime: 'host' },
+        {
+          remoteOwner: true,
+          ownerPlatform: null
+        }
+      )
+    ).toBe(false)
+    expect(
+      providerAccountMatchesView(
+        codexHostAccount,
+        { runtime: 'host' },
+        {
+          remoteOwner: true,
+          ownerPlatform: null
+        }
+      )
+    ).toBe(true)
+  })
+})
+
+describe('providerAccountIsActiveInView', () => {
+  it('marks remote WSL accounts active from their own runtime selection', () => {
+    const selection = {
+      activeAccountId: 'codex-host',
+      activeAccountIdsByRuntime: {
+        host: 'codex-host',
+        wsl: { Ubuntu: 'codex-wsl' }
+      }
+    }
+
+    // Why: remote Windows forces the host view filter, but Active must still
+    // light for the WSL slot that actually selected this account.
+    expect(
+      providerAccountIsActiveInView(
+        codexWslAccount,
+        selection,
+        { runtime: 'host' },
+        { remoteOwner: true }
+      )
+    ).toBe(true)
+    expect(
+      providerAccountIsActiveInView(
+        codexHostAccount,
+        selection,
+        { runtime: 'host' },
+        { remoteOwner: true }
+      )
+    ).toBe(true)
+  })
+
+  it('keeps local Active scoped to the selected host/WSL view', () => {
+    const selection = {
+      activeAccountId: 'codex-host',
+      activeAccountIdsByRuntime: {
+        host: 'codex-host',
+        wsl: { Ubuntu: 'codex-wsl' }
+      }
+    }
+
+    expect(
+      providerAccountIsActiveInView(
+        codexHostAccount,
+        selection,
+        { runtime: 'host' },
+        { remoteOwner: false }
+      )
+    ).toBe(true)
+    expect(
+      providerAccountIsActiveInView(
+        codexWslAccount,
+        selection,
+        { runtime: 'host' },
+        { remoteOwner: false }
+      )
+    ).toBe(false)
+    expect(
+      providerAccountIsActiveInView(
+        codexWslAccount,
+        selection,
+        { runtime: 'wsl', wslDistro: 'Ubuntu' },
+        { remoteOwner: false }
+      )
+    ).toBe(true)
   })
 })

@@ -62,7 +62,10 @@ import {
   DialogTitle
 } from '../ui/dialog'
 import { getCodexAccountAuthWarning } from './codex-account-auth-warning'
-import { providerAccountMatchesView } from './provider-account-visibility'
+import {
+  providerAccountIsActiveInView,
+  providerAccountMatchesView
+} from './provider-account-visibility'
 import { translate } from '@/i18n/i18n'
 import { cn } from '@/lib/utils'
 import {
@@ -402,6 +405,7 @@ export function AccountsPane({
   )
   const activeCodexAccountId = getActiveCodexAccountIdForRuntime(codexAccounts, accountRuntime)
   const activeClaudeAccountId = getActiveClaudeAccountIdForRuntime(claudeAccounts, accountRuntime)
+  const accountActiveOptions = { remoteOwner: isRemoteAccountScope }
   // Why: the auth warning is derived from the desktop's own rate-limit poll;
   // with a remote owner it would misattribute local auth state to the server.
   const activeCodexAuthWarning =
@@ -891,7 +895,12 @@ export function AccountsPane({
               </div>
             ) : (
               visibleClaudeAccounts.map((account) => {
-                const isActive = activeClaudeAccountId === account.id
+                const isActive = providerAccountIsActiveInView(
+                  account,
+                  claudeAccounts,
+                  accountRuntime,
+                  accountActiveOptions
+                )
                 const isReauthing = claudeAction === `reauth:${account.id}`
                 const isBusy = claudeAction !== 'idle' || accountRuntimeUnavailable
 
@@ -1190,7 +1199,12 @@ export function AccountsPane({
               </div>
             ) : (
               visibleCodexAccounts.map((account) => {
-                const isActive = activeCodexAccountId === account.id
+                const isActive = providerAccountIsActiveInView(
+                  account,
+                  codexAccounts,
+                  accountRuntime,
+                  accountActiveOptions
+                )
                 // Why: same remote gate as the section-level warning — the
                 // desktop's rate-limit poll says nothing about server accounts.
                 const accountAuthWarning = isRemoteAccountScope
