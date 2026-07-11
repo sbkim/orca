@@ -58,43 +58,47 @@ export function useMarkdownDocuments(
 
   const connectionId = getConnectionId(worktreeId)
 
-  const refreshMarkdownDocuments = useCallback(async (): Promise<void> => {
-    if (!worktreeId || !worktreePath) {
-      return
-    }
-
-    const requestId = requestRef.current + 1
-    requestRef.current = requestId
-    try {
-      const documents = await requestSharedMarkdownDocumentList(
-        {
-          settings: settingsForRuntimeOwner(
-            useAppStore.getState().settings,
-            activeFile.runtimeEnvironmentId
-          ),
-          worktreeId,
-          worktreePath,
-          connectionId: connectionId ?? undefined
-        },
-        worktreePath
-      )
-      if (requestRef.current !== requestId) {
+  const refreshMarkdownDocuments = useCallback(
+    async (requireFresh = false): Promise<void> => {
+      if (!worktreeId || !worktreePath) {
         return
       }
-      setMarkdownDocumentsByWorktree((prev) => ({
-        ...prev,
-        [worktreeId]: documents
-      }))
-    } catch (err) {
-      console.error('Failed to list markdown documents:', err)
-      if (requestRef.current === requestId) {
+
+      const requestId = requestRef.current + 1
+      requestRef.current = requestId
+      try {
+        const documents = await requestSharedMarkdownDocumentList(
+          {
+            settings: settingsForRuntimeOwner(
+              useAppStore.getState().settings,
+              activeFile.runtimeEnvironmentId
+            ),
+            worktreeId,
+            worktreePath,
+            connectionId: connectionId ?? undefined
+          },
+          worktreePath,
+          { requireFresh }
+        )
+        if (requestRef.current !== requestId) {
+          return
+        }
         setMarkdownDocumentsByWorktree((prev) => ({
           ...prev,
-          [worktreeId]: []
+          [worktreeId]: documents
         }))
+      } catch (err) {
+        console.error('Failed to list markdown documents:', err)
+        if (requestRef.current === requestId) {
+          setMarkdownDocumentsByWorktree((prev) => ({
+            ...prev,
+            [worktreeId]: []
+          }))
+        }
       }
-    }
-  }, [activeFile.runtimeEnvironmentId, connectionId, worktreeId, worktreePath])
+    },
+    [activeFile.runtimeEnvironmentId, connectionId, worktreeId, worktreePath]
+  )
 
   const openMarkdownDocument = useCallback(
     async (
@@ -118,11 +122,11 @@ export function useMarkdownDocuments(
           document.filePath
         )
         if (stats.isDirectory) {
-          await refreshMarkdownDocuments()
+          await refreshMarkdownDocuments(true)
           return
         }
       } catch {
-        await refreshMarkdownDocuments()
+        await refreshMarkdownDocuments(true)
         return
       }
 
@@ -180,7 +184,7 @@ export function useMarkdownDocuments(
   )
 
   const mdSave = useCallback(
-    (content: string) => onSave(content).then(() => refreshMarkdownDocuments()),
+    (content: string) => onSave(content).then(() => refreshMarkdownDocuments(true)),
     [onSave, refreshMarkdownDocuments]
   )
 

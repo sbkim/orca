@@ -34,7 +34,7 @@ describe('shared Markdown document list requests', () => {
     const pending = deferred<MarkdownDocument[]>()
     const load = vi.fn(() => pending.promise)
     const requests = Array.from({ length: 200 }, () =>
-      requestSharedMarkdownDocumentList(context(), '/repo', load)
+      requestSharedMarkdownDocumentList(context(), '/repo', {}, load)
     )
 
     expect(load).toHaveBeenCalledTimes(1)
@@ -48,10 +48,35 @@ describe('shared Markdown document list requests', () => {
 
     const nextDocuments = [{ filePath: '/repo/notes.md', relativePath: 'notes.md' }]
     load.mockResolvedValueOnce(nextDocuments as MarkdownDocument[])
-    await expect(requestSharedMarkdownDocumentList(context(), '/repo', load)).resolves.toBe(
+    await expect(requestSharedMarkdownDocumentList(context(), '/repo', {}, load)).resolves.toBe(
       nextDocuments
     )
     expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('starts a fresh scan after a mutation instead of joining an older snapshot', async () => {
+    const stale = deferred<MarkdownDocument[]>()
+    const fresh = deferred<MarkdownDocument[]>()
+    const load = vi.fn().mockReturnValueOnce(stale.promise).mockReturnValueOnce(fresh.promise)
+
+    const initialRequest = requestSharedMarkdownDocumentList(context(), '/repo', {}, load)
+    const mutationRefresh = requestSharedMarkdownDocumentList(
+      context(),
+      '/repo',
+      { requireFresh: true },
+      load
+    )
+
+    expect(load).toHaveBeenCalledTimes(2)
+    expect(mutationRefresh).not.toBe(initialRequest)
+
+    const freshDocuments = [{ filePath: '/repo/new.md', relativePath: 'new.md' }]
+    fresh.resolve(freshDocuments as MarkdownDocument[])
+    await expect(mutationRefresh).resolves.toBe(freshDocuments)
+
+    const staleDocuments = [{ filePath: '/repo/old.md', relativePath: 'old.md' }]
+    stale.resolve(staleDocuments as MarkdownDocument[])
+    await expect(initialRequest).resolves.toBe(staleDocuments)
   })
 
   it('keeps runtime routes isolated and encodes unusual paths losslessly', () => {
@@ -74,15 +99,17 @@ describe('shared Markdown document list requests', () => {
   it('clears rejected requests so a retry can run', async () => {
     const failure = deferred<MarkdownDocument[]>()
     const load = vi.fn(() => failure.promise)
-    const first = requestSharedMarkdownDocumentList(context(), '/retry', load)
-    const second = requestSharedMarkdownDocumentList(context(), '/retry', load)
+    const first = requestSharedMarkdownDocumentList(context(), '/retry', {}, load)
+    const second = requestSharedMarkdownDocumentList(context(), '/retry', {}, load)
 
     failure.reject(new Error('offline'))
     await expect(first).rejects.toThrow('offline')
     await expect(second).rejects.toThrow('offline')
 
     load.mockResolvedValueOnce([])
-    await expect(requestSharedMarkdownDocumentList(context(), '/retry', load)).resolves.toEqual([])
+    await expect(requestSharedMarkdownDocumentList(context(), '/retry', {}, load)).resolves.toEqual(
+      []
+    )
     expect(load).toHaveBeenCalledTimes(2)
   })
 })
