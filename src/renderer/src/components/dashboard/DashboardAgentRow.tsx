@@ -340,8 +340,11 @@ const DashboardAgentRow = React.memo(function DashboardAgentRow({
             on the top row. The sub-rows (tool step, assistant response) are
             about the same agent and do not need the icon repeated next to
             them — keeping the icon only on the prompt row lets the sub-rows
-            indent under the prompt text cleanly. */}
-        {!hideIdentityIcon && (
+            indent under the prompt text cleanly. Subagent child rows carry
+            the child's NAME in agentType (not an iconable agent — it would
+            render the unknown "?" glyph), and nesting under the parent
+            already conveys identity. */}
+        {!hideIdentityIcon && agent.rowSource !== 'subagent' && (
           <span className="inline-flex shrink-0" title={identityTitle}>
             <AgentIcon agent={agentTypeToIconAgent(agent.agentType)} size={14} />
           </span>

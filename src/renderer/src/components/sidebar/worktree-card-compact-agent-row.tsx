@@ -120,6 +120,10 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
     typeof childAgentCount === 'number' &&
     childAgentCount > 0 &&
     typeof onToggleChildAgents === 'function'
+  // Why: subagent child rows carry the child's NAME (e.g. "pr-reviewer") in
+  // agentType, which is not an iconable agent and would render the unknown
+  // "?" glyph. Nesting under the parent already conveys identity.
+  const hideIcon = hideIdentityIcon || agent.rowSource === 'subagent'
   const dotState = getAgentDotState(agent)
   const primary = getCompactAgentPrimary(agent)
   const isLineageChild = agent.lineage?.depth === 1
@@ -196,7 +200,7 @@ export const CompactAgentRow = React.memo(function CompactAgentRow({
         <span className="size-4 shrink-0" aria-hidden />
       ) : null}
       <AgentStateDot state={dotState} size="sm" />
-      {!hideIdentityIcon && (
+      {!hideIcon && (
         <span className="inline-flex shrink-0" title={formatAgentTypeLabel(agent.agentType)}>
           <AgentIcon agent={agentTypeToIconAgent(agent.agentType)} size={13} />
         </span>
