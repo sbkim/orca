@@ -58,11 +58,8 @@ import {
 import { resolveTerminalLayoutActiveLeafId } from './terminal-layout-leaf-ids'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import { applyExpandedLayoutTo, restoreExpandedLayoutFrom } from './expand-collapse'
-import {
-  applyTerminalAppearance,
-  installMode2031Handlers,
-  mode2031SequenceFor
-} from './terminal-appearance'
+import { applyTerminalAppearance, installMode2031Handlers } from './terminal-appearance'
+import { pushMode2031SeedReply } from './terminal-mode-2031-replies'
 import { handleOsc52ClipboardRequest } from './osc52-clipboard'
 import { showOsc52ClipboardBlockedToast } from './osc52-clipboard-blocked-toast'
 import { parseOsc7 } from './parse-osc7'
@@ -604,34 +601,22 @@ export function useTerminalPaneLifecycle({
   }
 
   const pushMode2031ForPane = (paneId: number): void => {
-    let attempts = 0
-    const send = (): void => {
-      if (!managerRef.current?.getPanes().some((pane) => pane.id === paneId)) {
-        return
+    pushMode2031SeedReply(paneId, {
+      hasPane: (candidateId) =>
+        managerRef.current?.getPanes().some((pane) => pane.id === candidateId) === true,
+      isSubscribed: (candidateId) => paneMode2031Ref.current.get(candidateId) === true,
+      getTransport: (candidateId) => paneTransportsRef.current.get(candidateId),
+      getMode: () => {
+        const currentSettings = settingsRef.current
+        return currentSettings
+          ? resolveEffectiveTerminalAppearance(currentSettings, systemPrefersDarkRef.current).mode
+          : null
+      },
+      recordMode: (candidateId, mode) => paneLastThemeModeRef.current.set(candidateId, mode),
+      schedule: (callback, delayMs) => {
+        window.setTimeout(callback, delayMs)
       }
-      const transport = paneTransportsRef.current.get(paneId)
-      if (!transport?.isConnected()) {
-        // Why: TUIs can subscribe before pty:spawn resolves. Retry briefly so
-        // the recorded subscription still receives the initial dark/light seed.
-        attempts += 1
-        if (attempts < 8) {
-          window.setTimeout(send, 25)
-        }
-        return
-      }
-      const currentSettings = settingsRef.current
-      if (!currentSettings) {
-        return
-      }
-      const { mode } = resolveEffectiveTerminalAppearance(
-        currentSettings,
-        systemPrefersDarkRef.current
-      )
-      if (transport.sendInput(mode2031SequenceFor(mode))) {
-        paneLastThemeModeRef.current.set(paneId, mode)
-      }
-    }
-    send()
+    })
   }
 
   // Initialize PaneManager instance once
