@@ -68,7 +68,7 @@ describe('lifecycle reconciliation', () => {
     expect(archived?.delivered_at).not.toBeNull()
 
     const lateHeartbeat = insertHeartbeat(dispatch.id, 'term_worker')
-    expect(reconcileLifecycleMessage(db, lateHeartbeat)).toEqual({ action: 'ignored' })
+    expect(reconcileLifecycleMessage(db, lateHeartbeat)).toEqual({ action: 'suppressed' })
     expect(db.getMessageById(lateHeartbeat.id)).toMatchObject({ read: 1 })
     expect(db.getMessageById(lateHeartbeat.id)?.delivered_at).not.toBeNull()
   })

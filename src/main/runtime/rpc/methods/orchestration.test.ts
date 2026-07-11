@@ -90,6 +90,44 @@ describe('orchestration RPC methods', () => {
       expect(runtime.deliverPendingMessagesForHandle).toHaveBeenCalledWith('term_b')
     })
 
+    it('does not wake waiters for a heartbeat suppressed at send time', async () => {
+      setup()
+      const task = db.createTask({ spec: 'work' })
+      const dispatch = db.createDispatchContext(task.id, 'term_worker')
+      db.updateTaskStatus(task.id, 'completed')
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+      const notify = vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+
+      const result = (await call('orchestration.send', {
+        from: 'term_worker',
+        to: 'term_coord',
+        subject: 'alive',
+        type: 'heartbeat',
+        payload: JSON.stringify({ dispatchId: dispatch.id })
+      })) as { message: { id: string } }
+
+      expect(notify).not.toHaveBeenCalled()
+      expect(db.getMessageById(result.message.id)).toMatchObject({ read: 1 })
+    })
+
+    it('still wakes waiters for a heartbeat on an active dispatch', async () => {
+      setup()
+      const task = db.createTask({ spec: 'work' })
+      const dispatch = db.createDispatchContext(task.id, 'term_worker')
+      vi.spyOn(runtime, 'deliverPendingMessagesForHandle').mockImplementation(() => {})
+      const notify = vi.spyOn(runtime, 'notifyMessageArrived').mockImplementation(() => {})
+
+      await call('orchestration.send', {
+        from: 'term_worker',
+        to: 'term_coord',
+        subject: 'alive',
+        type: 'heartbeat',
+        payload: JSON.stringify({ dispatchId: dispatch.id })
+      })
+
+      expect(notify).toHaveBeenCalledWith('term_coord', 'heartbeat')
+    })
+
     it('rejects missing --to', () => {
       const method = findMethod('orchestration.send')
       expect(() => method.params!.parse({ subject: 'hi' })).toThrow()
@@ -701,6 +739,23 @@ describe('orchestration RPC methods', () => {
       })) as { count: number }
 
       expect(result.count).toBe(1)
+      expect(db.getUnreadMessages('b')).toHaveLength(1)
+    })
+
+    it("treats the CLI's {peek, unread:false} compat pair as peek, not all", async () => {
+      setup()
+      const seen = db.insertMessage({ from: 'a', to: 'b', subject: 'seen' })
+      db.markAsRead([seen.id])
+      db.insertMessage({ from: 'a', to: 'b', subject: 'fresh' })
+
+      const result = (await call('orchestration.check', {
+        terminal: 'b',
+        peek: true,
+        unread: false
+      })) as { messages: { subject: string }[]; count: number }
+
+      expect(result.count).toBe(1)
+      expect(result.messages[0]?.subject).toBe('fresh')
       expect(db.getUnreadMessages('b')).toHaveLength(1)
     })
 

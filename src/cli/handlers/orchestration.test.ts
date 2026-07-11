@@ -214,7 +214,7 @@ describe('orchestration send structured payload flags', () => {
     })
   })
 
-  it('uses a live ORCA_TERMINAL_HANDLE as worker lifecycle sender metadata', async () => {
+  it('sends lifecycle messages from ORCA_TERMINAL_HANDLE without a liveness probe', async () => {
     process.env.ORCA_TERMINAL_HANDLE = 'term_worker_env'
 
     await invokeSend(
@@ -225,11 +225,8 @@ describe('orchestration send structured payload flags', () => {
       ])
     )
 
-    expect(callMock).toHaveBeenCalledTimes(2)
-    expect(callMock).toHaveBeenNthCalledWith(1, 'terminal.show', {
-      terminal: 'term_worker_env'
-    })
-    expect(callMock).toHaveBeenNthCalledWith(2, 'orchestration.send', {
+    expect(callMock).toHaveBeenCalledTimes(1)
+    expect(callMock).toHaveBeenCalledWith('orchestration.send', {
       from: 'term_worker_env',
       to: 'term_coord',
       subject: 'done',
@@ -242,48 +239,31 @@ describe('orchestration send structured payload flags', () => {
     })
   })
 
-  it('remints a stale lifecycle sender from its pane key', async () => {
-    process.env.ORCA_TERMINAL_HANDLE = 'term_worker_stale'
-    process.env.ORCA_PANE_KEY = 'tab_worker:leaf_worker'
-    stubStaleHandleRemint('term_worker_live', { result: { message: { id: 'msg_1' } } })
+  it.each(['worker_done', 'heartbeat'] as const)(
+    'never probes or remints a %s sender even when a pane key is set',
+    async (type) => {
+      process.env.ORCA_TERMINAL_HANDLE = 'term_worker_env'
+      process.env.ORCA_PANE_KEY = 'tab_worker:leaf_worker'
 
-    await invokeSend(
-      new Map<string, string | boolean>([
-        ['to', 'term_coord'],
-        ['subject', 'done'],
-        ['type', 'worker_done']
-      ])
-    )
+      await invokeSend(
+        new Map<string, string | boolean>([
+          ['to', 'term_coord'],
+          ['subject', 'update'],
+          ['type', type]
+        ])
+      )
 
-    expect(callMock).toHaveBeenNthCalledWith(2, 'terminal.resolvePane', {
-      paneKey: 'tab_worker:leaf_worker'
-    })
-    expect(callMock).toHaveBeenNthCalledWith(
-      3,
-      'orchestration.send',
-      expect.objectContaining({ from: 'term_worker_live' })
-    )
-  })
-
-  it('keeps a stale lifecycle sender when no pane key is available', async () => {
-    process.env.ORCA_TERMINAL_HANDLE = 'term_worker_stale'
-    callMock.mockRejectedValueOnce(staleHandleError())
-
-    await invokeSend(
-      new Map<string, string | boolean>([
-        ['to', 'term_coord'],
-        ['subject', 'done'],
-        ['type', 'worker_done']
-      ])
-    )
-
-    expect(callMock).toHaveBeenCalledTimes(2)
-    expect(callMock).toHaveBeenNthCalledWith(
-      2,
-      'orchestration.send',
-      expect.objectContaining({ from: 'term_worker_stale' })
-    )
-  })
+      // Why: pre-payload-authority runtimes only complete a worker_done whose
+      // sender equals the recorded (equally stale) assignee handle, and
+      // coordinator replies route to the sender row the worker's env-handle
+      // `check` actually reads — so lifecycle sends must stay env-verbatim.
+      expect(callMock).toHaveBeenCalledTimes(1)
+      expect(callMock).toHaveBeenCalledWith(
+        'orchestration.send',
+        expect.objectContaining({ from: 'term_worker_env' })
+      )
+    }
+  )
 
   it('reports sender resolution failure instead of raw no_active_terminal', async () => {
     getTerminalHandleMock.mockRejectedValue(
@@ -690,9 +670,11 @@ describe('orchestration timeout flag validation', () => {
       ])
     )
 
+    // Why: --peek rides with unread:false so pre-peek runtimes fall back to
+    // the non-consuming all mode instead of the destructive mark-read default.
     expect(callMock).toHaveBeenCalledWith('orchestration.check', {
       terminal: 'term_worker',
-      unread: undefined,
+      unread: false,
       peek: true,
       all: undefined,
       types: undefined,
@@ -700,6 +682,69 @@ describe('orchestration timeout flag validation', () => {
       wait: true,
       timeoutMs: 250
     })
+  })
+
+  it('filters already-read rows from a peek response for pre-peek runtimes', async () => {
+    process.env.ORCA_TERMINAL_HANDLE = 'term_worker'
+    callMock.mockResolvedValue({
+      result: {
+        messages: [
+          { id: 'msg_old', from_handle: 'a', subject: 'seen', read: 1 },
+          { id: 'msg_new', from_handle: 'a', subject: 'fresh', read: 0 }
+        ],
+        count: 2,
+        formatted: 'banners built from all rows'
+      }
+    })
+    vi.mocked(printResult).mockClear()
+
+    await invokeCheck(new Map<string, string | boolean>([['peek', true]]))
+
+    const response = vi.mocked(printResult).mock.calls[0]?.[0] as {
+      result: { messages: { id: string }[]; count: number; formatted?: string }
+    }
+    expect(response.result.messages.map((m) => m.id)).toEqual(['msg_new'])
+    expect(response.result.count).toBe(1)
+    // Why: the pre-peek runtime built `formatted` from all rows, including
+    // the read one the filter just removed.
+    expect(response.result.formatted).toBeUndefined()
+  })
+
+  it('rejects combined read modes before calling the runtime', async () => {
+    process.env.ORCA_TERMINAL_HANDLE = 'term_worker'
+    callMock.mockClear()
+
+    await expect(
+      invokeCheck(
+        new Map<string, string | boolean>([
+          ['unread', true],
+          ['peek', true]
+        ])
+      )
+    ).rejects.toMatchObject({
+      code: 'invalid_argument',
+      message: expect.stringContaining('read mode')
+    })
+    expect(callMock).not.toHaveBeenCalled()
+  })
+
+  it('fails --peek --wait against a runtime that returned only read rows', async () => {
+    process.env.ORCA_TERMINAL_HANDLE = 'term_worker'
+    callMock.mockResolvedValue({
+      result: {
+        messages: [{ id: 'msg_old', from_handle: 'a', subject: 'seen', read: 1 }],
+        count: 1
+      }
+    })
+
+    await expect(
+      invokeCheck(
+        new Map<string, string | boolean>([
+          ['peek', true],
+          ['wait', true]
+        ])
+      )
+    ).rejects.toMatchObject({ code: 'peek_wait_unsupported' })
   })
 
   it.each(invalidTimeoutValues)('rejects invalid ask --timeout-ms: %s', async (_label, value) => {

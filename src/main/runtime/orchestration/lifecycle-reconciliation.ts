@@ -3,6 +3,10 @@ import type { MessageRow } from './types'
 
 export type LifecycleReconciliationResult =
   | { action: 'ignored' }
+  // Why: `suppressed` means the message was consumed at reconcile time (marked
+  // read); senders must not wake waiters for it, unlike `ignored` rows that
+  // stay unread and still need delivery.
+  | { action: 'suppressed' }
   | { action: 'completed'; taskId: string; dispatchId: string }
   | { action: 'heartbeat_recorded'; dispatchId: string }
 
@@ -69,7 +73,7 @@ function reconcileHeartbeatMessage(
     // audit history without surfacing obsolete liveness to the coordinator.
     db.markAsReadAndDelivered([msg.id])
     onLog(`Heartbeat for inactive dispatch ${dispatchId} suppressed`)
-    return { action: 'ignored' }
+    return { action: 'suppressed' }
   }
 
   // Why: dispatchId-specific writes let the DB ignore late heartbeats for

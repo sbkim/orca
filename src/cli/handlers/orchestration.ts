@@ -77,6 +77,7 @@ type MessageSummary = {
   type?: string
   body?: string
   payload?: string | null
+  read?: number
 }
 
 function getOptionalStructuredMessagePayload(
@@ -132,7 +133,7 @@ async function resolveOrchestrationTerminalHandle(
   cwd: string,
   client: Parameters<CommandHandler>[0]['client'],
   flagName: 'from' | 'terminal',
-  options: { validateEnvHandle?: boolean; allowStaleEnvHandle?: boolean } = {}
+  options: { validateEnvHandle?: boolean } = {}
 ): Promise<string> {
   const explicit = getOptionalStringFlag(flags, flagName)
   if (explicit) {
@@ -146,14 +147,9 @@ async function resolveOrchestrationTerminalHandle(
       // coordinator preambles.
       const live = await isLiveTerminalHandle(envHandle, client)
       if (!live) {
-        const reminted = await resolveOrchestrationPaneTerminalHandle(client, {
-          optional: options.allowStaleEnvHandle
-        })
+        const reminted = await resolveOrchestrationPaneTerminalHandle(client)
         if (reminted) {
           return reminted
-        }
-        if (options.allowStaleEnvHandle) {
-          return envHandle
         }
         throwNoActiveSenderTerminal()
       }
@@ -351,12 +347,13 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
     const type = getOptionalStringFlag(flags, 'type')
     rejectLifecycleGroupRecipient(type, to)
 
-    const from = await resolveOrchestrationTerminalHandle(flags, cwd, client, 'from', {
-      validateEnvHandle: type === 'worker_done' || type === 'heartbeat',
-      // Why: payload IDs remain authoritative when an older/SSH session lacks
-      // a pane key, so handle repair must not prevent lifecycle delivery.
-      allowStaleEnvHandle: type === 'worker_done' || type === 'heartbeat'
-    })
+    // Why: lifecycle senders keep ORCA_TERMINAL_HANDLE verbatim — no liveness
+    // probe (terminal.show throws runtime_unavailable in the exact mid-restart
+    // window worker_done must survive) and no pane remint (pre-payload-
+    // authority runtimes require from === the equally stale assignee_handle,
+    // and coordinator replies route to the sender row while the worker's own
+    // `check` reads its env-handle inbox).
+    const from = await resolveOrchestrationTerminalHandle(flags, cwd, client, 'from')
     const result = await client.call<
       { message: { id: string } } | { messages: { id: string }[]; recipients: number }
     >('orchestration.send', {
@@ -380,6 +377,16 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
 
   'orchestration check': async ({ flags, client, cwd, json }) => {
     const wait = flags.has('wait')
+    const peek = flags.has('peek')
+    // Why: enforce mode exclusivity client-side too — an older runtime strips
+    // the unknown `peek` param and would otherwise execute --unread --peek as
+    // a destructive mark-read.
+    if ([flags.has('unread'), peek, flags.has('all')].filter(Boolean).length > 1) {
+      throw new RuntimeClientError(
+        'invalid_argument',
+        'Choose at most one message read mode: --unread, --peek, or --all.'
+      )
+    }
     const timeoutMs = getOptionalPositiveIntegerValueFlag(flags, 'timeout-ms')
     const terminal = await resolveOrchestrationTerminalHandle(flags, cwd, client, 'terminal')
 
@@ -400,8 +407,12 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
     try {
       result = await client.call<CheckResult>('orchestration.check', {
         terminal,
-        unread: flags.has('unread') ? true : undefined,
-        peek: flags.has('peek') ? true : undefined,
+        // Why: --peek also sends unread:false so runtimes that predate the
+        // peek param (which their non-strict schema strips) degrade to the
+        // non-consuming all-messages mode instead of the destructive
+        // mark-read default; the read filter below restores peek semantics.
+        unread: flags.has('unread') ? true : peek ? false : undefined,
+        peek: peek ? true : undefined,
         all: flags.has('all') ? true : undefined,
         types: getOptionalStringFlag(flags, 'types'),
         inject: flags.has('inject') ? true : undefined,
@@ -410,6 +421,31 @@ export const ORCHESTRATION_HANDLERS: Record<string, CommandHandler> = {
       })
     } finally {
       stopKeepalive?.()
+    }
+    if (peek) {
+      const unreadOnly = result.result.messages.filter((m) => m.read !== 1)
+      const removedReadRows = unreadOnly.length !== result.result.messages.length
+      // Why: read rows in a peek response are the pre-peek-runtime signature
+      // (its schema stripped `peek` and it ran the all mode). Such a runtime
+      // returned instead of blocking, so honoring --wait is impossible —
+      // failing beats silently returning empty before the deadline.
+      if (wait && removedReadRows && unreadOnly.length === 0) {
+        throw new RuntimeClientError(
+          'peek_wait_unsupported',
+          'The connected runtime does not support --peek with --wait; upgrade the runtime or use --wait without --peek.'
+        )
+      }
+      result = {
+        ...result,
+        result: {
+          ...result.result,
+          // Why: a pre-peek runtime builds `formatted` from all rows; drop it
+          // when the read filter removed any so output matches the peek set.
+          ...(removedReadRows ? { formatted: undefined } : {}),
+          messages: unreadOnly,
+          count: unreadOnly.length
+        }
+      }
     }
     printResult(result, json, (r) => {
       if (r.formatted) {

@@ -87,10 +87,13 @@ const CheckParams = z
     timeoutMs: OptionalFiniteNumber
   })
   .superRefine((params, ctx) => {
+    // Why: the CLI encodes --peek as {peek:true, unread:false} so pre-peek
+    // runtimes degrade to the non-consuming all mode; that pair is one mode,
+    // not a conflict.
     const modes = [
       params.unread === true,
       params.peek === true,
-      params.all === true || params.unread === false
+      params.all === true || (params.unread === false && params.peek !== true)
     ].filter(Boolean)
     if (modes.length > 1) {
       ctx.addIssue({
@@ -217,7 +220,12 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
         // immediately dispatch to the same terminal, which fails if the lock
         // is still held.
         if (msg.type === 'worker_done' || msg.type === 'heartbeat') {
-          reconcileLifecycleMessage(db, msg)
+          const reconciled = reconcileLifecycleMessage(db, msg)
+          // Why: a suppressed message is already read; waking a `check --wait`
+          // waiter for it would return an empty result before the deadline.
+          if (reconciled.action === 'suppressed') {
+            return { message: msg }
+          }
         }
         runtime.deliverPendingMessagesForHandle(params.to)
         runtime.notifyMessageArrived(params.to, msg.type)
@@ -279,7 +287,7 @@ export const ORCHESTRATION_METHODS: RpcMethod[] = [
       // Explicit `unread: false` is also honored for one release as a compat
       // shim so in-flight callers don't break (see design doc §5). Otherwise
       // today's behavior is preserved: default is unread-only + mark-read.
-      const showAll = params.all === true || params.unread === false
+      const showAll = params.all === true || (params.unread === false && params.peek !== true)
       const consumeUnread = !showAll && params.peek !== true
 
       const readAndReturn = () => {
