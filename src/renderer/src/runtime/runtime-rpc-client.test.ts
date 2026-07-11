@@ -526,6 +526,40 @@ describe('runtime RPC client routing', () => {
     expect(statusCalls).toBe(2)
   })
 
+  it('coalesces concurrent cold-cache capability probes onto one status.get', async () => {
+    let statusCalls = 0
+    runtimeEnvironmentCall.mockImplementation(() => {
+      statusCalls += 1
+      return Promise.resolve({
+        id: 'status',
+        ok: true,
+        result: {
+          runtimeId: 'remote-runtime',
+          graphStatus: 'ready',
+          runtimeProtocolVersion: RUNTIME_PROTOCOL_VERSION,
+          minCompatibleRuntimeClientVersion: MIN_COMPATIBLE_RUNTIME_CLIENT_VERSION,
+          capabilities: ['linear.issue-attribute-filter.v1']
+        },
+        _meta: { runtimeId: 'remote-runtime' }
+      })
+    })
+
+    const [a, b, c] = await Promise.all([
+      runtimeEnvironmentSupportsCapability(
+        'env-cap-concurrent',
+        'linear.issue-attribute-filter.v1'
+      ),
+      runtimeEnvironmentSupportsCapability(
+        'env-cap-concurrent',
+        'linear.issue-attribute-filter.v1'
+      ),
+      runtimeEnvironmentSupportsCapability('env-cap-concurrent', 'linear.issue-attribute-filter.v1')
+    ])
+
+    expect([a, b, c]).toEqual([true, true, true])
+    expect(statusCalls).toBe(1)
+  })
+
   it('expires a supported capability verdict so a runtime downgrade is detected', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date(0))

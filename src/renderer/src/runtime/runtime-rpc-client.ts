@@ -230,23 +230,48 @@ export async function getRuntimeEnvironmentStatus(
   environmentId: string,
   timeoutMs?: number
 ): Promise<RuntimeStatus> {
-  const response = await window.api.runtimeEnvironments.call({
-    selector: environmentId,
-    method: 'status.get',
-    timeoutMs
-  })
-  const status = unwrapRuntimeRpcResult<RuntimeStatus>(
-    response as RuntimeRpcResponse<RuntimeStatus>
-  )
-  assertRuntimeStatusCompatible(status)
-  rememberRuntimeEnvironmentCompatibility(environmentId.trim(), {
+  const trimmed = environmentId.trim()
+  const entry: RuntimeCompatibilityCacheEntry = {
     check: Promise.resolve(),
     failedAt: null,
-    provenCompatible: true,
-    status,
-    statusCheckedAt: Date.now()
-  })
-  return status
+    provenCompatible: false,
+    status: null,
+    statusCheckedAt: null
+  }
+  // Why: publish the in-flight probe before awaiting so concurrent cold-cache
+  // capability lookups coalesce onto this one status.get (via the cache-hit path
+  // in runtimeEnvironmentSupportsCapability) instead of each firing their own.
+  const check = (async () => {
+    const response = await window.api.runtimeEnvironments.call({
+      selector: trimmed,
+      method: 'status.get',
+      timeoutMs
+    })
+    const status = unwrapRuntimeRpcResult<RuntimeStatus>(
+      response as RuntimeRpcResponse<RuntimeStatus>
+    )
+    assertRuntimeStatusCompatible(status)
+    entry.status = status
+    entry.statusCheckedAt = Date.now()
+    entry.provenCompatible = true
+  })()
+  entry.check = check
+  rememberRuntimeEnvironmentCompatibility(trimmed, entry)
+  try {
+    await check
+  } catch (error) {
+    // Why: this probe always re-fetches, so a failure must not linger as a
+    // cached verdict; drop the entry so the next call re-probes cleanly.
+    if (runtimeCompatibilityChecks.get(trimmed) === entry) {
+      runtimeCompatibilityChecks.delete(trimmed)
+    }
+    throw error
+  }
+  if (!entry.status) {
+    // Unreachable: a resolved probe always assigns status; narrows the type.
+    throw new Error('Runtime status probe resolved without a status.')
+  }
+  return entry.status
 }
 
 export async function runtimeEnvironmentSupportsCapability(
