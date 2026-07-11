@@ -1672,7 +1672,8 @@ function SourceControlInner(): React.JSX.Element {
   const canUseHostedReviewPushTarget = hasUsableHostedReviewPushTarget({
     pushTarget: activeWorktree?.pushTarget,
     upstreamStatus: remoteStatus,
-    hasResolvableHostedReviewPushTargetLink: hasResolvableReviewPushTargetLink
+    hasResolvableHostedReviewPushTargetLink: hasResolvableReviewPushTargetLink,
+    branchName
   })
   const hostedReviewStateForActions = resolveHostedReviewStateForActions({
     hostedReviewState: hostedReview?.state ?? null,

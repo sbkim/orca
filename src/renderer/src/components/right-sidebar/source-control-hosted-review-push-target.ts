@@ -6,6 +6,7 @@ export function hasUsableHostedReviewPushTarget(args: {
   pushTarget?: GitPushTarget
   upstreamStatus?: GitUpstreamStatus
   hasResolvableHostedReviewPushTargetLink?: boolean
+  branchName?: string
 }): boolean {
   if (args.pushTarget) {
     return (
@@ -14,11 +15,31 @@ export function hasUsableHostedReviewPushTarget(args: {
     )
   }
   if (args.hasResolvableHostedReviewPushTargetLink) {
-    // Why: a bare branch-config flag does not identify which review head it will
-    // push to; resolver-backed links need hydrated target metadata to prove it.
-    return false
+    // Why: a resolver-backed link normally needs hydrated target metadata to
+    // prove which head it pushes to. But a same-repo review's head IS the
+    // checked-out branch, so a real upstream already tracking that branch is
+    // that head and is safe to use before the resolver hydrates. Fork/cross-repo
+    // reviews track a differently-named head, so a mismatched (or missing)
+    // upstream stays blocked until the resolver proves the real target.
+    return (
+      args.upstreamStatus?.hasUpstream === true &&
+      upstreamTracksBranch(args.upstreamStatus.upstreamName, args.branchName)
+    )
   }
   return args.upstreamStatus?.hasConfiguredPushTarget === true
+}
+
+function upstreamTracksBranch(
+  upstreamName: string | undefined,
+  branchName: string | undefined
+): boolean {
+  if (!upstreamName || !branchName) {
+    return false
+  }
+  // Why: upstreamName is `<remote>/<branch>`; remote names cannot contain `/`,
+  // so the branch is everything past the first slash (branches may contain `/`).
+  const separatorIndex = upstreamName.indexOf('/')
+  return separatorIndex >= 0 && upstreamName.slice(separatorIndex + 1) === branchName
 }
 
 function isResolvableHostedReviewNumber(value: unknown): value is number {
