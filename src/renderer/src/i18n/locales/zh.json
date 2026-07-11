@@ -2806,6 +2806,10 @@
             "b27864279e": "启动智能体",
             "39676a184c": "打开任何文件、URL、智能体..."
           },
+          "TabBarRunScriptButton": {
+            "runScript": "Run Script",
+            "runScriptTooltip": "Run a package.json script"
+          },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "命令",
             "20bbd75896": "无命令",
