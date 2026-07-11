@@ -103,6 +103,7 @@ import {
   resolveWindowsShellOverride
 } from '@/lib/pane-manager/windows-pty-compatibility'
 import { recordTerminalOutput } from '@/lib/pane-manager/pane-scroll'
+import { ensureArabicShapingJoinerForText } from '@/lib/pane-manager/terminal-arabic-shaping-joiner'
 import {
   captureTerminalWriteScrollIntent,
   enforceTerminalWriteScrollIntent
@@ -935,6 +936,7 @@ export function connectPanePty(
   manager: PaneManager,
   deps: PtyConnectionDeps
 ): PanePtyBinding {
+  const shouldRefreshForegroundSynchronously = (): boolean => !manager.hasWebglRenderer(pane.id)
   exposeE2eTerminalPtyOutputDebug()
   let disposed = false
   let connectFrame: number | null = null
@@ -2278,7 +2280,9 @@ export function connectPanePty(
         // frame still has mouse-tracking/bracketed-paste armed, which silently
         // eats every click and keystroke against a dead transport — disarm the
         // modes now and arm the reveal-time wake.
-        replayIntoTerminal(pane, deps.replayingPanesRef, POST_REPLAY_MODE_RESET)
+        replayIntoTerminal(pane, deps.replayingPanesRef, POST_REPLAY_MODE_RESET, {
+          shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously
+        })
         hibernatedWakeTarget = { ptyId, record: sleepingRecordEntry.record }
         const pendingWakeMatches =
           pendingHibernatedWakeTarget?.ptyId === ptyId &&
@@ -4300,14 +4304,18 @@ export function connectPanePty(
       // Why: drain any queued background bytes BEFORE the replay paint, so the
       // scheduler's deferred drain cannot land older bytes on top of the replay.
       flushTerminalOutput(pane.terminal)
-      replayIntoTerminal(pane, deps.replayingPanesRef, data)
+      replayIntoTerminal(pane, deps.replayingPanesRef, data, {
+        shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously
+      })
     }
 
     const writeReplayDataAsync = (data: string): Promise<void> => {
       // Why: WebGL must be rebuilt after xterm has parsed replay bytes, not
       // merely after the write was queued.
       flushTerminalOutput(pane.terminal)
-      return replayIntoTerminalAsync(pane, deps.replayingPanesRef, data)
+      return replayIntoTerminalAsync(pane, deps.replayingPanesRef, data, {
+        shouldRefreshViewportSynchronously: shouldRefreshForegroundSynchronously
+      })
     }
 
     const reattachReplayResetSequence = (payload: string): string => {
@@ -4742,7 +4750,9 @@ export function connectPanePty(
       modelRestoreSubscribedPtyId = null
     }
 
-    function beforeTerminalOutputWrite(): void {
+    function beforeTerminalOutputWrite(data: string): void {
+      // Why: shaping must register before xterm parses the RTL bytes that need it.
+      ensureArabicShapingJoinerForText(pane.terminal, data)
       recordTerminalOutput(pane.terminal)
     }
 
@@ -5004,6 +5014,9 @@ export function connectPanePty(
             foregroundRenderRefreshNeeded),
         followupForegroundRefresh:
           nativeWindowsCursorRestore || nativeWindowsInPlaceRewriteFollowup,
+        // Why: xterm already queued a WebGL frame while parsing this chunk;
+        // merge the repair into it instead of rendering the full grid twice.
+        shouldRefreshForegroundSynchronously,
         onParsed: onParsedAtlasRecovery,
         stripTransientCursorShows: shouldProtectNativeWindowsSynchronizedOutput && foreground,
         coalesceForeground: synchronizedForegroundOutput && synchronizedOutputEnded,

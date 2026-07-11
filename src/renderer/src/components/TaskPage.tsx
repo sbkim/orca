@@ -284,6 +284,7 @@ import type {
   JiraIssueType,
   JiraProject,
   JiraProjectStatusOrder,
+  JiraPriority,
   LinearIssue,
   LinearProjectDetail,
   LinearProjectSummary,
@@ -323,8 +324,16 @@ import {
   jiraGetIssue,
   jiraListCreateFields,
   jiraListIssueTypes,
-  jiraListProjects
+  jiraListProjects,
+  jiraListPriorities
 } from '@/runtime/runtime-jira-client'
+import {
+  sortJiraIssues,
+  type JiraIssueSortColumn,
+  type JiraIssueSortDirection,
+  type JiraPrioritiesBySite
+} from './jira-issue-sorter'
+import { TaskPageJiraSortControls } from './task-page-jira-sort-controls'
 import {
   normalizeVisibleTaskProviders,
   restoreAvailableDefaultTaskProvider,
@@ -4589,6 +4598,66 @@ export default function TaskPage(): React.JSX.Element {
     order: JiraProjectStatusOrder
     scopeKey: string
   } | null>(null)
+  const [jiraOrderBy, setJiraOrderBy] = useState<JiraIssueSortColumn>('updated')
+  const [jiraOrderDirection, setJiraOrderDirection] = useState<JiraIssueSortDirection>('desc')
+  const [jiraPrioritiesBySite, setJiraPrioritiesBySite] = useState<JiraPrioritiesBySite>(
+    () => new Map()
+  )
+  const jiraPrioritySiteIdsKey = useMemo(() => {
+    const siteIds =
+      selectedJiraSiteId && selectedJiraSiteId !== 'all'
+        ? [selectedJiraSiteId]
+        : jiraIssues.flatMap((issue) => (issue.siteId ? [issue.siteId] : []))
+    // Why: result refreshes replace the issue array; depend on the represented sites, not identity.
+    return JSON.stringify([...new Set(siteIds)].sort())
+  }, [jiraIssues, selectedJiraSiteId])
+
+  useEffect(() => {
+    if (taskSource !== 'jira' || !jiraConnected || jiraOrderBy !== 'priority') {
+      setJiraPrioritiesBySite((current) => (current.size === 0 ? current : new Map()))
+      return
+    }
+    let cancelled = false
+    const jiraPrioritySiteIds = JSON.parse(jiraPrioritySiteIdsKey) as string[]
+    void Promise.all(
+      jiraPrioritySiteIds.map(async (siteId) => {
+        try {
+          return [
+            siteId,
+            await jiraListPriorities(jiraTaskSourceContext ?? settings, siteId)
+          ] as const
+        } catch {
+          return [siteId, [] as JiraPriority[]] as const
+        }
+      })
+    ).then((prioritiesBySite) => {
+      if (!cancelled) {
+        setJiraPrioritiesBySite(new Map(prioritiesBySite))
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    jiraConnected,
+    jiraOrderBy,
+    jiraPrioritySiteIdsKey,
+    jiraTaskSourceContext,
+    settings,
+    taskSource
+  ])
+
+  const handleJiraSort = useCallback(
+    (column: JiraIssueSortColumn) => {
+      if (jiraOrderBy === column) {
+        setJiraOrderDirection((prevDir) => (prevDir === 'asc' ? 'desc' : 'asc'))
+      } else {
+        setJiraOrderBy(column)
+        setJiraOrderDirection(column === 'updated' || column === 'status' ? 'desc' : 'asc')
+      }
+    },
+    [jiraOrderBy]
+  )
 
   useEffect(() => {
     if (taskResumeAppliedRef.current || !persistedUIReady || !settings) {
@@ -5621,6 +5690,14 @@ export default function TaskPage(): React.JSX.Element {
       ? jiraProjectStatusOrder.order
       : null
 
+  const sortedJiraIssues = useMemo(() => {
+    return sortJiraIssues(
+      displayedJiraIssues,
+      jiraOrderBy,
+      jiraOrderDirection,
+      jiraPrioritiesBySite
+    )
+  }, [displayedJiraIssues, jiraOrderBy, jiraOrderDirection, jiraPrioritiesBySite])
   // New Linear project dialog state
   const [newLinearProjectOpen, setNewLinearProjectOpen] = useState(false)
   const [newLinearProjectName, setNewLinearProjectName] = useState('')
@@ -10010,17 +10087,11 @@ export default function TaskPage(): React.JSX.Element {
                   </div>
                 </div>
 
-                <div className="grid h-8 flex-none grid-cols-[90px_minmax(0,1fr)_128px_92px_80px] items-center gap-3 border-b border-border/50 bg-muted/25 px-3 text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground max-md:!hidden lg:grid-cols-[96px_minmax(0,1.25fr)_132px_120px_136px_96px_64px] xl:grid-cols-[104px_minmax(0,1.45fr)_144px_132px_160px_128px_72px]">
-                  <span>{translate('auto.components.TaskPage.37e7ee311e', 'Key')}</span>
-                  <span>{translate('auto.components.TaskPage.b1eaa18ace', 'Issue')}</span>
-                  <span>{translate('auto.components.TaskPage.154b0fa623', 'Status')}</span>
-                  <span>{translate('auto.components.TaskPage.c8d5bec5f7', 'Priority')}</span>
-                  <span className="block max-lg:!hidden">
-                    {translate('auto.components.TaskPage.d2a876ca53', 'Assignee')}
-                  </span>
-                  <span>{translate('auto.components.TaskPage.f362667d55', 'Updated')}</span>
-                  <span />
-                </div>
+                <TaskPageJiraSortControls
+                  direction={jiraOrderDirection}
+                  onSort={handleJiraSort}
+                  orderBy={jiraOrderBy}
+                />
 
                 <div
                   className="min-h-0 flex-1 overflow-y-auto scrollbar-sleek"
@@ -10075,11 +10146,12 @@ export default function TaskPage(): React.JSX.Element {
                   <TaskPageJiraIssueList
                     formatUpdatedAt={formatRelativeTime}
                     getStatusTone={getJiraStatusTone}
-                    issues={displayedJiraIssues}
+                    issues={sortedJiraIssues}
                     onOpenIssue={openJiraDetailPage}
                     onStartWorkspace={handleUseJiraItem}
                     selectedIssue={selectedJiraIssue}
                     showSiteContext={selectedJiraSiteId === 'all'}
+                    statusDirection={jiraOrderBy === 'status' ? jiraOrderDirection : 'asc'}
                     statusOrder={displayedJiraStatusOrder}
                   />
                 </div>

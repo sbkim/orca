@@ -467,6 +467,7 @@ function createManager(paneCount = 1, initialActivePaneId: number | null = null)
     setPaneGpuRendering: vi.fn(),
     markPaneHasComplexScriptOutput: vi.fn(),
     rebuildPaneWebgl: vi.fn(),
+    hasWebglRenderer: vi.fn(() => false),
     getPanes: vi.fn(() => panes),
     closePane: vi.fn(),
     getActivePane: vi.fn<() => { id: number; leafId?: string } | null>(() =>
@@ -12630,6 +12631,45 @@ describe('connectPanePty', () => {
 
       expect(refresh).toHaveBeenCalledTimes(1)
       expect(refresh).toHaveBeenCalledWith(0, 39, true)
+    } finally {
+      restoreNavigator()
+    }
+  })
+
+  it('coalesces forced foreground refreshes when WebGL is live', async () => {
+    const restoreNavigator = temporarilySetNavigatorUserAgent('Mozilla/5.0 (Macintosh)')
+    try {
+      const { connectPanePty } = await import('./pty-connection')
+      const transport = createMockTransport()
+      const capturedDataCallback: { current: ((data: string) => void) | null } = { current: null }
+      transport.connect.mockImplementation(
+        async ({ callbacks }: { callbacks: ConnectCallbacks }) => {
+          capturedDataCallback.current = callbacks.onData ?? null
+          return 'pty-id'
+        }
+      )
+      transportFactoryQueue.push(transport)
+
+      const pane = createPane(1)
+      const synchronousRefresh = vi.fn()
+      const debouncedRefresh = vi.fn()
+      const terminal = pane.terminal as typeof pane.terminal & {
+        _core?: { refresh: typeof synchronousRefresh }
+        refresh: typeof debouncedRefresh
+      }
+      terminal._core = { refresh: synchronousRefresh }
+      terminal.refresh = debouncedRefresh
+      terminal.write = vi.fn((_data: string, callback?: () => void) => callback?.())
+      const manager = createManager(1)
+      manager.hasWebglRenderer.mockReturnValue(true)
+
+      connectPanePty(pane as never, manager as never, createDeps() as never)
+      await flushAsyncTicks(6)
+
+      capturedDataCallback.current?.('\r\x1b[3Gzzzx\x1b[K')
+
+      expect(debouncedRefresh).toHaveBeenCalledWith(0, 39)
+      expect(synchronousRefresh).not.toHaveBeenCalled()
     } finally {
       restoreNavigator()
     }
