@@ -2804,6 +2804,10 @@
             "b27864279e": "agent 실행",
             "39676a184c": "모든 파일, URL, agent를 엽니다..."
           },
+          "TabBarRunScriptButton": {
+            "runScript": "Run Script",
+            "runScriptTooltip": "Run a package.json script"
+          },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "명령",
             "20bbd75896": "명령 없음",
