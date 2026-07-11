@@ -2875,6 +2875,10 @@
             "b27864279e": "Launch agent",
             "39676a184c": "Open any file, URL, agent, ..."
           },
+          "TabBarRunScriptButton": {
+            "runScript": "Run Script",
+            "runScriptTooltip": "Run a package.json script"
+          },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "Command",
             "20bbd75896": "No commands",
