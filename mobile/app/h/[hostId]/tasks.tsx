@@ -29,7 +29,6 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  Search,
   Send,
   X
 } from 'lucide-react-native'
@@ -48,6 +47,7 @@ import { ConfirmModal } from '../../../src/components/ConfirmModal'
 import { MobileMarkdown } from '../../../src/components/MobileMarkdown'
 import { MobileAgentIcon } from '../../../src/components/MobileAgentIcon'
 import { MobileWorkspaceNameInput } from '../../../src/components/MobileWorkspaceNameInput'
+import { MobileSearchField } from '../../../src/components/MobileSearchField'
 import { MobileSyntaxSegments } from '../../../src/components/MobileSyntaxSegments'
 import { PickerModal, type PickerOption } from '../../../src/components/PickerModal'
 import { TaskProviderLogo } from '../../../src/components/TaskProviderLogo'
@@ -9048,9 +9048,7 @@ export default function MobileTasksScreen() {
         {provider === 'gitlab' && gitlabView === 'todos' ? null : provider === 'linear' &&
           !linearConnected ? null : (
           <View style={styles.searchBar}>
-            <Search size={14} color={colors.textMuted} />
-            <TextInput
-              style={styles.searchInput}
+            <MobileSearchField
               value={
                 provider === 'github' && githubMode === 'project' ? githubProjectSearch : query
               }
@@ -9064,10 +9062,17 @@ export default function MobileTasksScreen() {
                   ? 'Search project view...'
                   : `Search ${providerLabel} tasks...`
               }
-              placeholderTextColor={colors.textMuted}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
+              // Why: GitHub items seed the field with a preset query, so a bare
+              // value.length check would always show clear. Project view can also
+              // keep an applied filter after the draft is emptied.
+              showClear={
+                provider === 'github' && githubMode === 'project'
+                  ? githubProjectSearch.length > 0 || appliedGithubProjectSearch !== undefined
+                  : provider === 'github'
+                    ? query.trim() !== getTaskPresetQuery(githubPreset).trim()
+                    : undefined
+              }
+              editable={taskUiReady}
               onSubmitEditing={() => {
                 if (!taskUiReady) {
                   return
@@ -9095,38 +9100,30 @@ export default function MobileTasksScreen() {
                   applyGitHubProjectSearch()
                 }
               }}
+              onClear={() => {
+                if (provider === 'github' && githubMode === 'project') {
+                  const viewFilter = githubProjectTable?.selectedView.filter ?? ''
+                  setGithubProjectSearch('')
+                  setAppliedGithubProjectSearch(viewFilter ? '' : undefined)
+                  return
+                }
+                if (provider === 'github') {
+                  const nextQuery = getTaskPresetQuery(githubPreset)
+                  setQuery(nextQuery)
+                  setAppliedQuery(nextQuery)
+                  persistTaskResumeState({
+                    githubItemsPreset: githubPreset,
+                    githubItemsQuery: nextQuery
+                  })
+                  return
+                }
+                setQuery('')
+                setAppliedQuery('')
+                if (provider === 'linear') {
+                  persistTaskResumeState({ linearQuery: '' })
+                }
+              }}
             />
-            {(provider === 'github' && githubMode === 'project'
-              ? githubProjectSearch.length > 0 || appliedGithubProjectSearch !== undefined
-              : query.length > 0) && (
-              <Pressable
-                onPress={() => {
-                  if (provider === 'github' && githubMode === 'project') {
-                    const viewFilter = githubProjectTable?.selectedView.filter ?? ''
-                    setGithubProjectSearch('')
-                    setAppliedGithubProjectSearch(viewFilter ? '' : undefined)
-                    return
-                  }
-                  if (provider === 'github') {
-                    const nextQuery = getTaskPresetQuery(githubPreset)
-                    setQuery(nextQuery)
-                    setAppliedQuery(nextQuery)
-                    persistTaskResumeState({
-                      githubItemsPreset: githubPreset,
-                      githubItemsQuery: nextQuery
-                    })
-                    return
-                  }
-                  setQuery('')
-                  setAppliedQuery('')
-                  if (provider === 'linear') {
-                    persistTaskResumeState({ linearQuery: '' })
-                  }
-                }}
-              >
-                <X size={14} color={colors.textSecondary} />
-              </Pressable>
-            )}
           </View>
         )}
       </View>
@@ -13818,19 +13815,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary
   },
   searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
-    gap: spacing.sm,
-    borderTopWidth: 1,
+    paddingVertical: spacing.sm,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.borderSubtle
-  },
-  searchInput: {
-    flex: 1,
-    color: colors.textPrimary,
-    fontSize: 13,
-    paddingVertical: 2
   },
   errorBanner: {
     paddingHorizontal: spacing.lg,
