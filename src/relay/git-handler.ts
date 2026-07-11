@@ -64,6 +64,7 @@ import { InFlightPromiseDedupe, stableInFlightKey } from '../shared/in-flight-pr
 import { GIT_FETCH_SKIP_AUTO_MAINTENANCE_CONFIG_ARGS } from '../shared/git-fetch-auto-maintenance'
 import { GitResponseStreamRegistry } from './git-response-stream'
 import { GIT_RESPONSE_STREAM_THRESHOLD } from './protocol'
+import { endSubprocessStdin } from '../shared/subprocess-stdin-write'
 
 const execFileAsync = promisify(execFile)
 const MAX_GIT_BUFFER = 10 * 1024 * 1024
@@ -167,7 +168,7 @@ function execFileWithStdin(
       finish(null, stdout, stderr)
     })
     child.once('error', (error) => finish(error))
-    child.stdin?.end(stdin)
+    endSubprocessStdin(child.stdin, stdin)
   })
 }
 
