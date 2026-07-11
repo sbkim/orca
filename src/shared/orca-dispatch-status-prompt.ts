@@ -7,7 +7,7 @@
 
 export const ORCA_DISPATCH_STATUS_PREAMBLE_PREFIX =
   'You are working inside Orca, a multi-agent IDE.'
-const ORCA_DISPATCH_STATUS_TASK_MARKER = '=== TASK ==='
+export const ORCA_DISPATCH_STATUS_TASK_MARKER = '=== TASK ==='
 const ORCA_DISPATCH_STATUS_TASK_ID_MARKER = 'Your task ID is:'
 // Why: real preambles put === TASK === near the end (~4KB+). Scan past the
 // normal single-line budget so the task body is still reachable for compacting.
@@ -60,7 +60,7 @@ export function compactDispatchPromptForStatus(
   }
 
   let taskBody = ''
-  const taskMarkerIndex = findTaskMarkerIndex(scan)
+  const taskMarkerIndex = findOrcaDispatchTaskMarkerIndex(scan)
   if (taskMarkerIndex !== -1) {
     const body = scan.slice(taskMarkerIndex + ORCA_DISPATCH_STATUS_TASK_MARKER.length)
     for (const line of body.split(/\r?\n/)) {
@@ -84,9 +84,14 @@ export function compactDispatchPromptForStatus(
   return normalizeSingleLine(compact, maxLength)
 }
 
-function findTaskMarkerIndex(value: string): number {
-  // Why: base-drift commit subjects are repository-controlled and may mention
-  // the marker. Raw preambles must use the standalone line emitted by Orca.
+/**
+ * Locate the Orca task separator in a dispatch prompt scan window.
+ * Why: base-drift commit subjects are repository-controlled and may mention
+ * `=== TASK ===`. Raw multi-line preambles must use the standalone line Orca
+ * emits; already-normalized single-line status previews intentionally keep the
+ * marker inline so re-normalization and UI helpers stay consistent.
+ */
+export function findOrcaDispatchTaskMarkerIndex(value: string): number {
   let searchFrom = 0
   while (searchFrom < value.length) {
     const markerIndex = value.indexOf(ORCA_DISPATCH_STATUS_TASK_MARKER, searchFrom)

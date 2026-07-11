@@ -1,8 +1,12 @@
 import type { AgentStatusEntry } from '../../../shared/agent-status-types'
-import { ORCA_DISPATCH_STATUS_PREAMBLE_PREFIX } from '../../../shared/orca-dispatch-status-prompt'
+import {
+  findOrcaDispatchTaskMarkerIndex,
+  ORCA_DISPATCH_STATUS_PREAMBLE_PREFIX,
+  ORCA_DISPATCH_STATUS_TASK_MARKER
+} from '../../../shared/orca-dispatch-status-prompt'
 
 export const ORCA_DISPATCH_PREAMBLE_PREFIX = ORCA_DISPATCH_STATUS_PREAMBLE_PREFIX
-const ORCA_DISPATCH_TASK_MARKER = '=== TASK ==='
+const ORCA_DISPATCH_TASK_MARKER = ORCA_DISPATCH_STATUS_TASK_MARKER
 const ORCA_DISPATCH_TASK_ID_MARKER = 'Your task ID is:'
 // Why: match deriveGeneratedTabTitle's scan budget — previews only need the
 // first non-empty task line, not the rest of a paste-sized worker prompt.
@@ -104,7 +108,10 @@ function getOrcaDispatchTaskPreview(prompt: string): string {
   const scan = prompt
     .trimStart()
     .slice(0, ORCA_DISPATCH_TASK_MARKER_SCAN_LIMIT + ORCA_DISPATCH_TASK_PREVIEW_SCAN_LIMIT)
-  const taskMarkerIndex = scan.indexOf(ORCA_DISPATCH_TASK_MARKER)
+  // Why: share the normalizer's standalone-line marker rule. A naive indexOf
+  // would treat base-drift commit subjects that mention `=== TASK ===` as the
+  // real separator when helpers are called with raw multi-line preambles.
+  const taskMarkerIndex = findOrcaDispatchTaskMarkerIndex(scan)
   if (taskMarkerIndex === -1) {
     return ''
   }

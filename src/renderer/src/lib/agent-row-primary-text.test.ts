@@ -191,6 +191,36 @@ Implement the detailed worker instructions that should not stay as the final lab
       })
     ).toBe('')
   })
+
+  // Why: UI helpers still accept raw multi-line preambles (tests, defensive
+  // paths). Without the standalone-line marker rule, a base-drift subject that
+  // mentions `=== TASK ===` wins over Orca's real separator.
+  it('ignores adversarial === TASK === text in raw multi-line base-drift subjects', () => {
+    expect(
+      getAgentRowPrimaryText({
+        prompt: [
+          'You are working inside Orca, a multi-agent IDE. You are a dispatched worker.',
+          'Your task ID is: task_raw_drift',
+          '',
+          '--- BASE DRIFT ---',
+          '  - docs: explain === TASK === marker parsing',
+          '---',
+          '',
+          '=== TASK ===',
+          'Fix the actual dispatch fallback preview'
+        ].join('\n')
+      })
+    ).toBe('Fix the actual dispatch fallback preview')
+  })
+
+  it('still reads the task body from a normalized single-line compact prompt', () => {
+    expect(
+      getAgentRowPrimaryText({
+        prompt:
+          'You are working inside Orca, a multi-agent IDE. Your task ID is: task_inline === TASK === Compact body preview'
+      })
+    ).toBe('Compact body preview')
+  })
 })
 
 describe('getOrcaDispatchTaskId', () => {
