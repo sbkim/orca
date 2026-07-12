@@ -1,0 +1,4 @@
+# Fastlane plugins for Orca Mobile.
+# firebase_app_distribution: upload pre-release Android/iOS builds to Firebase
+# App Distribution (SPEC-FCM-001 device-test distribution + broader beta).
+gem "fastlane-plugin-firebase_app_distribution"
