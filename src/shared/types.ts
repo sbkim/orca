@@ -2800,6 +2800,12 @@ export type GlobalSettings = {
   defaultLinearTeamSelection: string[] | null
   /** Session cookie for OpenCode Go rate-limit fetching. Stored encrypted. */
   opencodeSessionCookie: string
+  /** Why: Google credential JSON for the FCM supplemental push channel
+   *  (SPEC-FCM-001). At rest this is safeStorage-encrypted ciphertext (the
+   *  in-memory copy is plaintext); persistence.ts decrypts on load and
+   *  re-encrypts on save, mirroring opencodeSessionCookie. Absent on legacy
+   *  state until the user onboards a credential. */
+  fcmServiceAccountJson?: string | null
   /** Optional workspace ID override for OpenCode Go. When set, skips the
    *  workspaces lookup and fetches usage directly for this workspace. */
   opencodeWorkspaceId: string

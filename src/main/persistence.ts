@@ -2868,6 +2868,14 @@ export class Store {
         if (parsed.settings?.opencodeSessionCookie) {
           parsed.settings.opencodeSessionCookie = decrypt(parsed.settings.opencodeSessionCookie)
         }
+        // Why: FCM credential JSON is a secret at rest (safeStorage), decrypted
+        // to plaintext in memory here so the rest of the app — including the
+        // fcm-sender — never handles ciphertext. Mirrors opencodeSessionCookie.
+        if (parsed.settings?.fcmServiceAccountJson) {
+          parsed.settings.fcmServiceAccountJson = decryptOptionalSecret(
+            parsed.settings.fcmServiceAccountJson
+          )
+        }
         if (parsed.settings?.httpProxyUrl) {
           parsed.settings.httpProxyUrl = decrypt(parsed.settings.httpProxyUrl)
         }
@@ -3633,7 +3641,9 @@ export class Store {
       settings: {
         ...this.state.settings,
         opencodeSessionCookie: encrypt(this.state.settings.opencodeSessionCookie),
-        httpProxyUrl: encrypt(this.state.settings.httpProxyUrl ?? '')
+        httpProxyUrl: encrypt(this.state.settings.httpProxyUrl ?? ''),
+        // Why: only the encrypted form of the FCM credential touches disk.
+        fcmServiceAccountJson: encryptOptionalSecret(this.state.settings.fcmServiceAccountJson)
       },
       ui: {
         ...this.state.ui,
@@ -5119,6 +5129,19 @@ export class Store {
 
   getSettings(): GlobalSettings {
     return this.state.settings
+  }
+
+  // Why: the FCM credential JSON is a safeStorage-encrypted secret whose
+  // plaintext is held in memory (fcm-sender consumes plaintext). These two
+  // accessors give the onboarding handler a narrow surface that does not leak
+  // the rest of settings and keeps persistence responsible for encryption.
+  getFcmServiceAccountJson(): string | null {
+    return this.state.settings.fcmServiceAccountJson ?? null
+  }
+
+  setFcmServiceAccountJson(value: string | null): void {
+    this.state.settings.fcmServiceAccountJson = value && value.length > 0 ? value : null
+    this.scheduleSave()
   }
 
   onSettingsChanged(
