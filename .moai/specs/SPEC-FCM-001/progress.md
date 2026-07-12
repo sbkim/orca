@@ -276,9 +276,89 @@ tier: L
 
 **PRESERVE 무결성 (M6)**: data-only invariant 양단 유지(`notification` 필드 부재 → E2EE). M2 `push-payload-crypto.ts`, M1 `DeviceEntry.pushPlatform`(읽기 전용), M4 dispatch GATE(`orca-runtime.ts` 게이트 분기 미수정 — fan-out passthrough 만 추가), WS ephemeral E2EE 경로, M5 mobile decrypt(data payload platform 무관 소비) 모두 미수정.
 
+### M7 — 통합 검증 + 회귀 (2026-07-11, TESTS only — production 미수정)
+
+**구현 파일 (regression + integration tests, production 코드 변경 없음)**:
+- `src/main/runtime/dispatch-ws-foreground-regression.test.ts` (신규, 7 tests) — AC-FCM-001 FULL WS-foreground 회귀. M4 unit-level 특성화를 FULL 회귀로 격상: 1/3/5 subscribers 각각 gate armed/disarmed 시 byte-identical 수신, 모든 notification source 변종(`agent-task-complete`/`terminal-bell`/`test`) byte-identical, dismiss+notification 혼합 시퀀스 ordering 보존, mid-stream unsubscribe 정지, dismiss 이벤트는 listener 0 에서도 fan-out 미발생(shape 게이트), listener-count 게이트 경계(마지막 subscriber unsubscribe 직후 FCM 인계).
+- `src/main/runtime/dispatch-fcm-integration.test.ts` (신규, 5 tests) — FULL dispatch-path integration. REAL M4 gate + REAL `createFcmFanOut` + REAL `createFcmSender`(주입 minter + 주입 fetch) + REAL M2 crypto + REAL `DeviceRegistry`(temp dir) 체인을 실 `dispatchMobileNotification` 으로 구동. android HIGH / ios apns content-available M6 platform branching, FCM v1 POST URL/Bearer/data-only body, M1 기기 enumeration(token), AC-FCM-005 notificationId data carrier, M2↔M5 cross-platform 왕복(모바일 half 가 desktop ciphertext 를 byte-identical 복원), WS subscriber 연결 시 fetch+minter 미호출(AC-FCM-002b integration), rejecting minter 도 동기 dispatch caller 에 throw 미전파(REQ-FCM-014 integration).
+
+**AC 증거 (5-섹션: Claim / Evidence / Baseline / Gaps / Residual-risk)**:
+
+- **AC-FCM-001 (WS 포어그라운드 회귀 없음, P0) — PASS (FULL regression)**:
+  - Claim: 게이트 분기는 WS 리스너 iteration + 수신 이벤트에 간섭하지 않는다(multiple subscribers, 모든 event shape, ordering). M4 unit-level 특성화를 FULL 회귀로 격상.
+  - Evidence: `pnpm exec vitest run src/main/runtime/dispatch-ws-foreground-regression.test.ts` → Test Files 1 passed (1) / Tests 7 passed (7). (1) 1/3/5 subscribers × gate armed/disarmed byte-identical 비교(P0). (2) 3 source 변종 2 subscribers 동일 수신. (3) notification→dismiss→notification ordering 보존. (4) mid-stream unsubscribe 정지 + 잔존 subscriber 계속 수신. (5) ≥1 subscriber 시 3 source 전부 fan-out 미발생. (6) listener 0 dismiss 도 fan-out 미발생(shape 게이트). (7) 게이트 경계(마지막 unsubscribe 직후 FCM 인계 `notificationId: 'n-disconnected'`).
+  - Baseline: M7 트리(`91909b438` M6 HEAD 위), 이번 실행.
+  - Gaps: 없음 — 본 AC 가 M4 unit-level 특성화(3건)를 FULL 회귀(7건)로 완성. M4 의 `dispatch-fcm-gate.test.ts` 6 게이트 테스트도 동일 트리에서 PASS(`91909b438` 회귀 없음).
+  - Residual-risk: 없음.
+
+- **M1→M6 dispatch-path integration (체인 coherence) — PASS**:
+  - Claim: `dispatchMobileNotification` 을 listener 0 + FCM-등록 기기로 구동 시 M1→M2→M3→M4→M6 체인이 end-to-end 로 정확히 발화한다. 주입 경계(minter, fetch) 외에는 모두 REAL.
+  - Evidence: `pnpm exec vitest run src/main/runtime/dispatch-fcm-integration.test.ts` → Test Files 1 passed (1) / Tests 5 passed (5). (1) FCM v1 POST URL `https://fcm.googleapis.com/v1/projects/orca-fcm-project/messages:send`, `Bearer integration-access-token`, `Content-Type: application/json`, `message.token` = registry 등록 기기 토큰(M1), `data.notificationId` = `integration-notif-1`(AC-FCM-005), data.opaque payload(평문 부재). (2) M2↔M5 왕복: `deriveSharedKey(mobile.secretKey, desktop.publicKey)` + `decryptBytes` 로 `data.payload` 복호화 → `{title, body}` byte-identical; minter 1회 호출(OAuth 캐시). (3) M6 platform: android `{priority:'HIGH'}` + apns/notification 부재; ios `{headers:{'apns-priority':'10'},payload:{aps:{'content-available':1}}}` + android/notification 부재. (4) AC-FCM-002b integration: ≥1 subscriber 시 fetch+minter 0 호출. (5) REQ-FCM-014 integration: rejecting minter 가 동기 dispatch caller 에 throw 미전파.
+  - Baseline: M7 트리, 이번 실행.
+  - Gaps: live Google OAuth/FCM 라운드트립은 주입 minter/fetch 로 대체(M3 residual-risk 계승). device 백그라운드/종료-state 실제 FCM/APNs 전달(AC-FCM-006a/006b device-E2E)은 M6 Gap 계승 — 사용자 기기 post-merge 검증.
+  - Residual-risk: integration 테스트의 ECDH 왕복은 shared primitive(`deriveSharedKey`/`decryptBytes`) 사용 — 모바일 `deriveMobileFcmSharedKey`/`decryptPushPayload` 와의 byte-identity 는 M5 `fcm-payload-cross-platform.test.ts` 6 tests 가 이미 입증.
+
+- **AC-FCM-007b (credential-leak 정적 검사 + .gitignore) — PASS (formalized as acceptance)**:
+  - Claim: production source 에 실제 secret marker(`private_key`, `BEGIN PRIVATE`) 0 매칭; tracked credential 파일 0건; `.gitignore` 가 모든 Firebase/EAS credential 커버.
+  - Evidence: `grep -rn "private_key\|BEGIN PRIVATE" src/ mobile/src/ --include="*.ts" | grep -v ".test.ts"` → exit 1 (0 matches, CLEAN). `git ls-files | grep -E "google-services\.json|GoogleService-Info\.plist|\.p8$|service-account"` → exit 1 (0 tracked, CLEAN). `.gitignore` L132-136 (`*-fcm-credential*.json`, `*fcm-service-account*.json`, `google-services.json`, `GoogleService-Info.plist`, `*.p8`) + `mobile/.gitignore` L8 (`*.p8`). `fcm-sender.ts` fragment-assembly(`['private','_key'].join('')`, `['-----BEGIN','PRIVATE','KEY-----'].join(' ')`) 검증 — 리터럴 token source 부재. (`service-account` 구문 매칭 2건은 `index.ts`/`fcm-fanout.ts` 설명 comment 이며 credential material 아님.)
+  - Baseline: M7 트리, 이번 실행.
+  - Gaps: 없음.
+  - Residual-risk: redact 함수는 알려진 패턴만 scrub(M3 residual-risk 계승).
+
+**검증 명령(verbatim exit)**:
+- M7 신규 테스트 2개: `pnpm exec vitest run src/main/runtime/dispatch-ws-foreground-regression.test.ts src/main/runtime/dispatch-fcm-integration.test.ts` → Test Files 2 passed (2) / Tests 12 passed (12)
+- 전체 FCM desktop 회귀(M1–M7): `pnpm exec vitest run src/main/runtime/{push-payload-crypto,fcm-sender,fcm-fanout,dispatch-fcm-gate,dispatch-ws-foreground-regression,dispatch-fcm-integration,device-registry}.test.ts src/main/persistence.test.ts` → Test Files 8 passed (8) / Tests 434 passed (434)
+- 전체 FCM mobile 회귀(M1/M5): `./node_modules/.bin/vitest run --root mobile src/notifications/ src/transport/push-keypair.test.ts` → Test Files 8 passed (8) / Tests 47 passed (47)
+- desktop typecheck GATE: `pnpm typecheck` → exit 0
+- mobile typecheck GATE: `mobile/node_modules/.bin/tsc -p mobile/tsconfig.json --noEmit` → exit 0
+- oxlint(신규 M7 파일 2): exit 0 (no findings)
+- max-lines ratchet: `pnpm run check:max-lines-ratchet` → "max-lines ratchet OK — 355 grandfathered suppression(s), no new bypasses"
+- credential sentinel(production source): strict marker 0 matches; tracked credential 파일 0건; `.gitignore` 커버 확인
+- coverage toolchain: 프로젝트에 `@vitest/coverage-v8` 부재(M1–M6 확인과 동일) → 커버리지 % 대신 test-count(M7 신규 12 = WS regression 7 + integration 5) + 전체 FCM 434+47 passed 회귀 없음 증거 제시
+
+**Baseline 회귀 (FULL suite, 사전 정의 Gaps)**:
+- desktop FULL suite: `pnpm exec vitest run --config config/vitest.config.ts` → Test Files 2664 passed | 5 skipped (1 pre-existing fail: `src/renderer/src/hooks/useIpcEvents.test.ts` — renderer tab-bar test, FCM branch 가 renderer 파일 미수정, FCM 무관 pre-existing baseline failure)
+- mobile FULL suite: `./node_modules/.bin/vitest run --root mobile` → Test Files 193 passed (3 pre-existing fail: `MobileFileExplorerPanel.test.ts` 7, `terminal-webview-engine-error.test.ts` 8, `transport/client-context.test.ts` 2 — 전부 `react-test-renderer` `ReferenceError: React is not defined` 환경/JSX-runtime 이슈, FCM branch 가 해당 파일 미수정, FCM 무관 pre-existing baseline failure)
+
+**PRESERVE 무결성 (M7)**: production 코드 변경 0건(`git diff --name-only HEAD -- src/main mobile/src | grep -v test` → empty). M1–M6 모든 production 파일 미수정. WS ephemeral E2EE 경로, M2 bundle format, M3 data-only body, M4 dispatch gate, M5 mobile decrypt, M6 platform branching — 전부 미수정/존중. M7 는 regression + integration TESTS 추가 + credential sentinel 정식 수용화 only.
+
 ## §E.3 Run-phase Audit-Ready Signal
 
-_<pending run-phase>_
+- run_complete_at: 2026-07-12T02:05:00Z
+- run_status: audit-ready
+
+**M1–M7 evidence 요약**:
+
+| AC ID | 심각도 | 상태 | 증거 위치(마일스톤) |
+|-------|--------|------|---------------------|
+| AC-FCM-001 (WS 회귀 없음) | P0 | **PASS** | M4 unit 특성화(3) + **M7 FULL 회귀(7)** — `dispatch-ws-foreground-regression.test.ts` |
+| AC-FCM-002a (리스너 0 → FCM 전송) | P0 | **PASS** | M4 gate + fanout + **M7 end-to-end integration(5)** — `dispatch-fcm-integration.test.ts` |
+| AC-FCM-002b (리스너 ≥1 → FCM 미전송) | P0 | **PASS** | M4 gate + **M7 integration(WS subscriber 시 fetch+minter 0 호출)** |
+| AC-FCM-003 (영속 키 암호화 왕복) | P0 | **PASS** | M2(desktop half 17) + M5(mobile half 6 cross-platform) + **M7 integration(M2↔M5 round-trip)** |
+| AC-FCM-004a (RPC + DeviceEntry 저장) | P0 | **PASS** | M1(device-registry 6 + notifications 6) |
+| AC-FCM-004b (토큰 갱신 멱등) | P1 | **PASS** | M1(갱신 덮어쓰기) |
+| AC-FCM-005 (notificationId 단일 dedupe) | P0 | **PASS** | M4(carrier 전달) + M5(mobile dedupe 5) + **M7 integration(data.notificationId)** |
+| AC-FCM-006a (Android FCM 직접) | P0 | **code-complete PASS / device-E2E = Gap** | M6(sender android HIGH 3) + **M7 integration(android HIGH)** |
+| AC-FCM-006b (iOS APNs via FCM) | P0 | **code-complete PASS / device-E2E = Gap** | M6(sender apns 3) + **M7 integration(ios apns)** |
+| AC-FCM-007a (OAuth2 mint + messages:send) | P0 | **PASS** | M3(sender 12) |
+| AC-FCM-007b (service-account safeStorage + grep sentinel) | P0 | **PASS** | M3(persistence 3) + **M7 formalized sentinel(strict 0 matches + .gitignore + fragment-assembly)** |
+| AC-FCM-007c (FCM HTTP 에러 redact/비블로킹) | P1 | **PASS** | M3(redact + non-block) |
+| AC-FCM-008 (4KB 초과 graceful degrade) | P1 | **PASS** | M2(17 boundary) |
+| AC-FCM-009 (권한/토글 게이트) | P1 | **PASS** | M5(gate-dedupe 5) |
+
+**Test totals (M1–M7)**:
+- desktop FCM-related: 434 passed (8 files; M7 신규 12 포함)
+- mobile FCM-related: 47 passed (8 files)
+- FULL desktop suite baseline: 28020 passed | 39 skipped (1 pre-existing FCM-무관 renderer fail — Gap)
+- FULL mobile suite baseline: 1421 passed | 2 skipped (17 pre-existing FCM-무관 react-test-renderer 환경 fail — Gap)
+
+**Known Gaps (run-phase → sync/post-merge)**:
+1. **AC-FCM-006a/006b device-E2E**: Android/iOS 기기 백그라운드/종료-state 실제 FCM/APNs 수신 — M6 code-complete + M7 integration 으로 message shape 검증 완료; 실제 기기 전달은 사용자 기기에서 post-merge 검증(deferred).
+2. **Coverage-toolchain Gap**: 프로젝트에 `@vitest/coverage-v8` 부재 → 커버리지 % 대신 test-count(FCM 434+47 = 481 passed) + FULL suite baseline 회귀 증거 제시(M1–M7 일관됨).
+3. **FULL suite pre-existing failures**: desktop 1(renderer useIpcEvents) + mobile 17(react-test-renderer `React is not defined`) — 전부 FCM branch 미수정 파일, FCM 무관 pre-existing baseline failure.
+4. **`.p8` APNs auth key / service-account JSON 업로드**: Firebase Console / EAS credentials CLI — 사용자 action(M6 Gap 계승).
+
+**Residual-risk (run-phase → sync)**: live Google OAuth2/FCM 라운드트립 정확성(주입 minter/fetch 로 대체), `google-auth-library@10.9.0` `getAccessToken()` 반환형, iOS APNs background budget throttle, FCM `AndroidConfig.priority` uppercase enum 의존.
 
 ## §E.4 Sync-phase Audit-Ready Signal
 
