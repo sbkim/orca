@@ -9,6 +9,7 @@ import { colors } from '../src/theme/mobile-theme'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { RpcClientProvider } from '../src/transport/client-context'
 import { getNotificationNavigationPath } from '../src/notifications/notification-routing'
+import { handleFcmDataNotification } from '../src/notifications/fcm-push-receiver'
 import { loadHosts } from '../src/transport/host-store'
 import { extractPairingCodeFromUrl } from '../src/transport/pairing'
 
@@ -134,6 +135,26 @@ export default function RootLayout() {
       sub.remove()
     }
   }, [router])
+
+  // Why: FCM supplemental push handler (SPECIFIC-FCM-001, M5). FCM data-only
+  // messages (no `notification` field) arrive with the encrypted ciphertext in
+  // content.data.payload; the OS never sees plaintext (E2EE preserved). We
+  // route any payload-bearing data message to the receiver, which derives the
+  // persistent FCM-shared key per paired host, decrypts, and reuses the existing
+  // local-notification path (dedupe + permission/toggle gate). The guard checks
+  // for `payload` so locally-scheduled notifications — whose data is
+  // {source, hostId, ...} with no payload key — never re-enter the receiver
+  // (no self-loop). Full killed-state delivery requires the M6 native config
+  // (googleServicesFile + background task); this is the JS-side reception wiring.
+  useEffect(() => {
+    const sub = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification.request.content.data
+      if (data && typeof data === 'object' && 'payload' in data) {
+        void handleFcmDataNotification(data as Record<string, unknown>)
+      }
+    })
+    return () => sub.remove()
+  }, [])
 
   // Why: hide the native splash only once the navigation Stack has been laid
   // out — this is the earliest moment the user will see actual app content.
