@@ -37,6 +37,7 @@ import {
 } from '../src/transport/client-context'
 import { classifyConnection, verdictDisplayLabel } from '../src/transport/connection-health'
 import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
+import { usePushTokenRegistration } from '../src/notifications/use-push-token-registration'
 import type { ConnectionState, HostProfile } from '../src/transport/types'
 import { triggerMediumImpact } from '../src/platform/haptics'
 import { OrcaLogo } from '../src/components/OrcaLogo'
@@ -336,6 +337,12 @@ export default function HomeScreen() {
       primeHosts(hosts)
     }
   }, [hosts, primeHosts])
+
+  // Why: after E2EE pairing completes (client reaches 'connected'), register
+  // the FCM device token + long-lived mobile public key with the desktop so its
+  // FCM sender can reach this device when no WS subscriber is connected. Lives
+  // in a dedicated hook so this screen stays under the file max-lines ceiling.
+  usePushTokenRegistration(allClients)
   const allClientsRef = useRef<Array<{ hostId: string; client: RpcClient }>>([])
   // Why: the focus callback stays stable to avoid refetching on every
   // client-store render, but it still needs the latest host clients.

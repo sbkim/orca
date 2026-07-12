@@ -279,6 +279,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'linear.updateIssue',
   'markdown.readTab',
   'markdown.saveTab',
+  'notifications.registerPushToken',
   'notifications.subscribe',
   'notifications.unsubscribe',
   'preflight.check',
@@ -1024,7 +1025,12 @@ export class OrcaRuntimeRpcServer {
         signal: abortRegistration?.signal,
         sendBinary,
         registerBinaryStreamHandler: (streamId, handler) =>
-          this.registerBinaryStreamHandler(connectionId, streamId, handler)
+          this.registerBinaryStreamHandler(connectionId, streamId, handler),
+        // Why: push-token registration resolves the calling device via clientId
+        // and persists FCM fields on its DeviceEntry. The server owns the
+        // deviceRegistry; injecting it here is the only path for an RPC handler
+        // to write a DeviceEntry (OrcaRuntimeService has no registry access).
+        deviceRegistry: this.deviceRegistry ?? undefined
       })
     } finally {
       abortRegistration?.dispose()

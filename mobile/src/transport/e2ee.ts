@@ -31,7 +31,11 @@ export function deriveSharedKey(ourSecretKey: Uint8Array, peerPublicKey: Uint8Ar
   return u8(nacl.box.before(u8(peerPublicKey), u8(ourSecretKey)))
 }
 
-function uint8ToBase64(bytes: Uint8Array): string {
+// Why: generic base64 encoder over a Uint8Array. Exported so the persistent
+// push keypair module (push-keypair.ts) can serialize the long-lived secret key
+// the same way the ephemeral path serializes public keys, without duplicating
+// the Hermes-safe loop. The name is intentionally generic (not publicKey-only).
+export function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]!)
@@ -59,12 +63,12 @@ export function publicKeyFromBase64(b64: string): Uint8Array {
 }
 
 export function publicKeyToBase64(key: Uint8Array): string {
-  return uint8ToBase64(key)
+  return bytesToBase64(key)
 }
 
 export function encrypt(plaintext: string, sharedKey: Uint8Array): string {
   const messageBytes = u8(new TextEncoder().encode(plaintext))
-  return uint8ToBase64(encryptBytes(messageBytes, sharedKey))
+  return bytesToBase64(encryptBytes(messageBytes, sharedKey))
 }
 
 export function decrypt(encrypted: string, sharedKey: Uint8Array): string | null {

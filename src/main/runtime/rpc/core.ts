@@ -5,6 +5,7 @@
 import { ZodError, type ZodType } from 'zod'
 import type { TerminalStreamFrame } from '../../../shared/terminal-stream-protocol'
 import type { OrcaRuntimeService } from '../orca-runtime'
+import type { DeviceRegistry } from '../device-registry'
 
 export type RpcEnvelopeMeta = {
   runtimeId: string
@@ -75,6 +76,14 @@ export type RpcContext = {
     streamId: number,
     handler: (frame: TerminalStreamFrame) => void
   ) => () => void
+  // Why: push-token registration (notifications.registerPushToken) must resolve
+  // the calling device via its auth token (clientId) and persist FCM fields on
+  // its DeviceEntry. OrcaRuntimeService has no device-registry access (the
+  // registry is owned by OrcaRuntimeRpcServer), so the server that builds this
+  // ctx — the only component holding both deviceRegistry and clientId — injects
+  // it here. Undefined for in-process/Unix-socket callers that have no paired
+  // device context (REQ-FCM-008, REQ-FCM-019).
+  deviceRegistry?: DeviceRegistry
 }
 
 export type RpcHandler<TParams> = (params: TParams, ctx: RpcContext) => Promise<unknown> | unknown
