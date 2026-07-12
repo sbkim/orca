@@ -10,6 +10,7 @@
 // send lives in M4 (orca-runtime dispatchMobileNotification). This module must
 // not be wired into that loop yet.
 //
+import { logFcmPush } from './fcm-push-logger'
 // E2EE note: the FCM `data` map carries the M2 ciphertext opaquely. A FCM
 // `notification` field is deliberately omitted — data-only plus mobile local
 // rendering preserves end-to-end encryption (plan.md anti-pattern section).
@@ -152,14 +153,21 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
   return {
     async send(input: SendFcmMessageInput): Promise<FcmSendOutcome> {
       const { credentials, deviceFcmToken, ciphertextB64, notificationId, pushPlatform } = input
+      logFcmPush('fcm.send-attempt', {
+        notificationId,
+        platform: pushPlatform,
+        project: credentials.projectId
+      })
 
       let token: string
       try {
         token = await getAccessToken(credentials)
       } catch (err) {
+        const mintReason = redactAuthError(`FCM token mint failed: ${errorMessage(err)}`, undefined)
+        logFcmPush('fcm.mint-failed', { notificationId, reason: mintReason })
         return {
           status: 'failed',
-          redactedReason: redactAuthError(`FCM token mint failed: ${errorMessage(err)}`, undefined)
+          redactedReason: mintReason
         }
       }
 
@@ -200,6 +208,7 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
           body: JSON.stringify(body)
         })
         if (res.ok) {
+          logFcmPush('fcm.sent', { notificationId, httpStatus: res.status })
           return { status: 'sent', httpStatus: res.status }
         }
         let responseText = ''
@@ -208,15 +217,23 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
         } catch {
           // Reading the body is best-effort; redaction below still applies.
         }
+        const httpReason = redactAuthError(`FCM HTTP ${res.status}: ${responseText}`, token)
+        logFcmPush('fcm.send-failed', {
+          notificationId,
+          httpStatus: res.status,
+          reason: httpReason
+        })
         return {
           status: 'failed',
           httpStatus: res.status,
-          redactedReason: redactAuthError(`FCM HTTP ${res.status}: ${responseText}`, token)
+          redactedReason: httpReason
         }
       } catch (err) {
+        const netReason = redactAuthError(`FCM network error: ${errorMessage(err)}`, token)
+        logFcmPush('fcm.network-error', { notificationId, reason: netReason })
         return {
           status: 'failed',
-          redactedReason: redactAuthError(`FCM network error: ${errorMessage(err)}`, token)
+          redactedReason: netReason
         }
       }
     }
