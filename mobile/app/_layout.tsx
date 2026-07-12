@@ -10,6 +10,7 @@ import { OrcaLogo } from '../src/components/OrcaLogo'
 import { RpcClientProvider } from '../src/transport/client-context'
 import { getNotificationNavigationPath } from '../src/notifications/notification-routing'
 import { handleFcmDataNotification } from '../src/notifications/fcm-push-receiver'
+import { getMessaging, onMessage } from '@react-native-firebase/messaging'
 import { loadHosts } from '../src/transport/host-store'
 import { extractPairingCodeFromUrl } from '../src/transport/pairing'
 
@@ -153,7 +154,20 @@ export default function RootLayout() {
         void handleFcmDataNotification(data as Record<string, unknown>)
       }
     })
-    return () => sub.remove()
+    // SPEC-FCM-001 AC-006b / R3: once @react-native-firebase/messaging swizzles
+    // the AppDelegate, iOS foreground data-only messages are delivered to RNFB's
+    // onMessage (not expo-notifications' listener). Add a parallel handler so the
+    // E2EE ciphertext still reaches handleFcmDataNotification.
+    const unsubOnMessage = onMessage(getMessaging(), (message) => {
+      const data = message.data
+      if (data && typeof data === 'object' && 'payload' in data) {
+        void handleFcmDataNotification(data as Record<string, unknown>)
+      }
+    })
+    return () => {
+      sub.remove()
+      unsubOnMessage()
+    }
   }, [])
 
   // Why: hide the native splash only once the navigation Stack has been laid
