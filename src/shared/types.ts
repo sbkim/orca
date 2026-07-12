@@ -3176,6 +3176,31 @@ export type NotificationDeliveryProbeResult = {
   authoritative: boolean
 }
 
+// ── FCM supplemental push channel (SPEC-FCM-001) ───────────────────────────
+// Why: the onboarding handler validates the pasted Google credential JSON and
+// persists it via persistence.setFcmServiceAccountJson (safeStorage-encrypted
+// at rest). These result types are the narrow renderer-facing surface: status
+// exposes only configured-state + projectId, never the raw credential JSON
+// (which carries the private key), so the renderer cannot leak the secret.
+
+/** Result of `fcm:setServiceAccount`. `projectId` is parsed from the validated
+ *  JSON's `project_id` field so the renderer can confirm which project was
+ *  onboarded without holding the credential. */
+export type FcmServiceAccountSetResult =
+  | { ok: true; projectId: string }
+  | { ok: false; error: string }
+
+/** Result of `fcm:getServiceAccountStatus`. Deliberately carries no raw JSON:
+ *  `configured` is the only signal the renderer needs, with `projectId` as a
+ *  non-secret confirmation of which project is active. */
+export type FcmServiceAccountStatus = {
+  configured: boolean
+  projectId?: string | null
+}
+
+/** Result of `fcm:clearServiceAccount`. */
+export type FcmServiceAccountClearResult = { ok: true }
+
 export type WorktreeCardProperty =
   | 'status'
   | 'unread'

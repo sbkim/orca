@@ -43,6 +43,9 @@ import type {
   NotificationSoundDataResult,
   NotificationSoundPathResult,
   NotificationSoundResult,
+  FcmServiceAccountClearResult,
+  FcmServiceAccountSetResult,
+  FcmServiceAccountStatus,
   NestedRepoScanResult,
   OnboardingState,
   PersistedUIState,
@@ -2130,6 +2133,18 @@ const api = {
       }
     }
   },
+
+  // Why: setServiceAccount is the only call that carries the raw credential
+  // (the user's paste); status returns just configured-state + projectId so the
+  // renderer never holds the private key after onboarding.
+  fcm: {
+    setServiceAccount: (json: string): Promise<FcmServiceAccountSetResult> =>
+      ipcRenderer.invoke('fcm:setServiceAccount', json),
+    getServiceAccountStatus: (): Promise<FcmServiceAccountStatus> =>
+      ipcRenderer.invoke('fcm:getServiceAccountStatus'),
+    clearServiceAccount: (): Promise<FcmServiceAccountClearResult> =>
+      ipcRenderer.invoke('fcm:clearServiceAccount')
+  } satisfies PreloadApi['fcm'],
 
   onboarding: {
     get: (): Promise<OnboardingState> => ipcRenderer.invoke('onboarding:get'),

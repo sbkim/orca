@@ -27,6 +27,7 @@ import { registerRuntimeEnvironmentHandlers } from './runtime-environments'
 import { registerEphemeralVmHandlers } from './ephemeral-vm'
 import { registerAiVaultHandlers } from './ai-vault'
 import { registerNativeChatHandlers } from './native-chat'
+import { registerFcmHandlers } from './fcm-onboarding'
 import { registerNotificationHandlers } from './notifications'
 import { registerNotebookHandlers } from './notebook'
 import { registerOnboardingHandlers } from './onboarding'
@@ -141,6 +142,10 @@ export function registerCoreHandlers(
   registerStatsHandlers(stats)
   registerMemoryHandlers(store)
   registerNotificationHandlers(store, runtime)
+  // Why: FCM onboarding only needs the persistence store (safeStorage-encrypted
+  // credential read/write). Registered unconditionally so the channels exist
+  // even on hosts where the runtime has no FCM fan-out wired yet.
+  registerFcmHandlers(store)
   registerNotebookHandlers(store)
   registerOnboardingHandlers(store)
   registerDeveloperPermissionHandlers()
