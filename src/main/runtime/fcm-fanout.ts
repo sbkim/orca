@@ -116,7 +116,14 @@ export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
             credentials,
             deviceFcmToken: device.fcmToken,
             ciphertextB64: outcome.ciphertextB64,
-            notificationId
+            notificationId,
+            // Why: selects android vs ios message shaping in the M3 sender
+            // (REQ-FCM-016). A device that registered a push token always
+            // carries pushPlatform (AC-FCM-004a sends token + platform together);
+            // legacy/partial entries without it fall back to the android direct
+            // FCM path — the least-surprising transport when the platform is
+            // genuinely unknown.
+            pushPlatform: device.pushPlatform ?? 'android'
           })
           if (result.status === 'failed') {
             logError('FCM supplemental push failed', {

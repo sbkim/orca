@@ -17,6 +17,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.stably.orca.mobile",
       "buildNumber": "1",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Orca connects to the desktop app on your local network.",
         "NSMicrophoneUsageDescription": "Allow Orca to record voice dictation and transcribe it on your paired desktop.",
@@ -74,6 +75,7 @@
       "usesCleartextTraffic": true,
       "allowBackup": false,
       "permissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"],
+      "googleServicesFile": "./google-services.json",
       "package": "com.stably.orca.mobile",
       "versionCode": 7
     },
