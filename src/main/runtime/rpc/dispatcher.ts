@@ -28,6 +28,7 @@ import {
 import { ALL_RPC_METHODS } from './methods'
 import { emulatorProbe, emulatorProbeError } from '../../emulator/emulator-probe'
 import type { OrcaRuntimeService } from '../orca-runtime'
+import type { DeviceRegistry } from '../device-registry'
 
 export type DispatcherOptions = {
   runtime: OrcaRuntimeService
@@ -107,6 +108,9 @@ export class RpcDispatcher {
         streamId: number,
         handler: (frame: TerminalStreamFrame) => void
       ) => () => void
+      // Why: forwarded so push-token registration handlers can resolve the
+      // calling device and persist FCM fields. See RpcContext.deviceRegistry.
+      deviceRegistry?: DeviceRegistry
     }
   ): Promise<void> {
     const meta = this.meta()
@@ -136,7 +140,8 @@ export class RpcDispatcher {
           clientId: options?.clientId,
           clientKind: options?.clientKind,
           sendBinary: options?.sendBinary,
-          registerBinaryStreamHandler: options?.registerBinaryStreamHandler
+          registerBinaryStreamHandler: options?.registerBinaryStreamHandler,
+          deviceRegistry: options?.deviceRegistry
         })
         this.recordRuntimeFeatureInteraction(request.method, result, undefined, request.params)
         reply(JSON.stringify(successResponse(request.id, meta, result)))
@@ -170,7 +175,8 @@ export class RpcDispatcher {
           clientId: options?.clientId,
           clientKind: options?.clientKind,
           sendBinary: options?.sendBinary,
-          registerBinaryStreamHandler: options?.registerBinaryStreamHandler
+          registerBinaryStreamHandler: options?.registerBinaryStreamHandler,
+          deviceRegistry: options?.deviceRegistry
         },
         emit
       )
