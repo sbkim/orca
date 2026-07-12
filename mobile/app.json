@@ -81,6 +81,8 @@
     },
     "plugins": [
       "expo-router",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
       "./plugins/android-respect-rotation-lock.js",
       [
         "expo-splash-screen",
@@ -107,7 +109,9 @@
         "expo-build-properties",
         {
           "ios": {
-            "buildReactNativeFromSource": true
+            "buildReactNativeFromSource": true,
+            "useFrameworks": "static",
+            "forceStaticLinking": ["RNFBApp", "RNFBMessaging"]
           },
           "android": {
             "usesCleartextTraffic": true

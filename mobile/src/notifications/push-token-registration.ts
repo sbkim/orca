@@ -6,6 +6,7 @@
 // unit-testable in isolation.
 import * as Notifications from 'expo-notifications'
 import { Platform } from 'react-native'
+import { getMessaging, getToken } from '@react-native-firebase/messaging'
 import type { RpcResponse } from '../transport/types'
 import { loadOrCreatePushKeypair } from '../transport/push-keypair'
 import { ensureNotificationPermissions } from './mobile-notifications'
@@ -43,10 +44,21 @@ export async function registerPushTokenWithDesktop(
     return { registered: false, reason: 'permission-denied' }
   }
 
-  // REQ-FCM-008: acquire the FCM (android) / APNs-via-FCM (ios) device push
-  // token. expo-notifications resolves the transport-specific token.
-  const tokenResult = await Notifications.getDevicePushTokenAsync()
-  const token = tokenResult?.data
+  // REQ-FCM-008: acquire the push token. On Android expo-notifications returns
+  // the FCM registration token directly. On iOS expo-notifications returns the
+  // raw APNs device token, which FCM v1 messages:send rejects — so iOS uses RNFB
+  // messaging.getToken() to obtain a real FCM registration token (AC-006b).
+  let token: string
+  if (Platform.OS === 'ios') {
+    try {
+      token = await getToken(getMessaging())
+    } catch {
+      return { registered: false, reason: 'no-token' }
+    }
+  } else {
+    const tokenResult = await Notifications.getDevicePushTokenAsync()
+    token = tokenResult?.data ?? ''
+  }
   if (typeof token !== 'string' || token.length === 0) {
     return { registered: false, reason: 'no-token' }
   }
