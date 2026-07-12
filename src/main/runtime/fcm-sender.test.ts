@@ -124,7 +124,8 @@ describe('createFcmSender — request shape (AC-FCM-007a)', () => {
       credentials,
       deviceFcmToken: 'device-token-abc',
       ciphertextB64: 'YWJjZGVm', // M2 encryptPushPayload output (base64 ciphertext)
-      notificationId: 'n1'
+      notificationId: 'n1',
+      pushPlatform: 'android'
     })
     expect(res).toEqual({ status: 'sent', httpStatus: 200 })
     expect(captured).not.toBeNull()
@@ -143,7 +144,8 @@ describe('createFcmSender — request shape (AC-FCM-007a)', () => {
       credentials,
       deviceFcmToken: 'device-token-abc',
       ciphertextB64: 'YWJjZGVm',
-      notificationId: 'n1'
+      notificationId: 'n1',
+      pushPlatform: 'android'
     })
     const body = JSON.parse(captured!.init.body as string)
     expect(body.message.token).toBe('device-token-abc')
@@ -158,6 +160,91 @@ describe('createFcmSender — request shape (AC-FCM-007a)', () => {
 
   it('exposes the firebase.messaging scope constant', () => {
     expect(FCM_MESSAGING_SCOPE).toBe('https://www.googleapis.com/auth/firebase.messaging')
+  })
+})
+
+describe('createFcmSender — platform branching (AC-FCM-006a android / AC-FCM-006b ios)', () => {
+  let captured: { init: RequestInit } | null = null
+  const minter = vi.fn(async () => ({ token: 'BRANCH_TOKEN', expiresAtMs: 60_000 }))
+  const fetchImpl = vi.fn(async (_url: string, init: RequestInit): Promise<Response> => {
+    captured = { init }
+    return makeResponse({ ok: true, status: 200, body: '{}' })
+  })
+
+  beforeEach(() => {
+    captured = null
+    minter.mockClear()
+    fetchImpl.mockClear()
+  })
+
+  function sender() {
+    return createFcmSender({ mintAccessToken: minter, fetchImpl, now: () => 0, reMintLeadMs: 1000 })
+  }
+
+  it('android: sets message.android HIGH priority, omits message.apns, stays data-only', async () => {
+    await sender().send({
+      credentials,
+      deviceFcmToken: 'droid-token',
+      ciphertextB64: 'YW5kcm9pZA',
+      notificationId: 'a1',
+      pushPlatform: 'android'
+    })
+    const body = JSON.parse(captured!.init.body as string)
+    // Why HIGH (not 'high'): the FCM v1 AndroidConfig.priority enum serializes
+    // to the uppercase JSON token HIGH/NORMAL; lowercase would be rejected as
+    // PRIORITY_UNSPECIFIED and silently lose the prompt-delivery intent.
+    expect(body.message.android).toEqual({ priority: 'HIGH' })
+    expect(body.message.apns).toBeUndefined()
+    // Data-only invariant preserved on Android (E2EE).
+    expect(body.message.data.payload).toBe('YW5kcm9pZA')
+    expect(body.message.data.notificationId).toBe('a1')
+    expect(body.message.notification).toBeUndefined()
+  })
+
+  it('ios: sets message.apns with content-available background data + apns-priority 10, omits message.android, stays data-only', async () => {
+    await sender().send({
+      credentials,
+      deviceFcmToken: 'ios-token',
+      ciphertextB64: 'aW9zZGF0YQ',
+      notificationId: 'i1',
+      pushPlatform: 'ios'
+    })
+    const body = JSON.parse(captured!.init.body as string)
+    // Why content-available=1 + apns-priority '10': FCM brokers the data
+    // message via APNs to a backgrounded/killed iOS app; content-available 1 is
+    // the APNs background-data signal and '10' is the documented high-priority
+    // APNs header value (REQ-FCM-016).
+    expect(body.message.apns).toEqual({
+      headers: { 'apns-priority': '10' },
+      payload: { aps: { 'content-available': 1 } }
+    })
+    expect(body.message.android).toBeUndefined()
+    // Data-only invariant preserved on iOS (E2EE).
+    expect(body.message.data.payload).toBe('aW9zZGF0YQ')
+    expect(body.message.data.notificationId).toBe('i1')
+    expect(body.message.notification).toBeUndefined()
+  })
+
+  it('both platforms carry the identical ciphertext opaquely in data.payload (no plaintext leak)', async () => {
+    const cipher = 'c3VwZXJzZWNyZXQ'
+    for (const pushPlatform of ['android', 'ios'] as const) {
+      await sender().send({
+        credentials,
+        deviceFcmToken: 't',
+        ciphertextB64: cipher,
+        notificationId: 'n',
+        pushPlatform
+      })
+      const body = JSON.parse(captured!.init.body as string)
+      expect(body.message.data.payload).toBe(cipher)
+      expect(body.message.notification).toBeUndefined()
+      // No alert/badge/sound keys appear anywhere — APS carries only
+      // content-available for background data delivery.
+      const aps = body.message.apns?.payload?.aps
+      expect(aps?.alert).toBeUndefined()
+      expect(aps?.badge).toBeUndefined()
+      expect(aps?.sound).toBeUndefined()
+    }
   })
 })
 
@@ -191,7 +278,8 @@ describe('createFcmSender — mint caching (AC-FCM-007a)', () => {
       credentials,
       deviceFcmToken: 'd',
       ciphertextB64: 'c',
-      notificationId: 'n1'
+      notificationId: 'n1',
+      pushPlatform: 'android'
     })
     expect(minter).toHaveBeenCalledTimes(1)
     expect((fetchImpl.mock.calls[0]![1] as RequestInit).headers).toMatchObject({
@@ -204,7 +292,8 @@ describe('createFcmSender — mint caching (AC-FCM-007a)', () => {
       credentials,
       deviceFcmToken: 'd',
       ciphertextB64: 'c',
-      notificationId: 'n2'
+      notificationId: 'n2',
+      pushPlatform: 'android'
     })
     expect(minter).toHaveBeenCalledTimes(1)
     expect((fetchImpl.mock.calls[1]![1] as RequestInit).headers).toMatchObject({
@@ -217,7 +306,8 @@ describe('createFcmSender — mint caching (AC-FCM-007a)', () => {
       credentials,
       deviceFcmToken: 'd',
       ciphertextB64: 'c',
-      notificationId: 'n3'
+      notificationId: 'n3',
+      pushPlatform: 'android'
     })
     expect(minter).toHaveBeenCalledTimes(2)
     expect((fetchImpl.mock.calls[2]![1] as RequestInit).headers).toMatchObject({
@@ -245,7 +335,8 @@ describe('createFcmSender — error redact and non-blocking (AC-FCM-007c)', () =
       credentials,
       deviceFcmToken: 'd',
       ciphertextB64: 'c',
-      notificationId: 'n1'
+      notificationId: 'n1',
+      pushPlatform: 'android'
     })
 
     // Non-blocking: resolved to a failed outcome rather than throwing into a
@@ -277,7 +368,8 @@ describe('createFcmSender — error redact and non-blocking (AC-FCM-007c)', () =
       credentials,
       deviceFcmToken: 'd',
       ciphertextB64: 'c',
-      notificationId: 'n1'
+      notificationId: 'n1',
+      pushPlatform: 'android'
     })
 
     expect(outcome.status).toBe('failed')
@@ -307,7 +399,8 @@ describe('createFcmSender — error redact and non-blocking (AC-FCM-007c)', () =
       credentials,
       deviceFcmToken: 'd',
       ciphertextB64: 'c',
-      notificationId: 'n1'
+      notificationId: 'n1',
+      pushPlatform: 'android'
     })
 
     expect(outcome.status).toBe('failed')

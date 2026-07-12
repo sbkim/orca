@@ -21,6 +21,7 @@
 // material from any diagnostic string before it is returned to the caller.
 import { GoogleAuth } from 'google-auth-library'
 import { net } from 'electron'
+import type { PushPlatform } from './device-registry'
 
 export const FCM_MESSAGING_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging'
 
@@ -55,6 +56,13 @@ export type SendFcmMessageInput = {
   ciphertextB64: string
   // Single-namespace dedupe id shared with the WS path (AC-FCM-005, wired in M4).
   notificationId: string
+  // Why (REQ-FCM-016): selects the FCM transport shaping. Android gets
+  // `message.android` (HIGH priority for prompt background delivery); iOS gets
+  // `message.apns` so FCM brokers the data message via APNs to the
+  // backgrounded/killed app (content-available background data + apns-priority
+  // 10). Both stay data-only — no FCM `notification` field — so E2EE is
+  // preserved (plan.md anti-pattern section; mobile decrypts + renders locally).
+  pushPlatform: PushPlatform
 }
 
 export type FcmSendOutcome =
@@ -143,7 +151,7 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
 
   return {
     async send(input: SendFcmMessageInput): Promise<FcmSendOutcome> {
-      const { credentials, deviceFcmToken, ciphertextB64, notificationId } = input
+      const { credentials, deviceFcmToken, ciphertextB64, notificationId, pushPlatform } = input
 
       let token: string
       try {
@@ -157,13 +165,27 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
 
       // Data-only FCM message: the `data` map carries the M2 ciphertext. The
       // `notification` field is intentionally absent (plan.md anti-pattern).
+      // Platform transport shaping (REQ-FCM-016): android gets HIGH-priority
+      // delivery; ios gets APNs content-available background data + apns-priority
+      // 10 so FCM brokers the data message via APNs to a backgrounded/killed app.
+      // Neither adds a FCM `notification` field — E2EE is preserved on both.
+      const platformConfig =
+        pushPlatform === 'android'
+          ? { android: { priority: 'HIGH' } }
+          : {
+              apns: {
+                headers: { 'apns-priority': '10' },
+                payload: { aps: { 'content-available': 1 } }
+              }
+            }
       const body = {
         message: {
           token: deviceFcmToken,
           data: {
             payload: ciphertextB64,
             notificationId
-          }
+          },
+          ...platformConfig
         }
       }
       const url = FCM_MESSAGES_ENDPOINT_TEMPLATE.replace('{project}', credentials.projectId)

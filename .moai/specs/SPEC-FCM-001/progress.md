@@ -240,6 +240,42 @@ tier: L
 
 **PRESERVE 무결성 (M5)**: WS ephemeral E2EE 경로(`rpc-client.ts` ephemeral keypair, `e2ee-channel.ts` WS 세션키) 미수정, M1 `push-keypair.ts` 미수정(secret 읽기 전용), M2 `push-payload-crypto.ts`/M3 `fcm-sender.ts`/M4 `fcm-fanout.ts` + dispatch 게이트(desktop) 미수정, M2 bundle format(nonce+ciphertext) 동일 소비.
 
+### M6 — 플랫폼 전달 (Android 직접 + iOS APNs via FCM) + Expo config (2026-07-11)
+
+**구현 파일 (TDD RED→GREEN, cross-surface)**:
+- `src/main/runtime/fcm-sender.ts` (수정, M3 sender) — `SendFcmMessageInput` 에 `pushPlatform: PushPlatform` 필드 추가(REQ-FCM-016). `send()` 본문에 platform branching: android → `message.android = { priority: 'HIGH' }` (FCM v1 `AndroidConfig.priority` enum 은 uppercase HIGH/NORMAL — lowercase 는 PRIORITY_UNSPECIFIED 로 silent fallback 위험); ios → `message.apns = { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } }` (FCM 이 data message 를 APNs 로 broker 하여 backgrounded/killed 앱 전달). data-only invariant 양단 유지(`notification` 필드 부재 → E2EE 보존).
+- `src/main/runtime/fcm-fanout.ts` (수정, M4) — `sender.send` 호출에 `pushPlatform: device.pushPlatform ?? 'android'` 전달. legacy/partial DeviceEntry(플랫폼 미등록)는 android 직접 FCM 경로로 fallback(AC-FCM-004a 가 token+platform 을 함께 보내므로 정상 등록 기기는 항상 platform 보유).
+- `mobile/app.json` (수정) — `android.googleServicesFile: "./google-services.json"`, `ios.googleServicesFile: "./GoogleService-Info.plist"` 추가. 두 파일 모두 사용자 Firebase 프로젝트 산출물이며 `.gitignore` 로 커밋 차단됨.
+- `mobile/eas.json` (신규) — EAS build profiles scaffold(development/preview/production). `.p8` APNs auth key 와 service-account JSON 은 커밋되지 않음(사용자가 Firebase Console 또는 EAS credentials CLI 로 업로드).
+- `src/main/runtime/fcm-sender.test.ts` (수정) — platform branching 단위 테스트 3개 신규(android HIGH + apns 부재, ios apns content-available=1/apns-priority=10 + android 부재, 양단 ciphertext opaque + alert/badge/sound 부재). 기존 13개 send 호출에 `pushPlatform` 추가.
+- `src/main/runtime/fcm-fanout.test.ts` (수정) — `pushPlatform` passthrough 단위 테스트 2개 신규(android/ios device 토큰-플랫폼 페어링 교차 검증, undefined→android fallback).
+
+**Expo config plugin 결정 (iteration-2 #2 해소)**: NO custom plugin. `expo-notifications ^55.0.22` 자체 config plugin 이 Android FCM native wiring(`com.google.gms.google-services` gradle plugin + `googleServicesFile` via app.json)과 iOS APNs registration 을 모두 처리. `app.json` `googleServicesFile` 만으로 FCM(Android data message)/APNs(iOS background data) 수신에 충분. `@react-native-firebase/app` 사용 안 함(iteration-2 확정 — Expo 철학 일치, 기존 `./plugins/` 선례). 기존 `./plugins/android-respect-rotation-lock.js` 는 본 SPEC 무관(rotation lock).
+
+**E1 AC 매트릭스**:
+- AC-FCM-006a (Android FCM 직접 전달) — **code-complete PASS / device-E2E = Gap**. command: `pnpm exec vitest run src/main/runtime/fcm-sender.test.ts -t "android:"` → `message.android = { priority: 'HIGH' }`, `message.apns` 부재, `message.notification` 부재, data payload intact. device-E2E(기기 백그라운드 알림 수신)는 사용자 기기에서 post-merge 검증(deferred per delegation scope).
+- AC-FCM-006b (iOS APNs via FCM 전달) — **code-complete PASS / device-E2E = Gap**. command: `pnpm exec vitest run src/main/runtime/fcm-sender.test.ts -t "ios:"` → `message.apns = { headers: { 'apns-priority': '10' }, payload: { aps: { 'content-available': 1 } } }`, `message.android` 부재, `message.notification` 부재, data payload intact. device-E2E(iOS 기기 백그라운드 알림 수신)는 사용자 기기에서 post-merge 검증(deferred).
+
+**E2 build (GATE)**: desktop `pnpm typecheck` → exit 0; mobile `mobile/node_modules/.bin/tsc -p mobile/tsconfig.json --noEmit` → exit 0 (양단 baseline 동일 exit 0 — 회귀 없음).
+
+**검증 명령(verbatim exit)**:
+- M6 FCM 단위 테스트: `pnpm exec vitest run src/main/runtime/fcm-sender.test.ts src/main/runtime/fcm-fanout.test.ts` → Test Files 2 passed (2) / Tests 29 passed (29) (sender 15 = 기존 10 + platform branching 3 + 토큰캐싱/에러 5; fan-out 14 = 기존 12 + passthrough 2)
+- dispatch 게이트 회귀: `pnpm exec vitest run src/main/runtime/dispatch-fcm-gate.test.ts` → 7 passed (M4 게이트 미수정 확인)
+- desktop typecheck GATE: exit 0
+- mobile typecheck GATE: exit 0
+- desktop oxlint(변경 파일 4): exit 0 (no findings); mobile oxlint(full): exit 0
+- B2 cross-SPEC pre-scan: `grep -rn "Retired|superseded|deprecated" src/main/runtime/fcm-sender.ts src/main/runtime/fcm-fanout.ts mobile/app.json` → 0 matches (CLEAN)
+
+**E3 coverage**: `@vitest/coverage-v8` 부재(M1–M5 와 동일) → test-count 증거(M6 신규 5 tests = sender platform branching 3 + fan-out passthrough 2) + 전체 FCM 36 passed 회귀 없음.
+
+**E4 credential-leak sentinel**: `git ls-files | grep -E "google-services\.json|GoogleService-Info\.plist|\.p8$|service-account"` → 0 tracked (CLEAN). `.gitignore`(M3 설정) 가 `google-services.json`, `GoogleService-Info.plist`, `*.p8`, `*-fcm-credential*.json`, `*fcm-service-account*.json` 커버. `mobile/.gitignore` 도 `*.p8` 커버.
+
+**Gaps**: AC-FCM-006a/006b device-E2E(Android/iOS 기기 백그라운드/종료-state 실제 FCM/APNs 수신)는 delegation scope 에서 명시적으로 DEFERRED 됨 — 본 M6 는 platform message shape + config code-complete 만 구현. 기기 검증은 사용자 기기에서 post-merge 수행. `.p8` APNs auth key / service-account JSON 업로드(Firebase Console / EAS credentials CLI)도 사용자 action.
+
+**Residual-risk**: FCM v1 `AndroidConfig.priority` enum uppercase 값(`HIGH`)은 API 가 lowercase 를 PRIORITY_UNSPECIFIED 로 처리하는 동작에 의존. iOS `content-available` background push 는 APNs/os-version throttle 대상(저전력 모드·background budget). device-E2E 미검증 상태로 code-complete-only.
+
+**PRESERVE 무결성 (M6)**: data-only invariant 양단 유지(`notification` 필드 부재 → E2EE). M2 `push-payload-crypto.ts`, M1 `DeviceEntry.pushPlatform`(읽기 전용), M4 dispatch GATE(`orca-runtime.ts` 게이트 분기 미수정 — fan-out passthrough 만 추가), WS ephemeral E2EE 경로, M5 mobile decrypt(data payload platform 무관 소비) 모두 미수정.
+
 ## §E.3 Run-phase Audit-Ready Signal
 
 _<pending run-phase>_

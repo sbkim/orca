@@ -147,6 +147,67 @@ describe('createFcmFanOut — AC-FCM-002a (listener-count=0 → FCM sent)', () =
   })
 })
 
+describe('createFcmFanOut — pushPlatform passthrough (AC-FCM-006a / AC-FCM-006b)', () => {
+  it('threads device.pushPlatform into sender.send so the sender shapes the message per platform', async () => {
+    const desktop = generateKeyPair()
+    const mobile = generateKeyPair()
+    const androidDevice = makeFcmDevice({
+      deviceId: 'droid',
+      fcmToken: 'tok-droid',
+      pushPlatform: 'android',
+      mobilePublicKeyB64: Buffer.from(mobile.publicKey).toString('base64')
+    })
+    const iosDevice = makeFcmDevice({
+      deviceId: 'ios',
+      fcmToken: 'tok-ios',
+      pushPlatform: 'ios',
+      mobilePublicKeyB64: Buffer.from(mobile.publicKey).toString('base64')
+    })
+    const senderBuilder = makeMockSender()
+    const deps: FcmFanOutDeps = {
+      listFcmDevices: () => [androidDevice, iosDevice],
+      getDesktopPersistentSecret: () => desktop.secretKey,
+      getFcmCredentials: () => CREDENTIALS,
+      createSender: () => senderBuilder.sender
+    }
+    const fanOut = createFcmFanOut(deps)
+
+    await fanOut({ payload: { title: 't', body: 'b' }, notificationId: 'n' })
+
+    expect(senderBuilder.send).toHaveBeenCalledTimes(2)
+    const sentPlatforms = senderBuilder.send.mock.calls.map((c) => c[0].pushPlatform).sort()
+    expect(sentPlatforms).toEqual(['android', 'ios'])
+    // The platform is paired with the matching device token, not crossed.
+    const byToken = Object.fromEntries(
+      senderBuilder.send.mock.calls.map((c) => [c[0].deviceFcmToken, c[0].pushPlatform])
+    )
+    expect(byToken['tok-droid']).toBe('android')
+    expect(byToken['tok-ios']).toBe('ios')
+  })
+
+  it('defaults a device with no pushPlatform to the android direct FCM path', async () => {
+    // Why asserted: pushPlatform is optional on a legacy DeviceEntry, so the
+    // fan-out resolves undefined → android (the FCM-native transport) rather
+    // than dropping the send or erroring on a missing required sender field.
+    const desktop = generateKeyPair()
+    const legacyDevice = makeFcmDevice({
+      deviceId: 'legacy',
+      fcmToken: 'tok-legacy',
+      pushPlatform: undefined,
+      mobilePublicKeyB64: Buffer.from(desktop.publicKey).toString('base64')
+    })
+    const senderBuilder = makeMockSender()
+    const deps: FcmFanOutDeps = {
+      listFcmDevices: () => [legacyDevice],
+      getDesktopPersistentSecret: () => desktop.secretKey,
+      getFcmCredentials: () => CREDENTIALS,
+      createSender: () => senderBuilder.sender
+    }
+    await createFcmFanOut(deps)({ payload: { title: 't', body: 'b' }, notificationId: 'n' })
+    expect(senderBuilder.send.mock.calls[0]![0].pushPlatform).toBe('android')
+  })
+})
+
 describe('createFcmFanOut — graceful degradation (skip paths)', () => {
   it('does NOT send when no FCM credential is onboarded', async () => {
     const { deps, senderBuilder } = makeDeps({ getFcmCredentials: () => null })
