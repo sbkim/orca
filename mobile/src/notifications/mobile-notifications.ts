@@ -4,7 +4,12 @@ import type { RpcClient } from '../transport/rpc-client'
 import { loadPushNotificationsEnabled } from '../storage/preferences'
 import { buildLocalNotificationData, type DesktopNotificationSource } from './notification-routing'
 
-type NotificationEvent = {
+// Why: exported so the FCM supplemental receiver (fcm-push-receiver.ts, M5) can
+// route a remote-decrypted notification through the SAME local-notification
+// path the WS subscriber path uses — reusing the single-notificationId dedupe
+// map (AC-FCM-005) and the permission/toggle gate (AC-FCM-009) rather than
+// duplicating that rendering logic.
+export type NotificationEvent = {
   type: 'notification'
   source: DesktopNotificationSource
   title: string
@@ -106,7 +111,12 @@ function configureNotificationChannel(): void {
   }
 }
 
-async function showLocalNotification(event: NotificationEvent, hostId: string): Promise<void> {
+// Why: exported so the FCM supplemental receiver reuses this exact path
+// (AC-FCM-005 dedupe + AC-FCM-009 gate). See NotificationEvent above.
+export async function showLocalNotification(
+  event: NotificationEvent,
+  hostId: string
+): Promise<void> {
   const storedKey = event.notificationId
     ? getStoredNotificationKey(hostId, event.notificationId)
     : null
