@@ -6,6 +6,11 @@
 import { getMessaging } from '@react-native-firebase/messaging'
 
 getMessaging().setBackgroundMessageHandler(async (remoteMessage) => {
+  // Why: diagnostic pushes include a platform notification that Android/iOS
+  // already renders in the background; decrypting their data would show it twice.
+  if (remoteMessage?.notification) {
+    return
+  }
   const data = remoteMessage?.data
   if (data && typeof data === 'object' && 'payload' in data) {
     try {

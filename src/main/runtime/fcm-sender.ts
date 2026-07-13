@@ -6,6 +6,9 @@
 // scope, caches it, POSTs a data-only FCM message, and never lets an FCM
 // failure throw into the caller's dispatch loop.
 //
+// The diagnostic test may additionally request a fixed, non-sensitive visible
+// alert; real notification content remains ciphertext-only.
+//
 // Scope: standalone sender only. The listener-count gate that decides WHEN to
 // send lives in M4 (orca-runtime dispatchMobileNotification). This module must
 // not be wired into that loop yet.
@@ -65,6 +68,10 @@ export type SendFcmMessageInput = {
   // stay data-only — no FCM `notification` field — so E2EE is preserved
   // (plan.md anti-pattern section; mobile decrypts + renders locally).
   pushPlatform: PushPlatform
+  // Why: iOS background data pushes are best-effort and can be held by APNs.
+  // The test button uses only fixed diagnostic text so it can verify device
+  // presentation without exposing any real notification content.
+  visibleTestNotification?: { title: string; body: string }
 }
 
 export type FcmSendOutcome =
@@ -153,7 +160,14 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
 
   return {
     async send(input: SendFcmMessageInput): Promise<FcmSendOutcome> {
-      const { credentials, deviceFcmToken, ciphertextB64, notificationId, pushPlatform } = input
+      const {
+        credentials,
+        deviceFcmToken,
+        ciphertextB64,
+        notificationId,
+        pushPlatform,
+        visibleTestNotification
+      } = input
       logFcmPush('fcm.send-attempt', {
         notificationId,
         platform: pushPlatform,
@@ -177,16 +191,28 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
       // Platform transport shaping (REQ-FCM-016): android gets HIGH-priority
       // delivery; ios gets APNs content-available background data (requires
       // apns-push-type: background + apns-priority: 5 per APNs contract).
-      // Neither adds a FCM `notification` field — E2EE is preserved on both.
+      // Real notifications remain data-only. The explicit test path instead
+      // adds a fixed platform alert so OS-level presentation can be verified.
       const platformConfig =
         pushPlatform === 'android'
-          ? { android: { priority: 'HIGH' } }
-          : {
-              apns: {
-                headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
-                payload: { aps: { 'content-available': 1 } }
+          ? visibleTestNotification
+            ? { android: { priority: 'HIGH', notification: visibleTestNotification } }
+            : { android: { priority: 'HIGH' } }
+          : visibleTestNotification
+            ? {
+                apns: {
+                  headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+                  payload: {
+                    aps: { alert: visibleTestNotification, sound: 'default' }
+                  }
+                }
               }
-            }
+            : {
+                apns: {
+                  headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
+                  payload: { aps: { 'content-available': 1 } }
+                }
+              }
       const body = {
         message: {
           token: deviceFcmToken,

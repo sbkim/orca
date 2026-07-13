@@ -7372,18 +7372,35 @@ export class OrcaRuntimeService {
     this.fcmFanOut = hook
   }
 
-  dispatchMobileNotification(event: MobileNotificationEvent): void {
-    for (const listener of this.notificationListeners) {
-      listener(event)
+  dispatchMobileNotification(
+    event: MobileNotificationEvent,
+    options?: {
+      forceFcm?: boolean
+      fcmOnly?: boolean
+      visibleTestNotification?: { title: string; body: string }
+    }
+  ): void {
+    // Why: a visible FCM diagnostic must bypass WS delivery, otherwise Android
+    // shows both its system notification and Orca's WS-driven local notification.
+    if (options?.fcmOnly !== true) {
+      for (const listener of this.notificationListeners) {
+        listener(event)
+      }
     }
     // Why: FCM supplemental push gate (SPEC-FCM-001, M4). ADDITIVE — the WS
     // listener iteration above is byte-identical to the pre-M4 path
-    // (AC-FCM-001 regression). Only when no WS subscriber is connected do we
-    // forward through FCM so an offline mobile device still receives the
-    // notification (AC-FCM-002a). Fire-and-log: the hook never throws into this
+    // (AC-FCM-001 regression). Normally only a zero-listener dispatch forwards
+    // through FCM; the explicit diagnostic option may bypass that gate.
+    // Fire-and-log: the hook never throws into this
     // dispatch loop (REQ-FCM-014). Only 'notification' events carry a push
     // payload; 'dismiss' is a foreground-only sync so it never fans out.
-    if (event.type === 'notification' && this.notificationListeners.size === 0 && this.fcmFanOut) {
+    if (
+      event.type === 'notification' &&
+      (this.notificationListeners.size === 0 ||
+        options?.forceFcm === true ||
+        options?.fcmOnly === true) &&
+      this.fcmFanOut
+    ) {
       const fanOut = this.fcmFanOut
       void fanOut({
         payload: {
@@ -7392,7 +7409,10 @@ export class OrcaRuntimeService {
           worktreeId: event.worktreeId,
           source: event.source
         },
-        notificationId: event.notificationId ?? ''
+        notificationId: event.notificationId ?? '',
+        ...(options?.visibleTestNotification
+          ? { visibleTestNotification: options.visibleTestNotification }
+          : {})
       }).catch((err) => {
         console.error('[runtime] FCM supplemental fan-out failed', {
           notificationId: event.notificationId ?? '',

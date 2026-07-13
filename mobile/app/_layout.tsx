@@ -149,7 +149,13 @@ export default function RootLayout() {
   // (googleServicesFile + background task); this is the JS-side reception wiring.
   useEffect(() => {
     const sub = Notifications.addNotificationReceivedListener((notification) => {
-      const data = notification.request.content.data
+      const content = notification.request.content
+      // Why: visible diagnostic pushes are already rendered by Android/iOS; only
+      // encrypted data-only pushes should enter Orca's local notification path.
+      if (content.title || content.body) {
+        return
+      }
+      const data = content.data
       if (data && typeof data === 'object' && 'payload' in data) {
         void handleFcmDataNotification(data as Record<string, unknown>)
       }
@@ -159,6 +165,9 @@ export default function RootLayout() {
     // onMessage (not expo-notifications' listener). Add a parallel handler so the
     // E2EE ciphertext still reaches handleFcmDataNotification.
     const unsubOnMessage = onMessage(getMessaging(), (message) => {
+      if (message.notification) {
+        return
+      }
       const data = message.data
       if (data && typeof data === 'object' && 'payload' in data) {
         void handleFcmDataNotification(data as Record<string, unknown>)

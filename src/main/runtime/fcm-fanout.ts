@@ -31,6 +31,7 @@ export type FcmFanOutInput = {
   // suppress a push that a reconnecting WS subscriber already delivered
   // (AC-FCM-005, wired in M5).
   notificationId: string
+  visibleTestNotification?: { title: string; body: string }
 }
 
 export type FcmFanOutDeps = {
@@ -60,17 +61,26 @@ export type FcmFanOut = (input: FcmFanOutInput) => Promise<void>
 type FcmCapableDevice = DeviceEntry & { fcmToken: string; mobilePublicKeyB64: string }
 
 // Why: paired devices that can actually receive an FCM push need both a push
-// token and a persistent mobile public key (the key derives the shared FCM key
-// independent of the ephemeral WS session key — REQ-FCM-019). Filtering here
-// keeps the orchestration loop focused on sendable devices.
+// token and a persistent mobile public key. Re-pairing the same app installation
+// can leave multiple device records with one FCM token; send once per token so
+// duplicate records do not consume the platform's background-push budget.
 function selectFcmCapableDevices(devices: readonly DeviceEntry[]): FcmCapableDevice[] {
-  return devices.filter(
-    (device): device is FcmCapableDevice =>
-      typeof device.fcmToken === 'string' &&
-      device.fcmToken.length > 0 &&
-      typeof device.mobilePublicKeyB64 === 'string' &&
-      device.mobilePublicKeyB64.length > 0
-  )
+  const devicesByToken = new Map<string, FcmCapableDevice>()
+  for (const device of devices) {
+    if (
+      typeof device.fcmToken !== 'string' ||
+      device.fcmToken.length === 0 ||
+      typeof device.mobilePublicKeyB64 !== 'string' ||
+      device.mobilePublicKeyB64.length === 0
+    ) {
+      continue
+    }
+    const current = devicesByToken.get(device.fcmToken)
+    if (!current || device.lastSeenAt >= current.lastSeenAt) {
+      devicesByToken.set(device.fcmToken, device as FcmCapableDevice)
+    }
+  }
+  return [...devicesByToken.values()]
 }
 
 // Why (#8 / AC-FCM-008): FCM's 4KB cap applies to the WHOLE `data` map, which
@@ -99,7 +109,7 @@ export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
   // reused across sends instead of re-minting on every notification.
   const sender = deps.createSender()
 
-  return async ({ payload, notificationId }) => {
+  return async ({ payload, notificationId, visibleTestNotification }) => {
     const credentials = deps.getFcmCredentials()
     if (!credentials) {
       return
@@ -146,7 +156,8 @@ export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
             // legacy/partial entries without it fall back to the android direct
             // FCM path — the least-surprising transport when the platform is
             // genuinely unknown.
-            pushPlatform: device.pushPlatform ?? 'android'
+            pushPlatform: device.pushPlatform ?? 'android',
+            visibleTestNotification
           })
           if (result.status === 'failed') {
             logError('FCM supplemental push failed', {

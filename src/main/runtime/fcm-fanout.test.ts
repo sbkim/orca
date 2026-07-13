@@ -100,6 +100,21 @@ describe('createFcmFanOut — AC-FCM-002a (listener-count=0 → FCM sent)', () =
     expect(senderBuilder.send.mock.calls[0]![0].notificationId).toBe('dedupe-id-9')
   })
 
+  it('threads the fixed visible diagnostic notification to the sender', async () => {
+    const { deps, senderBuilder } = makeDeps()
+    const visibleTestNotification = { title: 'FCM test push', body: 'device-E2E' }
+
+    await createFcmFanOut(deps)({
+      payload: visibleTestNotification,
+      notificationId: 'visible-test',
+      visibleTestNotification
+    })
+
+    expect(senderBuilder.send.mock.calls[0]![0].visibleTestNotification).toEqual(
+      visibleTestNotification
+    )
+  })
+
   it('produces a ciphertext the mobile half can decrypt with the same derived key (M2 integration)', async () => {
     const desktop = generateKeyPair()
     const mobile = generateKeyPair()
@@ -144,6 +159,37 @@ describe('createFcmFanOut — AC-FCM-002a (listener-count=0 → FCM sent)', () =
     expect(senderBuilder.send).toHaveBeenCalledTimes(2)
     const tokens = senderBuilder.send.mock.calls.map((c) => c[0].deviceFcmToken).sort()
     expect(tokens).toEqual(['tok-a', 'tok-b'])
+  })
+
+  it('sends once when repeated pairings registered the same FCM token', async () => {
+    const mobile = generateKeyPair()
+    const mobilePublicKeyB64 = Buffer.from(mobile.publicKey).toString('base64')
+    const { deps, senderBuilder } = makeDeps({
+      listFcmDevices: () => [
+        makeFcmDevice({
+          deviceId: 'older-pairing',
+          lastSeenAt: 10,
+          fcmToken: 'same-installation-token',
+          pushPlatform: 'android',
+          mobilePublicKeyB64
+        }),
+        makeFcmDevice({
+          deviceId: 'newer-pairing',
+          lastSeenAt: 20,
+          fcmToken: 'same-installation-token',
+          pushPlatform: 'ios',
+          mobilePublicKeyB64
+        })
+      ]
+    })
+
+    await createFcmFanOut(deps)({ payload: { title: 't', body: 'b' }, notificationId: 'n' })
+
+    expect(senderBuilder.send).toHaveBeenCalledTimes(1)
+    expect(senderBuilder.send.mock.calls[0]![0]).toMatchObject({
+      deviceFcmToken: 'same-installation-token',
+      pushPlatform: 'ios'
+    })
   })
 })
 

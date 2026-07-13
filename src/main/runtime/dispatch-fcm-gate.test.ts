@@ -93,7 +93,12 @@ describe('dispatchMobileNotification — AC-FCM-002a (zero listeners → FCM fan
     await Promise.resolve()
     expect(fanOut).toHaveBeenCalledTimes(1)
     expect(fanOut).toHaveBeenCalledWith({
-      payload: { title: 'Agent finished', body: 'The task is complete' },
+      payload: {
+        title: 'Agent finished',
+        body: 'The task is complete',
+        worktreeId: undefined,
+        source: 'agent-task-complete'
+      },
       notificationId: 'notif-abc'
     })
   })
@@ -112,7 +117,12 @@ describe('dispatchMobileNotification — AC-FCM-002a (zero listeners → FCM fan
     await Promise.resolve()
 
     expect(fanOut).toHaveBeenCalledWith({
-      payload: { title: 'Bell', body: 'ding' },
+      payload: {
+        title: 'Bell',
+        body: 'ding',
+        worktreeId: undefined,
+        source: 'terminal-bell'
+      },
       notificationId: ''
     })
   })
@@ -136,6 +146,32 @@ describe('dispatchMobileNotification — AC-FCM-002b (≥1 listener → FCM NOT 
     expect(received).toEqual([DISPATCH_EVENT])
     // …and FCM was skipped because a live subscriber took the event.
     expect(fanOut).not.toHaveBeenCalled()
+  })
+
+  it('allows the explicit diagnostic path to force FCM without changing the normal gate', async () => {
+    const runtime = createRuntime()
+    const fanOut = vi.fn(async () => undefined)
+    runtime.setFcmFanOut(fanOut)
+    runtime.onNotificationDispatched(() => {})
+
+    runtime.dispatchMobileNotification(DISPATCH_EVENT, { forceFcm: true })
+    await Promise.resolve()
+
+    expect(fanOut).toHaveBeenCalledTimes(1)
+  })
+
+  it('delivers an FCM-only diagnostic without also notifying WS listeners', async () => {
+    const runtime = createRuntime()
+    const fanOut = vi.fn(async () => undefined)
+    const listener = vi.fn()
+    runtime.setFcmFanOut(fanOut)
+    runtime.onNotificationDispatched(listener)
+
+    runtime.dispatchMobileNotification(DISPATCH_EVENT, { fcmOnly: true })
+    await Promise.resolve()
+
+    expect(listener).not.toHaveBeenCalled()
+    expect(fanOut).toHaveBeenCalledTimes(1)
   })
 })
 

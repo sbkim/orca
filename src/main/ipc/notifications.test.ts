@@ -145,6 +145,14 @@ describe('registerNotificationHandlers', () => {
     return call[1] as (event: unknown, args: unknown) => unknown
   }
 
+  function getFcmTestDispatchHandler(): () => unknown {
+    const call = handleMock.mock.calls.find((c: unknown[]) => c[0] === 'fcm:testDispatch')
+    if (!call) {
+      throw new Error('fcm:testDispatch handler not registered')
+    }
+    return call[1] as () => unknown
+  }
+
   function getOpenSystemSettingsHandler(): (event: unknown) => unknown {
     const call = handleMock.mock.calls.find(
       (c: unknown[]) => c[0] === 'notifications:openSystemSettings'
@@ -203,6 +211,35 @@ describe('registerNotificationHandlers', () => {
 
     expect(removeHandlerMock).toHaveBeenCalledWith('notifications:dispatch')
     expect(handleMock).toHaveBeenCalledWith('notifications:dispatch', expect.any(Function))
+  })
+
+  it('forces the temporary device test through FCM even when WS listeners exist', () => {
+    const dispatchMobileNotification = vi.fn()
+    registerNotificationHandlers(
+      {
+        getSettings: () => ({ notifications: {} })
+      } as never,
+      { dispatchMobileNotification } as never
+    )
+
+    getFcmTestDispatchHandler()()
+
+    expect(dispatchMobileNotification).toHaveBeenCalledWith(
+      {
+        type: 'notification',
+        source: 'agent-task-complete',
+        title: 'FCM test push',
+        body: 'device-E2E 2026-03-28T16:00:00.000Z',
+        notificationId: `fcm-test-${Date.now()}`
+      },
+      {
+        fcmOnly: true,
+        visibleTestNotification: {
+          title: 'FCM test push',
+          body: 'device-E2E 2026-03-28T16:00:00.000Z'
+        }
+      }
+    )
   })
 
   it('opens the current macOS app notification settings entry', async () => {

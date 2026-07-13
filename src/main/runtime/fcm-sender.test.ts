@@ -225,6 +225,42 @@ describe('createFcmSender — platform branching (AC-FCM-006a android / AC-FCM-0
     expect(body.message.notification).toBeUndefined()
   })
 
+  it('uses an OS-visible platform alert only for the explicit diagnostic notification', async () => {
+    const visibleTestNotification = { title: 'FCM test push', body: 'device-E2E' }
+
+    await sender().send({
+      credentials,
+      deviceFcmToken: 'ios-token',
+      ciphertextB64: 'aW9zZGF0YQ',
+      notificationId: 'visible-ios',
+      pushPlatform: 'ios',
+      visibleTestNotification
+    })
+    const iosBody = JSON.parse(captured!.init.body as string)
+    expect(iosBody.message.apns).toEqual({
+      headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+      payload: { aps: { alert: visibleTestNotification, sound: 'default' } }
+    })
+    expect(iosBody.message.data.payload).toBe('aW9zZGF0YQ')
+    expect(iosBody.message.notification).toBeUndefined()
+
+    await sender().send({
+      credentials,
+      deviceFcmToken: 'android-token',
+      ciphertextB64: 'YW5kcm9pZA',
+      notificationId: 'visible-android',
+      pushPlatform: 'android',
+      visibleTestNotification
+    })
+    const androidBody = JSON.parse(captured!.init.body as string)
+    expect(androidBody.message.android).toEqual({
+      priority: 'HIGH',
+      notification: visibleTestNotification
+    })
+    expect(androidBody.message.data.payload).toBe('YW5kcm9pZA')
+    expect(androidBody.message.notification).toBeUndefined()
+  })
+
   it('both platforms carry the identical ciphertext opaquely in data.payload (no plaintext leak)', async () => {
     const cipher = 'c3VwZXJzZWNyZXQ'
     for (const pushPlatform of ['android', 'ios'] as const) {
