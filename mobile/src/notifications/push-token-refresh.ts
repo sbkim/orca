@@ -1,0 +1,80 @@
+// Why: handles FCM token refresh events and re-registers the refreshed token
+// with the desktop (SPEC-FCM-001, REQ-FCM-010). FCM may periodically refresh
+// the registration token for security reasons. When this happens, the mobile app
+// must notify the desktop of the new token via RPC, otherwise push delivery
+// will fail with "InvalidRegistration" (FCM error code for stale tokens).
+//
+// This module provides a subscription function that sets up the Firebase
+// onTokenRefresh listener and triggers re-registration when the token changes.
+
+import { messaging, onTokenRefresh } from '@react-native-firebase/messaging'
+import type { RpcClient } from '../transport/rpc-client'
+import { loadPushNotificationsEnabled } from '../storage/preferences'
+import { loadOrCreatePushKeypair } from '../transport/push-keypair'
+import { Platform } from 'react-native'
+
+// Why: minimal client surface needed for token refresh RPC.
+type TokenRefreshClient = Pick<RpcClient, 'sendRequest'>
+
+let unsubscribe: (() => void) | null = null
+
+// Why: subscribes to Firebase onTokenRefresh events and re-registers the
+// refreshed token with the desktop. Call this when the app starts and/or when
+// push notifications are enabled. Returns an unsubscribe function for cleanup.
+export function subscribeToTokenRefresh(getClient: () => TokenRefreshClient | null): () => void {
+  // Clean up existing subscription if any
+  if (unsubscribe) {
+    unsubscribe()
+    unsubscribe = null
+  }
+
+  const client = getClient()
+  if (!client) {
+    // Why: no connected client yet — don't set up subscription
+    return () => {}
+  }
+
+  // Why: onTokenRefresh fires when FCM refreshes the registration token.
+  // We must immediately send the new token to the desktop to avoid delivery
+  // failures with the stale token.
+  unsubscribe = onTokenRefresh(async (newToken) => {
+    try {
+      // REQ-FCM-018: respect push toggle even for token refresh
+      const enabled = await loadPushNotificationsEnabled()
+      if (!enabled) {
+        return // Don't register if push is disabled
+      }
+
+      // REQ-FCM-019: load the persistent mobile public key
+      const { publicKeyB64 } = await loadOrCreatePushKeypair()
+
+      // REQ-FCM-016: platform selection for desktop FCM transport shaping
+      const platform: 'android' | 'ios' = Platform.OS === 'ios' ? 'ios' : 'android'
+
+      // Re-register the refreshed token with the desktop
+      await client.sendRequest('notifications.registerPushToken', {
+        token: newToken,
+        platform,
+        mobilePublicKeyB64: publicKeyB64
+      })
+    } catch {
+      // Why: token refresh failures are logged but don't crash the app
+      // Firebase will retry delivering the refresh event
+    }
+  })
+
+  // Why: return cleanup function for caller to use on app pause/stop
+  return () => {
+    if (unsubscribe) {
+      unsubscribe()
+      unsubscribe = null
+    }
+  }
+}
+
+// Why: ensures the messaging module is initialized (required for onTokenRefresh
+// to work on some platforms). Call this when the app starts.
+export function initializeMessaging(): void {
+  // Side effect: accessing the messaging singleton initializes it
+  messaging()
+}

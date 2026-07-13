@@ -8,6 +8,7 @@ import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { registerPushTokenWithDesktop } from './push-token-registration'
 import { loadPushNotificationsEnabled } from '../storage/preferences'
+import { subscribeToTokenRefresh, initializeMessaging } from './push-token-refresh'
 
 export type PushRegistrationClientEntry = {
   hostId: string
@@ -25,6 +26,49 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
   // Why: track previous push toggle state to detect toggle-on transitions for
   // triggering registration (defect #1 fix: toggle-on is a registration trigger).
   const [pushToggleEnabled, setPushToggleEnabled] = useState<boolean | null>(null)
+
+  // Why: track token refresh subscription cleanup function
+  const tokenRefreshCleanupRef = useRef<(() => void) | null>(null)
+
+  // Why: initialize Firebase messaging module on first render (required for
+  // onTokenRefresh to work on some platforms)
+  useEffect(() => {
+    initializeMessaging()
+  }, [])
+
+  // Why: set up token refresh subscription when we have at least one connected
+  // client and push is enabled. Clean up subscription when no clients or
+  // push disabled.
+  useEffect(() => {
+    const connectedClients = allClients.filter((entry) => entry.state === 'connected')
+    const hasConnectedClients = connectedClients.length > 0
+
+    // Only set up subscription if we have clients and push is enabled
+    if (!hasConnectedClients || pushToggleEnabled === false) {
+      // Clean up existing subscription
+      if (tokenRefreshCleanupRef.current) {
+        tokenRefreshCleanupRef.current()
+        tokenRefreshCleanupRef.current = null
+      }
+      return
+    }
+
+    // Set up token refresh subscription with a function to get a connected client
+    const getClient = () => {
+      const firstConnected = connectedClients[0]
+      return firstConnected?.client ?? null
+    }
+
+    const cleanup = subscribeToTokenRefresh(getClient)
+    tokenRefreshCleanupRef.current = cleanup
+
+    // Clean up on unmount or when dependencies change
+    return () => {
+      if (cleanup) {
+        cleanup()
+      }
+    }
+  }, [allClients, pushToggleEnabled])
 
   // Why: separate effect to monitor push toggle changes and trigger registration
   // when toggle is turned on, even if hosts are already connected.
@@ -80,4 +124,14 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
         .catch(() => {})
     }
   }, [allClients])
+
+  // Why: clean up token refresh subscription on component unmount
+  useEffect(() => {
+    return () => {
+      if (tokenRefreshCleanupRef.current) {
+        tokenRefreshCleanupRef.current()
+        tokenRefreshCleanupRef.current = null
+      }
+    }
+  }, [])
 }
