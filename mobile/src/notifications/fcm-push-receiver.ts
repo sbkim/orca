@@ -25,6 +25,7 @@ import {
   deriveMobileFcmSharedKey,
   type DecryptedPushPayload
 } from './push-payload-decrypt'
+import type { DesktopNotificationSource } from './notification-routing'
 import { showLocalNotification, type NotificationEvent } from './mobile-notifications'
 
 // Why: M1 contract — push-keypair.ts persists the long-lived Curve25519 pair at
@@ -154,15 +155,17 @@ export async function handleFcmDataNotification(
     }
 
     // Why: route through the SAME local-notification path as the WS subscriber so
-    // the single-notificationId dedupe map (AC-FCM-005) and the permission/toggle
-    // gate (AC-FCM-009) apply identically to FCM-delivered notifications. M4's
-    // fan-out encrypts only {title, body}, so source/worktreeId are not carried —
-    // 'fcm-supplemental' records the transport honestly as metadata.
+    // M9 (deeplink parity): worktreeId and source are now carried in encrypted payload
+    // metadata for WS parity — tapping an FCM notification navigates to the worktree
+    // screen just like WebSocket notifications (defect #9 fix).
+    const worktreeId = origin.payload.metadata?.worktreeId as string | undefined
+    const source = origin.payload.metadata?.source as DesktopNotificationSource | undefined
     const event: NotificationEvent = {
       type: 'notification',
-      source: 'fcm-supplemental',
+      source: source ?? 'fcm-supplemental',
       title: origin.payload.title,
       body: origin.payload.body,
+      worktreeId,
       notificationId: data.notificationId
     }
     await showLocalNotification(event, origin.hostId, options)
