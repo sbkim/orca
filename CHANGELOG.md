@@ -11,11 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **FCM supplemental mobile push channel (SPEC-FCM-001).** Firebase Cloud
   Messaging now delivers mobile push notifications when no mobile WebSocket
-  subscriber is connected, so a backgrounded or killed phone still receives
+  subscriber is connected, so a backgrounded phone still receives
   agent-completion notifications. The WebSocket channel remains the primary
   foreground transport; FCM fires only when the runtime reports zero mobile
   notification listeners (`getMobileNotificationListenerCount() === 0`), so
   foreground behavior and WS delivery are unchanged (AC-FCM-001, AC-FCM-002a/b).
+  - **Best-effort backgrounded delivery (force-quit excluded).** FCM delivery is
+    best-effort for apps in the background; force-quit/killed apps are not woken.
+    iOS content-available background push does not wake force-quit apps; NSE-based
+    force-quit wake is out of scope to preserve the data-only/E2EE invariant
+    (per user decision #6 in SPEC-FCM-001 amendment).
   - **End-to-end encryption preserved (REQ-FCM-019).** Each paired device
     registers a long-lived Curve25519 keypair (`mobile/src/transport/push-keypair.ts`)
     that is distinct from the per-connection ephemeral WebSocket session key.
@@ -34,11 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     does not clear the persistent public key (AC-FCM-004a/b).
   - **Platform-aware delivery.** Android receives FCM direct messages at HIGH
     priority for prompt background delivery; iOS is brokered through APNs via
-    FCM (content-available background data, `apns-priority: 5` with `apns-push-type: background`) so a
-    backgrounded/killed iOS app is still woken. Both stay data-only
+    FCM (content-available background data, `apns-priority: 5` with `apns-push-type: background`) for
+    best-effort backgrounded delivery (force-quit excluded). Both stay data-only
     (`src/main/runtime/fcm-sender.ts`) (AC-FCM-006a/b — code-complete and
     integration-verified; **on-device delivery verification is deferred to
     post-merge**).
+  - **Post-merge remediation (unreleased cycle).** This same unreleased cycle
+    includes a post-merge remediation addressing 9 defects + cleanup (recorded in
+    the SPEC-FCM-001 in-place amendment commit c3ec2ec6e): desktop FCM tests
+    51/51 passing, mobile TypeScript 0 errors, mobile lint 0, mobile tests 1530/2
+    skip. Residual verification pending: real CI run of the new plist-restore
+    step, new Apple cert/provisioning for `com.omninetworks.orca.mobile`, and
+    iOS on-device E2E testing.
   - **OAuth2 + credential handling.** The desktop FCM sender mints OAuth2
     access tokens via `google-auth-library` for the `firebase.messaging` scope,
     caches them ahead of expiry, and posts to the FCM v1
