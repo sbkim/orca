@@ -1,6 +1,5 @@
-// Why: utility functions extracted from app/index.tsx for max-lines compliance (M5).
-// These functions support HomeScreen by formatting labels, durations, colors, and
-// fetching data from desktop hosts.
+// Why: extracted for max-lines compliance, but kept outside src/app because Expo
+// Router treats that directory as its route root.
 
 import type { RpcClient } from '../transport/rpc-client'
 import type { AccountsSnapshot } from '../components/AccountUsage'

@@ -63,7 +63,7 @@ import {
   type StatsSummary,
   type WorktreeSummary,
   type HostWorktreeInfo
-} from '../src/app/home-screen-data'
+} from '../src/home/home-screen-data'
 import type { TaskProvider } from '../src/tasks/mobile-task-providers'
 
 export default function HomeScreen() {
