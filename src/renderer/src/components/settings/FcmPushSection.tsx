@@ -150,15 +150,6 @@ export function FcmPushSection({
           </Button>
         ) : null}
       </div>
-
-      {!configured ? (
-        <p className="text-[11px] text-muted-foreground">
-          {translate(
-            'auto.components.settings.FcmPushSection.8c266711db',
-            'Paste your Google service account JSON below to enable mobile push delivery.'
-          )}
-        </p>
-      ) : null}
     </div>
   )
 }
