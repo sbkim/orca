@@ -19,14 +19,26 @@ vi.mock('./e2ee', () => {
   }
 })
 
-// Why: in-memory AsyncStorage so the persistence behavior is observable
+// Why: in-memory expo-secure-store so the persistence behavior is observable
 // without RN's native module. Reset between tests so each starts empty.
-const storage = new Map<string, string>()
+const secureStore = new Map<string, string>()
+const asyncStorage = new Map<string, string>() // For migration testing
+
+vi.mock('expo-secure-store', () => ({
+  getItemAsync: async (key: string) => secureStore.get(key) ?? null,
+  setItemAsync: async (key: string, value: string) => {
+    secureStore.set(key, value)
+  }
+}))
+
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
-    getItem: async (key: string) => storage.get(key) ?? null,
+    getItem: async (key: string) => asyncStorage.get(key) ?? null,
     setItem: async (key: string, value: string) => {
-      storage.set(key, value)
+      asyncStorage.set(key, value)
+    },
+    removeItem: async (key: string) => {
+      asyncStorage.delete(key)
     }
   }
 }))
@@ -35,7 +47,8 @@ import { loadOrCreatePushKeypair } from './push-keypair'
 
 describe('loadOrCreatePushKeypair', () => {
   beforeEach(() => {
-    storage.clear()
+    secureStore.clear()
+    asyncStorage.clear()
   })
 
   it('returns a base64 public key on first call (generation)', async () => {
@@ -62,5 +75,42 @@ describe('loadOrCreatePushKeypair', () => {
     // simulate a reconnect: same storage, fresh module read
     const session2 = await loadOrCreatePushKeypair()
     expect(session2.publicKeyB64).toBe(session1.publicKeyB64)
+  })
+
+  // Why: M4 migration test — verify existing AsyncStorage entries are migrated
+  // to expo-secure-store and the legacy entry is cleaned up.
+  it('migrates existing AsyncStorage entry to expo-secure-store', async () => {
+    // Set up legacy AsyncStorage entry
+    const legacyEntry = JSON.stringify({
+      secretKeyB64: 'sec-legacy',
+      publicKeyB64: 'pub-legacy'
+    })
+    asyncStorage.set('orca:push-keypair', legacyEntry)
+
+    // First call should migrate and return the legacy public key
+    const { publicKeyB64 } = await loadOrCreatePushKeypair()
+    expect(publicKeyB64).toBe('pub-legacy')
+
+    // Verify migration cleaned up legacy entry
+    expect(asyncStorage.get('orca:push-keypair')).toBeUndefined()
+
+    // Verify new entry is in expo-secure-store
+    const secureStoreEntry = secureStore.get('orca:push-keypair')
+    expect(secureStoreEntry).toBeDefined()
+    const parsed = JSON.parse(secureStoreEntry!)
+    expect(parsed.publicKeyB64).toBe('pub-legacy')
+    expect(parsed.secretKeyB64).toBe('sec-legacy')
+  })
+
+  // Why: verify corrupted/malformed legacy entries are skipped and fresh keypair
+  // is generated instead.
+  it('handles corrupted AsyncStorage entries gracefully', async () => {
+    // Set up corrupted legacy entry
+    asyncStorage.set('orca:push-keypair', 'not-valid-json')
+
+    // Should generate fresh keypair instead of crashing
+    const { publicKeyB64 } = await loadOrCreatePushKeypair()
+    expect(publicKeyB64).toBeDefined()
+    expect(typeof publicKeyB64).toBe('string')
   })
 })
