@@ -60,9 +60,10 @@ export type SendFcmMessageInput = {
   // Why (REQ-FCM-016): selects the FCM transport shaping. Android gets
   // `message.android` (HIGH priority for prompt background delivery); iOS gets
   // `message.apns` so FCM brokers the data message via APNs to the
-  // backgrounded/killed app (content-available background data + apns-priority
-  // 10). Both stay data-only — no FCM `notification` field — so E2EE is
-  // preserved (plan.md anti-pattern section; mobile decrypts + renders locally).
+  // backgrounded/killed app (content-available background data requires
+  // apns-push-type: background + apns-priority: 5 per APNs contract). Both
+  // stay data-only — no FCM `notification` field — so E2EE is preserved
+  // (plan.md anti-pattern section; mobile decrypts + renders locally).
   pushPlatform: PushPlatform
 }
 
@@ -174,15 +175,15 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
       // Data-only FCM message: the `data` map carries the M2 ciphertext. The
       // `notification` field is intentionally absent (plan.md anti-pattern).
       // Platform transport shaping (REQ-FCM-016): android gets HIGH-priority
-      // delivery; ios gets APNs content-available background data + apns-priority
-      // 10 so FCM brokers the data message via APNs to a backgrounded/killed app.
+      // delivery; ios gets APNs content-available background data (requires
+      // apns-push-type: background + apns-priority: 5 per APNs contract).
       // Neither adds a FCM `notification` field — E2EE is preserved on both.
       const platformConfig =
         pushPlatform === 'android'
           ? { android: { priority: 'HIGH' } }
           : {
               apns: {
-                headers: { 'apns-priority': '10' },
+                headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
                 payload: { aps: { 'content-available': 1 } }
               }
             }

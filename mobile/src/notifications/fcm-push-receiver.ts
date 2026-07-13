@@ -112,49 +112,62 @@ async function findOriginHostAndPayload(
   return null
 }
 
-// Why: entry point invoked by the expo-notifications handler registered in
-// app/_layout.tsx. Fire-and-forget-safe: never throws (a decrypt/storage fault
-// is contained so the OS push delivery callback is never destabilized).
-export async function handleFcmDataNotification(data: FcmDataMessage): Promise<void> {
-  if (typeof data.payload !== 'string' || data.payload.length === 0) {
-    return
-  }
-  if (typeof data.notificationId !== 'string' || data.notificationId.length === 0) {
-    // Why: without notificationId there is no dedupe key, and the WS/FCM
-    // cross-channel dedupe (AC-FCM-005) depends on it. Drop rather than risk a
-    // duplicate that cannot be suppressed.
-    return
-  }
+// Why: entry point invoked by BOTH the expo-notifications / RNFB onMessage
+// foreground listeners registered in app/_layout.tsx AND the RNFB
+// setBackgroundMessageHandler registered at the top of index.js (headless /
+// background / killed-state). Fire-and-forget-safe: never throws — the entire
+// body is wrapped in try/catch so a decrypt/storage/render fault is contained
+// and the OS push delivery callback / RNFB headless task is never destabilized.
+// The optional `background` flag selects the query-only permission path (no
+// permission prompt) used by the headless handler; foreground callers omit it.
+export async function handleFcmDataNotification(
+  data: FcmDataMessage,
+  options?: { background?: boolean }
+): Promise<void> {
+  try {
+    if (typeof data.payload !== 'string' || data.payload.length === 0) {
+      return
+    }
+    if (typeof data.notificationId !== 'string' || data.notificationId.length === 0) {
+      // Why: without notificationId there is no dedupe key, and the WS/FCM
+      // cross-channel dedupe (AC-FCM-005) depends on it. Drop rather than risk a
+      // duplicate that cannot be suppressed.
+      return
+    }
 
-  const mobileSecret = await loadMobilePersistentSecret()
-  if (!mobileSecret) {
-    return
-  }
+    const mobileSecret = await loadMobilePersistentSecret()
+    if (!mobileSecret) {
+      return
+    }
 
-  const hosts = await loadHosts().catch(() => [] as Awaited<ReturnType<typeof loadHosts>>)
-  if (hosts.length === 0) {
-    return
-  }
+    const hosts = await loadHosts().catch(() => [] as Awaited<ReturnType<typeof loadHosts>>)
+    if (hosts.length === 0) {
+      return
+    }
 
-  const origin = await findOriginHostAndPayload(mobileSecret, hosts, data.payload)
-  if (!origin) {
-    // Why: no paired host's key could decrypt — either a foreign payload or a
-    // host whose desktop persistent public key is stale. Silently drop; the WS
-    // path (if it reconnects) will re-deliver the canonical notification.
-    return
-  }
+    const origin = await findOriginHostAndPayload(mobileSecret, hosts, data.payload)
+    if (!origin) {
+      // Why: no paired host's key could decrypt — either a foreign payload or a
+      // host whose desktop persistent public key is stale. Silently drop; the WS
+      // path (if it reconnects) will re-deliver the canonical notification.
+      return
+    }
 
-  // Why: route through the SAME local-notification path as the WS subscriber so
-  // the single-notificationId dedupe map (AC-FCM-005) and the permission/toggle
-  // gate (AC-FCM-009) apply identically to FCM-delivered notifications. M4's
-  // fan-out encrypts only {title, body}, so source/worktreeId are not carried —
-  // 'fcm-supplemental' records the transport honestly as metadata.
-  const event: NotificationEvent = {
-    type: 'notification',
-    source: 'fcm-supplemental',
-    title: origin.payload.title,
-    body: origin.payload.body,
-    notificationId: data.notificationId
+    // Why: route through the SAME local-notification path as the WS subscriber so
+    // the single-notificationId dedupe map (AC-FCM-005) and the permission/toggle
+    // gate (AC-FCM-009) apply identically to FCM-delivered notifications. M4's
+    // fan-out encrypts only {title, body}, so source/worktreeId are not carried —
+    // 'fcm-supplemental' records the transport honestly as metadata.
+    const event: NotificationEvent = {
+      type: 'notification',
+      source: 'fcm-supplemental',
+      title: origin.payload.title,
+      body: origin.payload.body,
+      notificationId: data.notificationId
+    }
+    await showLocalNotification(event, origin.hostId, options)
+  } catch {
+    // Why: never-throws guarantee — see function docblock. A fault here must not
+    // propagate to the OS push callback or RNFB's headless task.
   }
-  await showLocalNotification(event, origin.hostId)
 }

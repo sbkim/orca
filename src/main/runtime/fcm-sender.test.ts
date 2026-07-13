@@ -201,7 +201,7 @@ describe('createFcmSender — platform branching (AC-FCM-006a android / AC-FCM-0
     expect(body.message.notification).toBeUndefined()
   })
 
-  it('ios: sets message.apns with content-available background data + apns-priority 10, omits message.android, stays data-only', async () => {
+  it('ios: sets message.apns with content-available background data + apns-priority 5 + apns-push-type background, omits message.android, stays data-only', async () => {
     await sender().send({
       credentials,
       deviceFcmToken: 'ios-token',
@@ -210,12 +210,12 @@ describe('createFcmSender — platform branching (AC-FCM-006a android / AC-FCM-0
       pushPlatform: 'ios'
     })
     const body = JSON.parse(captured!.init.body as string)
-    // Why content-available=1 + apns-priority '10': FCM brokers the data
-    // message via APNs to a backgrounded/killed iOS app; content-available 1 is
-    // the APNs background-data signal and '10' is the documented high-priority
-    // APNs header value (REQ-FCM-016).
+    // Why content-available=1 + apns-push-type: background + apns-priority '5': FCM
+    // brokers the data message via APNs to a backgrounded/killed iOS app;
+    // content-available 1 is the APNs background-data signal and APNs requires
+    // push-type: background with priority: 5 for background notifications (REQ-FCM-016).
     expect(body.message.apns).toEqual({
-      headers: { 'apns-priority': '10' },
+      headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
       payload: { aps: { 'content-available': 1 } }
     })
     expect(body.message.android).toBeUndefined()

@@ -173,3 +173,46 @@ describe('handleFcmDataNotification — per-host try-decrypt', () => {
     expect(event.notificationId).toBe('n3')
   })
 })
+
+describe('handleFcmDataNotification — never-throws + background flag (M8)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    storage.clear()
+    storage.set('orca:push-keypair', PUSH_KEYPAIR_RECORD)
+  })
+
+  // Why: the receiver is the OS push callback surface (foreground listeners AND
+  // the RNFB setBackgroundMessageHandler headless task). A fault must never
+  // propagate — the body's try/catch is the guarantee. Mocking showLocalNotification
+  // to reject proves the caller never sees the rejection.
+  it('swallows a rejection from showLocalNotification and resolves undefined', async () => {
+    ;(loadHosts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'host-a', publicKeyB64: 'pk-a', name: 'A', endpoint: 'e', deviceToken: 't' }
+    ])
+    decryptOkOnCall(1)
+    ;(showLocalNotification as unknown as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('boom')
+    )
+
+    await expect(
+      handleFcmDataNotification({ payload: 'enc-bundle', notificationId: 'n3' })
+    ).resolves.toBeUndefined()
+    expect(showLocalNotification).toHaveBeenCalledTimes(1)
+  })
+
+  it('threads the background option through to showLocalNotification', async () => {
+    ;(loadHosts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { id: 'host-a', publicKeyB64: 'pk-a', name: 'A', endpoint: 'e', deviceToken: 't' }
+    ])
+    decryptOkOnCall(1)
+
+    await handleFcmDataNotification(
+      { payload: 'enc-bundle', notificationId: 'n3' },
+      { background: true }
+    )
+
+    expect(showLocalNotification).toHaveBeenCalledTimes(1)
+    const options = (showLocalNotification as ReturnType<typeof vi.fn>).mock.calls[0][2]
+    expect(options).toEqual({ background: true })
+  })
+})

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as Notifications from 'expo-notifications'
 import {
   setScheduledNotificationsMaxForTests,
+  showLocalNotification,
   subscribeToDesktopNotifications
 } from './mobile-notifications'
 import type { RpcClient } from '../transport/rpc-client'
@@ -314,5 +315,73 @@ describe('subscribeToDesktopNotifications', () => {
     } finally {
       setScheduledNotificationsMaxForTests()
     }
+  })
+})
+
+describe('showLocalNotification — headless-safe background permission path (M8)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  // Why: the RNFB setBackgroundMessageHandler headless path passes {background:true}.
+  // It must only QUERY permission state and drop when not granted — never call
+  // requestPermissionsAsync (no UI in headless context to surface a prompt).
+  it('background path drops when permission not granted and never requests', async () => {
+    vi.mocked(loadPushNotificationsEnabled).mockResolvedValue(true)
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+      status: 'denied',
+      canAskAgain: false
+    } as never)
+
+    await showLocalNotification(
+      { type: 'notification', source: 'fcm-supplemental', title: 't', body: 'b' },
+      'host-bg',
+      { background: true }
+    )
+
+    expect(Notifications.getPermissionsAsync).toHaveBeenCalledTimes(1)
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled()
+  })
+
+  it('background path schedules when permission already granted (query only)', async () => {
+    vi.mocked(loadPushNotificationsEnabled).mockResolvedValue(true)
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+      status: 'granted',
+      canAskAgain: true
+    } as never)
+    vi.mocked(Notifications.scheduleNotificationAsync).mockResolvedValue('bg-id')
+
+    await showLocalNotification(
+      { type: 'notification', source: 'fcm-supplemental', title: 't', body: 'b' },
+      'host-bg',
+      { background: true }
+    )
+
+    expect(Notifications.getPermissionsAsync).toHaveBeenCalledTimes(1)
+    expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled()
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1)
+  })
+
+  // Why: foreground callers omit the option — they keep the request-permission UX
+  // path. This guards against the background flag accidentally changing foreground.
+  it('foreground path (no options) still requests permission when not granted', async () => {
+    vi.mocked(loadPushNotificationsEnabled).mockResolvedValue(true)
+    vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({
+      status: 'denied',
+      canAskAgain: true
+    } as never)
+    vi.mocked(Notifications.requestPermissionsAsync).mockResolvedValue({
+      status: 'granted'
+    } as never)
+    vi.mocked(Notifications.scheduleNotificationAsync).mockResolvedValue('fg-id')
+
+    await showLocalNotification(
+      { type: 'notification', source: 'fcm-supplemental', title: 't', body: 'b' },
+      'host-fg'
+    )
+
+    expect(Notifications.requestPermissionsAsync).toHaveBeenCalledTimes(1)
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1)
   })
 })

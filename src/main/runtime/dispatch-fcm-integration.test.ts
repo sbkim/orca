@@ -313,7 +313,7 @@ describe('dispatch-path integration — M1→M6 chain fires end-to-end when no W
       }
     }
     expect(iosBody.message.apns).toEqual({
-      headers: { 'apns-priority': '10' },
+      headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
       payload: { aps: { 'content-available': 1 } }
     })
     expect(iosBody.message.android).toBeUndefined()

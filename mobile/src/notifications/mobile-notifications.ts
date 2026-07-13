@@ -100,6 +100,18 @@ export async function ensureNotificationPermissions(): Promise<boolean> {
   return status === 'granted'
 }
 
+// Why: the background/headless FCM path (RNFB setBackgroundMessageHandler in
+// index.js) has no UI to surface a permission prompt, so it must only QUERY the
+// OS permission state and drop the notification when not granted. The foreground
+// path still requests via ensureNotificationPermissions. Threading the `background`
+// flag keeps a single showLocalNotification entry point for both caller contexts.
+async function permissionGranted(options?: { background?: boolean }): Promise<boolean> {
+  if (options?.background) {
+    return (await getNotificationPermissionState()).granted
+  }
+  return ensureNotificationPermissions()
+}
+
 function configureNotificationChannel(): void {
   if (Platform.OS === 'android') {
     void Notifications.setNotificationChannelAsync('orca-desktop', {
@@ -115,7 +127,8 @@ function configureNotificationChannel(): void {
 // (AC-FCM-005 dedupe + AC-FCM-009 gate). See NotificationEvent above.
 export async function showLocalNotification(
   event: NotificationEvent,
-  hostId: string
+  hostId: string,
+  options?: { background?: boolean }
 ): Promise<void> {
   const storedKey = event.notificationId
     ? getStoredNotificationKey(hostId, event.notificationId)
@@ -127,7 +140,7 @@ export async function showLocalNotification(
       return
     }
 
-    const granted = await ensureNotificationPermissions()
+    const granted = await permissionGranted(options)
     if (!granted) {
       return
     }
@@ -160,7 +173,7 @@ export async function showLocalNotification(
       return null
     }
 
-    const granted = await ensureNotificationPermissions()
+    const granted = await permissionGranted(options)
     if (!granted) {
       return null
     }

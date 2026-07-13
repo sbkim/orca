@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     does not clear the persistent public key (AC-FCM-004a/b).
   - **Platform-aware delivery.** Android receives FCM direct messages at HIGH
     priority for prompt background delivery; iOS is brokered through APNs via
-    FCM (content-available background data, `apns-priority: 10`) so a
+    FCM (content-available background data, `apns-priority: 5` with `apns-push-type: background`) so a
     backgrounded/killed iOS app is still woken. Both stay data-only
     (`src/main/runtime/fcm-sender.ts`) (AC-FCM-006a/b — code-complete and
     integration-verified; **on-device delivery verification is deferred to
