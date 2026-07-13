@@ -7386,7 +7386,12 @@ export class OrcaRuntimeService {
     if (event.type === 'notification' && this.notificationListeners.size === 0 && this.fcmFanOut) {
       const fanOut = this.fcmFanOut
       void fanOut({
-        payload: { title: event.title, body: event.body },
+        payload: {
+          title: event.title,
+          body: event.body,
+          worktreeId: event.worktreeId,
+          source: event.source
+        },
         notificationId: event.notificationId ?? ''
       }).catch((err) => {
         console.error('[runtime] FCM supplemental fan-out failed', {
