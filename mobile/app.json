@@ -77,7 +77,7 @@
       "allowBackup": false,
       "permissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"],
       "googleServicesFile": "./google-services.json",
-      "package": "com.stably.orca.mobile",
+      "package": "com.omninetworks.orca.mobile",
       "versionCode": 7
     },
     "plugins": [
