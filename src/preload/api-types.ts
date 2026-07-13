@@ -2181,6 +2181,8 @@ export type PreloadApi = {
     setServiceAccount: (json: string) => Promise<FcmServiceAccountSetResult>
     getServiceAccountStatus: () => Promise<FcmServiceAccountStatus>
     clearServiceAccount: () => Promise<FcmServiceAccountClearResult>
+    // TEMP (device-E2E): remove before release (SPEC-FCM-001 review).
+    testDispatch: () => Promise<void>
   }
   onboarding: {
     get: () => Promise<OnboardingState>

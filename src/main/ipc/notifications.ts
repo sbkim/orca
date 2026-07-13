@@ -342,6 +342,23 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
 
   ipcMain.handle('notifications:getPermissionStatus', getPermissionStatus)
 
+  // TEMP (device-E2E): fires the REAL mobile dispatch path with a non-test
+  // source so FCM fan-out triggers when no WS listener is connected. The
+  // standard Settings "Send Test Notification" uses source:'test', intentionally
+  // excluded from mobile dispatch (see the `args.source !== 'test'` gate above).
+  // REVERT this handler + the matching preload/renderer button after device
+  // verification (SPEC-FCM-001 review: remove before release).
+  ipcMain.removeHandler('fcm:testDispatch')
+  ipcMain.handle('fcm:testDispatch', () => {
+    runtime?.dispatchMobileNotification({
+      type: 'notification',
+      source: 'agent-task-complete',
+      title: 'FCM test push',
+      body: `device-E2E ${new Date().toISOString()}`,
+      notificationId: `fcm-test-${Date.now()}`
+    })
+  })
+
   ipcMain.handle(
     'notifications:probeDelivery',
     async (_event, args?: { force?: boolean }): Promise<NotificationDeliveryProbeResult> => {
