@@ -10,13 +10,16 @@ import {
   clampHostSidebarWidth,
   loadDisabledTerminalLiveInputHandles,
   loadHostSidebarWidth,
+  loadPushNotificationsEnabled,
   loadTerminalAutocompleteEnabled,
   loadTerminalLinkOpenMode,
   readDisabledTerminalLiveInputHandlesPreference,
   saveDisabledTerminalLiveInputHandles,
   saveHostSidebarWidth,
+  savePushNotificationsEnabled,
   saveTerminalAutocompleteEnabled,
-  saveTerminalLinkOpenMode
+  saveTerminalLinkOpenMode,
+  subscribePushNotificationsEnabled
 } from './preferences'
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -25,6 +28,34 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
     setItem: vi.fn()
   }
 }))
+
+describe('push notification preference', () => {
+  beforeEach(() => {
+    vi.mocked(AsyncStorage.getItem).mockReset()
+    vi.mocked(AsyncStorage.setItem).mockReset()
+  })
+
+  it('defaults to disabled and loads only the persisted true value', async () => {
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(null)
+    await expect(loadPushNotificationsEnabled()).resolves.toBe(false)
+
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue('true')
+    await expect(loadPushNotificationsEnabled()).resolves.toBe(true)
+  })
+
+  it('notifies mounted consumers after the new value is persisted', async () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribePushNotificationsEnabled(listener)
+
+    await savePushNotificationsEnabled(true)
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('orca:pushNotificationsEnabled', 'true')
+    expect(listener).toHaveBeenCalledWith(true)
+
+    unsubscribe()
+    await savePushNotificationsEnabled(false)
+    expect(listener).toHaveBeenCalledTimes(1)
+  })
+})
 
 describe('terminal autocomplete preference', () => {
   beforeEach(() => {

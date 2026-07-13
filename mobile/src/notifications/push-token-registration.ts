@@ -77,7 +77,12 @@ export async function registerPushTokenWithDesktop(
     mobilePublicKeyB64: publicKeyB64
   })
 
-  if (!response?.ok) {
+  if (
+    !response?.ok ||
+    !response.result ||
+    typeof response.result !== 'object' ||
+    (response.result as { ok?: unknown }).ok !== true
+  ) {
     return { registered: false, reason: 'rpc-error' }
   }
   return { registered: true }

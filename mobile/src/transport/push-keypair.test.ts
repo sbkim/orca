@@ -15,7 +15,9 @@ vi.mock('./e2ee', () => {
       return { publicKey, secretKey }
     },
     publicKeyToBase64: (key: Uint8Array) => `pub-${key[0]}`,
-    bytesToBase64: (key: Uint8Array) => `sec-${key[0]}`
+    bytesToBase64: (key: Uint8Array) => `sec-${key[0]}`,
+    base64ToBytes: (value: string) =>
+      value === 'valid-secret' ? new Uint8Array(32).fill(9) : new Uint8Array()
   }
 })
 
@@ -43,7 +45,7 @@ vi.mock('@react-native-async-storage/async-storage', () => ({
   }
 }))
 
-import { loadOrCreatePushKeypair } from './push-keypair'
+import { loadOrCreatePushKeypair, loadPushKeypairSecret } from './push-keypair'
 
 describe('loadOrCreatePushKeypair', () => {
   beforeEach(() => {
@@ -95,7 +97,7 @@ describe('loadOrCreatePushKeypair', () => {
     expect(asyncStorage.get('orca:push-keypair')).toBeUndefined()
 
     // Verify new entry is in expo-secure-store
-    const secureStoreEntry = secureStore.get('orca:push-keypair')
+    const secureStoreEntry = secureStore.get('orca.push-keypair')
     expect(secureStoreEntry).toBeDefined()
     const parsed = JSON.parse(secureStoreEntry!)
     expect(parsed.publicKeyB64).toBe('pub-legacy')
@@ -112,5 +114,14 @@ describe('loadOrCreatePushKeypair', () => {
     const { publicKeyB64 } = await loadOrCreatePushKeypair()
     expect(publicKeyB64).toBeDefined()
     expect(typeof publicKeyB64).toBe('string')
+  })
+
+  it('loads the persistent secret from the same SecureStore record', async () => {
+    secureStore.set(
+      'orca.push-keypair',
+      JSON.stringify({ secretKeyB64: 'valid-secret', publicKeyB64: 'public-key' })
+    )
+
+    await expect(loadPushKeypairSecret()).resolves.toEqual(new Uint8Array(32).fill(9))
   })
 })

@@ -7,7 +7,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { RpcClient } from '../transport/rpc-client'
 import type { ConnectionState } from '../transport/types'
 import { registerPushTokenWithDesktop } from './push-token-registration'
-import { loadPushNotificationsEnabled } from '../storage/preferences'
+import {
+  loadPushNotificationsEnabled,
+  subscribePushNotificationsEnabled
+} from '../storage/preferences'
 import { subscribeToTokenRefresh, initializeMessaging } from './push-token-refresh'
 
 export type PushRegistrationClientEntry = {
@@ -23,8 +26,6 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
   // FIXED: Now only marks as registered AFTER successful RPC ack (defect #1).
   const registeredHostsRef = useRef<Set<string>>(new Set())
 
-  // Why: track previous push toggle state to detect toggle-on transitions for
-  // triggering registration (defect #1 fix: toggle-on is a registration trigger).
   const [pushToggleEnabled, setPushToggleEnabled] = useState<boolean | null>(null)
 
   // Why: track token refresh subscription cleanup function
@@ -70,40 +71,25 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
     }
   }, [allClients, pushToggleEnabled])
 
-  // Why: separate effect to monitor push toggle changes and trigger registration
-  // when toggle is turned on, even if hosts are already connected.
+  // Why: HomeScreen remains mounted below the notification settings route, so
+  // subscribe to preference writes instead of waiting for an unrelated rerender.
   useEffect(() => {
     let mounted = true
-
-    const checkToggleAndRegister = async () => {
-      const enabled = await loadPushNotificationsEnabled()
-      if (!mounted) {
-        return
+    const unsubscribe = subscribePushNotificationsEnabled((enabled) => {
+      if (mounted) {
+        setPushToggleEnabled(enabled)
       }
-
-      // Detect toggle-on transition
-      if (pushToggleEnabled === false && enabled === true) {
-        // Toggle was turned ON - trigger registration for all connected hosts
-        for (const entry of allClients) {
-          if (entry.state === 'connected' && !registeredHostsRef.current.has(entry.hostId)) {
-            void registerPushTokenWithDesktop(entry.client)
-              .then((result) => {
-                if (result.registered && mounted) {
-                  registeredHostsRef.current.add(entry.hostId)
-                }
-              })
-              .catch(() => {})
-          }
-        }
+    })
+    void loadPushNotificationsEnabled().then((enabled) => {
+      if (mounted) {
+        setPushToggleEnabled(enabled)
       }
-      setPushToggleEnabled(enabled)
-    }
-
-    checkToggleAndRegister()
+    })
     return () => {
       mounted = false
+      unsubscribe()
     }
-  }, [pushToggleEnabled, allClients])
+  }, [])
 
   useEffect(() => {
     for (const entry of allClients) {
@@ -112,6 +98,9 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
         continue
       }
       if (registeredHostsRef.current.has(entry.hostId)) {
+        continue
+      }
+      if (pushToggleEnabled !== true) {
         continue
       }
       // Why: fire registration attempt - will only mark as registered on success
@@ -123,7 +112,7 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
         })
         .catch(() => {})
     }
-  }, [allClients])
+  }, [allClients, pushToggleEnabled])
 
   // Why: clean up token refresh subscription on component unmount
   useEffect(() => {

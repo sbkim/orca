@@ -18,8 +18,8 @@
 // ephemeral session key — so WebSocket forward secrecy is preserved
 // (REQ-FCM-019). The decrypt primitive + ECDH symmetry are proven in
 // push-payload-decrypt.test.ts and fcm-payload-cross-platform.test.ts.
-import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts } from '../transport/host-store'
+import { loadPushKeypairSecret } from '../transport/push-keypair'
 import {
   decryptPushPayload,
   deriveMobileFcmSharedKey,
@@ -28,17 +28,6 @@ import {
 import type { DesktopNotificationSource } from './notification-routing'
 import { showLocalNotification, type NotificationEvent } from './mobile-notifications'
 
-// Why: M1 contract — push-keypair.ts persists the long-lived Curve25519 pair at
-// this key as {secretKeyB64, publicKeyB64}. The receiver consumes that record
-// READ-ONLY (push-keypair.ts is intentionally not modified) to load the mobile
-// persistent secret half of the FCM shared-key derivation.
-const PUSH_KEYPAIR_STORAGE_KEY = 'orca:push-keypair'
-
-type PushKeypairRecord = {
-  secretKeyB64?: string
-  publicKeyB64?: string
-}
-
 // Why: the FCM v1 `data` map is a string->string map. M3/M4 emit exactly two
 // fields: `payload` (M2 base64 ciphertext) and `notificationId` (single-namespace
 // dedupe id shared with the WS path). Both arrive as strings; defensive coercion
@@ -46,44 +35,6 @@ type PushKeypairRecord = {
 export type FcmDataMessage = {
   payload?: unknown
   notificationId?: unknown
-}
-
-// Why: decode the persisted base64 secret into raw bytes. Mirrors the encoding
-// in e2ee.ts (base64 over a 32-byte key) without importing the RN-bound e2ee
-// module here — the secret is a plain 32-byte scalar, not a public key, so the
-// 32-byte length check from publicKeyFromBase64 does not apply.
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
-
-// Why: loads the mobile persistent secret. Returns null when absent/malformed so
-// the receiver degrades to a clean no-op (a device that never registered a push
-// keypair simply cannot decrypt FCM payloads — never a crash).
-async function loadMobilePersistentSecret(): Promise<Uint8Array | null> {
-  const raw = await AsyncStorage.getItem(PUSH_KEYPAIR_STORAGE_KEY)
-  if (!raw) {
-    return null
-  }
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    return null
-  }
-  const record = parsed as PushKeypairRecord
-  if (typeof record?.secretKeyB64 !== 'string' || record.secretKeyB64.length === 0) {
-    return null
-  }
-  try {
-    return base64ToBytes(record.secretKeyB64)
-  } catch {
-    return null
-  }
 }
 
 // Why: FCM data carries no hostId, so the origin host is identified by which
@@ -136,7 +87,7 @@ export async function handleFcmDataNotification(
       return
     }
 
-    const mobileSecret = await loadMobilePersistentSecret()
+    const mobileSecret = await loadPushKeypairSecret()
     if (!mobileSecret) {
       return
     }

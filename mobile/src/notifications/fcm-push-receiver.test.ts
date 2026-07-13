@@ -22,27 +22,15 @@ vi.mock('./mobile-notifications', () => ({
   showLocalNotification: vi.fn()
 }))
 
-const storage = new Map<string, string>()
-vi.mock('@react-native-async-storage/async-storage', () => ({
-  default: {
-    getItem: async (key: string) => storage.get(key) ?? null,
-    setItem: async (key: string, value: string) => {
-      storage.set(key, value)
-    }
-  }
+const pushKeypair = vi.hoisted(() => ({ secret: new Uint8Array(32).fill(9) as Uint8Array | null }))
+vi.mock('../transport/push-keypair', () => ({
+  loadPushKeypairSecret: vi.fn(async () => pushKeypair.secret)
 }))
 
 import { decryptPushPayload, deriveMobileFcmSharedKey } from './push-payload-decrypt'
 import { loadHosts } from '../transport/host-store'
 import { showLocalNotification } from './mobile-notifications'
 import { handleFcmDataNotification } from './fcm-push-receiver'
-
-// Why: the M1 push-keypair record shape (push-keypair.ts writes this). The
-// receiver reads secretKeyB64 read-only without modifying push-keypair.ts.
-const PUSH_KEYPAIR_RECORD = JSON.stringify({
-  secretKeyB64: Buffer.from(new Uint8Array(32).fill(9)).toString('base64'),
-  publicKeyB64: Buffer.from(new Uint8Array(32).fill(3)).toString('base64')
-})
 
 // Why: makes decryptPushPayload return ok on a specific 1-based call index and
 // error otherwise — simulating "only host N has the matching key" without
@@ -62,8 +50,7 @@ function decryptOkOnCall(okCallIndex: number): void {
 describe('handleFcmDataNotification — field validation', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    storage.clear()
-    storage.set('orca:push-keypair', PUSH_KEYPAIR_RECORD)
+    pushKeypair.secret = new Uint8Array(32).fill(9)
   })
 
   it('is a no-op when data.payload is missing', async () => {
@@ -80,8 +67,7 @@ describe('handleFcmDataNotification — field validation', () => {
 describe('handleFcmDataNotification — per-host try-decrypt', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    storage.clear()
-    storage.set('orca:push-keypair', PUSH_KEYPAIR_RECORD)
+    pushKeypair.secret = new Uint8Array(32).fill(9)
   })
 
   it('tries hosts in order, stops at the first that decrypts, presents once', async () => {
@@ -139,7 +125,7 @@ describe('handleFcmDataNotification — per-host try-decrypt', () => {
   it('is a no-op when the mobile persistent secret is absent', async () => {
     // Why: a device that never generated/loaded its persistent push keypair
     // cannot derive the shared key — must never present a notification.
-    storage.delete('orca:push-keypair')
+    pushKeypair.secret = null
     ;(loadHosts as ReturnType<typeof vi.fn>).mockResolvedValue([
       { id: 'host-a', publicKeyB64: 'pk-a', name: 'A', endpoint: 'e', deviceToken: 't' }
     ])
@@ -177,8 +163,7 @@ describe('handleFcmDataNotification — per-host try-decrypt', () => {
 describe('handleFcmDataNotification — never-throws + background flag (M8)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    storage.clear()
-    storage.set('orca:push-keypair', PUSH_KEYPAIR_RECORD)
+    pushKeypair.secret = new Uint8Array(32).fill(9)
   })
 
   // Why: the receiver is the OS push callback surface (foreground listeners AND

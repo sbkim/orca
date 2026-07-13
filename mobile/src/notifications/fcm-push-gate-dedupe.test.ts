@@ -21,14 +21,8 @@ vi.mock('../transport/host-store', () => ({
   ])
 }))
 
-const storage = new Map<string, string>()
-vi.mock('@react-native-async-storage/async-storage', () => ({
-  default: {
-    getItem: async (key: string) => storage.get(key) ?? null,
-    setItem: async (key: string, value: string) => {
-      storage.set(key, value)
-    }
-  }
+vi.mock('../transport/push-keypair', () => ({
+  loadPushKeypairSecret: vi.fn(async () => new Uint8Array(32).fill(9))
 }))
 
 // Why: vi.mock factories are hoisted above imports, so the schedule spy must be
@@ -56,16 +50,9 @@ import * as Notifications from 'expo-notifications'
 import { setScheduledNotificationsMaxForTests, showLocalNotification } from './mobile-notifications'
 import { handleFcmDataNotification } from './fcm-push-receiver'
 
-const PUSH_KEYPAIR_RECORD = JSON.stringify({
-  secretKeyB64: Buffer.from(new Uint8Array(32).fill(9)).toString('base64'),
-  publicKeyB64: Buffer.from(new Uint8Array(32).fill(3)).toString('base64')
-})
-
 describe('AC-FCM-009 — permission/toggle gate (FCM reuses the WS gate)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    storage.clear()
-    storage.set('orca:push-keypair', PUSH_KEYPAIR_RECORD)
     setScheduledNotificationsMaxForTests(256)
     ;(loadPushNotificationsEnabled as ReturnType<typeof vi.fn>).mockResolvedValue(true)
     ;(Notifications.getPermissionsAsync as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
@@ -111,8 +98,6 @@ describe('AC-FCM-009 — permission/toggle gate (FCM reuses the WS gate)', () =>
 describe('AC-FCM-005 — single notificationId dedupe across WS + FCM', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    storage.clear()
-    storage.set('orca:push-keypair', PUSH_KEYPAIR_RECORD)
     setScheduledNotificationsMaxForTests(256)
     ;(loadPushNotificationsEnabled as ReturnType<typeof vi.fn>).mockResolvedValue(true)
     ;(Notifications.getPermissionsAsync as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({

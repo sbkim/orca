@@ -15,14 +15,37 @@
 // matching private half later without re-touching the persistence format.
 import * as SecureStore from 'expo-secure-store'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { bytesToBase64, generateKeyPair, publicKeyToBase64 } from './e2ee'
+import { base64ToBytes, bytesToBase64, generateKeyPair, publicKeyToBase64 } from './e2ee'
 
-const PUSH_KEYPAIR_STORAGE_KEY = 'orca:push-keypair'
+// Why: Expo SecureStore accepts only alphanumerics plus `.`, `-`, and `_` in keys.
+const PUSH_KEYPAIR_STORAGE_KEY = 'orca.push-keypair'
 const LEGACY_ASYNC_STORAGE_KEY = 'orca:push-keypair' // For migration from AsyncStorage
 
 type PushKeypairRecord = {
   secretKeyB64: string
   publicKeyB64: string
+}
+
+function parsePushKeypairRecord(raw: string | null): PushKeypairRecord | null {
+  if (!raw) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<PushKeypairRecord>
+    return parsed?.publicKeyB64 && parsed?.secretKeyB64
+      ? { publicKeyB64: parsed.publicKeyB64, secretKeyB64: parsed.secretKeyB64 }
+      : null
+  } catch {
+    return null
+  }
+}
+
+async function loadStoredPushKeypair(): Promise<PushKeypairRecord | null> {
+  try {
+    return parsePushKeypairRecord(await SecureStore.getItemAsync(PUSH_KEYPAIR_STORAGE_KEY))
+  } catch {
+    return null
+  }
 }
 
 // Why: migrate existing AsyncStorage entry to expo-secure-store. This is a
@@ -35,8 +58,8 @@ async function migrateFromAsyncStorage(): Promise<boolean> {
       return false // No legacy entry to migrate
     }
 
-    const parsed = JSON.parse(legacyEntry) as Partial<PushKeypairRecord>
-    if (!parsed?.publicKeyB64 || !parsed?.secretKeyB64) {
+    const parsed = parsePushKeypairRecord(legacyEntry)
+    if (!parsed) {
       return false // Malformed entry, skip migration
     }
 
@@ -67,23 +90,9 @@ export async function loadOrCreatePushKeypair(): Promise<{ publicKeyB64: string 
   // First, attempt to migrate from AsyncStorage if needed (one-time migration)
   await migrateFromAsyncStorage()
 
-  // Try to load from expo-secure-store
-  try {
-    const existing = await SecureStore.getItemAsync(PUSH_KEYPAIR_STORAGE_KEY)
-    if (existing) {
-      try {
-        const parsed = JSON.parse(existing) as Partial<PushKeypairRecord>
-        if (parsed?.publicKeyB64 && parsed?.secretKeyB64) {
-          return { publicKeyB64: parsed.publicKeyB64 }
-        }
-      } catch {
-        // Why: malformed/corrupt record — fall through and regenerate so a bad
-        // write never permanently bricks push delivery.
-      }
-    }
-  } catch {
-    // Why: expo-secure-store access failure (e.g., Keychain unavailable on some
-    // platforms) — fall through to regeneration
+  const existing = await loadStoredPushKeypair()
+  if (existing) {
+    return { publicKeyB64: existing.publicKeyB64 }
   }
 
   const keypair = generateKeyPair()
@@ -101,4 +110,18 @@ export async function loadOrCreatePushKeypair(): Promise<{ publicKeyB64: string 
   }
 
   return { publicKeyB64 }
+}
+
+export async function loadPushKeypairSecret(): Promise<Uint8Array | null> {
+  await migrateFromAsyncStorage()
+  const record = await loadStoredPushKeypair()
+  if (!record) {
+    return null
+  }
+  try {
+    const secretKey = base64ToBytes(record.secretKeyB64)
+    return secretKey.length === 32 ? secretKey : null
+  } catch {
+    return null
+  }
 }

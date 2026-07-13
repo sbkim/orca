@@ -158,4 +158,20 @@ describe('registerPushTokenWithDesktop', () => {
     const result = await registerPushTokenWithDesktop(client)
     expect(result.registered).toBe(false)
   })
+
+  it('reports not registered when the handler rejects inside a successful RPC envelope', async () => {
+    const client = {
+      sendRequest: vi.fn(async () => ({
+        id: 'r1',
+        ok: true as const,
+        result: { ok: false, error: 'unauthorized' },
+        _meta: { runtimeId: 'rt' }
+      }))
+    }
+
+    await expect(registerPushTokenWithDesktop(client)).resolves.toEqual({
+      registered: false,
+      reason: 'rpc-error'
+    })
+  })
 })

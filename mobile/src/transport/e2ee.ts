@@ -43,7 +43,7 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function base64ToUint8(b64: string): Uint8Array {
+export function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) {
@@ -53,7 +53,7 @@ function base64ToUint8(b64: string): Uint8Array {
 }
 
 export function publicKeyFromBase64(b64: string): Uint8Array {
-  const key = base64ToUint8(b64)
+  const key = base64ToBytes(b64)
   if (key.length !== 32) {
     throw new Error(
       `Invalid public key: expected 32 bytes, got ${key.length} from "${b64.slice(0, 20)}..."`
@@ -72,7 +72,7 @@ export function encrypt(plaintext: string, sharedKey: Uint8Array): string {
 }
 
 export function decrypt(encrypted: string, sharedKey: Uint8Array): string | null {
-  const bundle = base64ToUint8(encrypted)
+  const bundle = base64ToBytes(encrypted)
   const plaintext = decryptBytes(bundle, sharedKey)
   return plaintext ? new TextDecoder().decode(plaintext) : null
 }
