@@ -28,6 +28,11 @@ export type DecryptedPushPayload = {
   // Why: M2 may shed metadata to fit the 4KB FCM data cap (AC-FCM-008), so it
   // is optional on the receiving side.
   metadata?: Record<string, unknown>
+  // Why (#9 deeplink parity): desktop includes these as TOP-LEVEL fields in the
+  // encrypted payload so an FCM tap can route to the origin worktree. Optional —
+  // absent for global alerts or older senders that did not include them.
+  worktreeId?: string
+  source?: string
 }
 
 export type PushDecryptOutcome =
@@ -85,6 +90,14 @@ export function decryptPushPayload(
   const payload: DecryptedPushPayload = { title: obj.title, body: obj.body }
   if (obj.metadata !== undefined) {
     payload.metadata = obj.metadata as Record<string, unknown>
+  }
+  // Why (#9): surface deeplink fields only when present + well-typed, so a
+  // payload from an older sender (no worktreeId) degrades cleanly to undefined.
+  if (typeof obj.worktreeId === 'string') {
+    payload.worktreeId = obj.worktreeId
+  }
+  if (typeof obj.source === 'string') {
+    payload.source = obj.source
   }
   return { status: 'ok', payload }
 }

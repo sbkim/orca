@@ -267,7 +267,11 @@ describe('dispatch-path integration — M1→M6 chain fires end-to-end when no W
     expect(plaintext).not.toBeNull()
     expect(JSON.parse(new TextDecoder().decode(plaintext!))).toEqual({
       title: 'Agent finished the task',
-      body: 'Completed build + tests'
+      body: 'Completed build + tests',
+      // Why (#9 deeplink parity): the dispatch event carries source, which is
+      // encrypted into the payload and recovered on decrypt. This event has no
+      // worktreeId, so JSON.stringify omits that undefined field.
+      source: 'agent-task-complete'
     })
 
     // The OAuth cache mints exactly once across the single device's single send.

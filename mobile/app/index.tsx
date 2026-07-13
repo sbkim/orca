@@ -37,7 +37,7 @@ import {
   useCloseHost,
   useForceReconnect,
   usePrimeHosts
-} from '../src/transport/host-client-store'
+} from '../src/transport/client-context'
 import { usePushTokenRegistration } from '../src/notifications/use-push-token-registration'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { StatusDot } from '../src/components/StatusDot'
@@ -49,7 +49,7 @@ import { setCachedWorktrees, getCachedWorktrees } from '../src/cache/worktree-ca
 import { loadHomeSnapshot, saveHomeSnapshot } from '../src/cache/home-snapshot-cache'
 import { colors, spacing, radii } from '../src/theme/mobile-theme'
 import { useResponsiveLayout } from '../src/layout/responsive-layout'
-// Why: utility functions and types extracted to home-utils.ts for max-lines compliance (M5).
+// Why: utility functions and types extracted to home-screen-data.ts for max-lines compliance (M5).
 import {
   endpointLabel,
   formatDuration,
@@ -63,7 +63,7 @@ import {
   type StatsSummary,
   type WorktreeSummary,
   type HostWorktreeInfo
-} from '../src/app/home-utils'
+} from '../src/app/home-screen-data'
 import type { TaskProvider } from '../src/tasks/mobile-task-providers'
 
 export default function HomeScreen() {

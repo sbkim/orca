@@ -7,7 +7,7 @@
 // This module provides a subscription function that sets up the Firebase
 // onTokenRefresh listener and triggers re-registration when the token changes.
 
-import { messaging, onTokenRefresh } from '@react-native-firebase/messaging'
+import { getMessaging, onTokenRefresh } from '@react-native-firebase/messaging'
 import type { RpcClient } from '../transport/rpc-client'
 import { loadPushNotificationsEnabled } from '../storage/preferences'
 import { loadOrCreatePushKeypair } from '../transport/push-keypair'
@@ -37,7 +37,7 @@ export function subscribeToTokenRefresh(getClient: () => TokenRefreshClient | nu
   // Why: onTokenRefresh fires when FCM refreshes the registration token.
   // We must immediately send the new token to the desktop to avoid delivery
   // failures with the stale token.
-  unsubscribe = onTokenRefresh(async (newToken) => {
+  unsubscribe = onTokenRefresh(getMessaging(), async (newToken: string) => {
     try {
       // REQ-FCM-018: respect push toggle even for token refresh
       const enabled = await loadPushNotificationsEnabled()
@@ -76,5 +76,5 @@ export function subscribeToTokenRefresh(getClient: () => TokenRefreshClient | nu
 // to work on some platforms). Call this when the app starts.
 export function initializeMessaging(): void {
   // Side effect: accessing the messaging singleton initializes it
-  messaging()
+  getMessaging()
 }

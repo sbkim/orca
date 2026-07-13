@@ -155,11 +155,11 @@ export async function handleFcmDataNotification(
     }
 
     // Why: route through the SAME local-notification path as the WS subscriber so
-    // M9 (deeplink parity): worktreeId and source are now carried in encrypted payload
-    // metadata for WS parity — tapping an FCM notification navigates to the worktree
-    // screen just like WebSocket notifications (defect #9 fix).
-    const worktreeId = origin.payload.metadata?.worktreeId as string | undefined
-    const source = origin.payload.metadata?.source as DesktopNotificationSource | undefined
+    // Why (#9 deeplink parity): worktreeId/source are carried as TOP-LEVEL fields
+    // in the encrypted payload (push-payload-decrypt surfaces them), so an FCM
+    // notification tap routes to the origin worktree like a WebSocket notification.
+    const worktreeId = origin.payload.worktreeId
+    const source = origin.payload.source as DesktopNotificationSource | undefined
     const event: NotificationEvent = {
       type: 'notification',
       source: source ?? 'fcm-supplemental',

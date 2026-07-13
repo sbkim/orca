@@ -19,6 +19,7 @@
 import {
   deriveFcmSharedKey,
   encryptPushPayload,
+  FCM_DATA_MAX_BYTES,
   type PushPayloadInput
 } from './push-payload-crypto'
 import type { FcmCredentials, FcmSender, FcmSenderOptions } from './fcm-sender'
@@ -72,6 +73,22 @@ function selectFcmCapableDevices(devices: readonly DeviceEntry[]): FcmCapableDev
   )
 }
 
+// Why (#8 / AC-FCM-008): FCM's 4KB cap applies to the WHOLE `data` map, which
+// carries TWO entries — the ciphertext under key "payload" and the dedupe id
+// under key "notificationId". Reserve room for the notificationId entry plus
+// protobuf/JSON map framing before sizing the ciphertext, so a near-cap
+// ciphertext plus a long notificationId cannot push the final data map past 4KB
+// (FCM would reject it with 400). The crypto module stays generic (it fits the
+// ciphertext under `maxBytes`); this caller — the only site that knows the
+// notificationId — accounts for the rest of the data map.
+function fcmDataMapOverhead(notificationId: string): number {
+  // "payload"(7) + "notificationId"(14) keys, plus protobuf tags / length
+  // prefixes and JSON quotes-colons-commas if the map is re-serialized.
+  // Conservative constant — erring toward reserving a few extra bytes.
+  const KEY_AND_FRAMING_BYTES = 40
+  return KEY_AND_FRAMING_BYTES + notificationId.length
+}
+
 export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
   const logError =
     deps.logError ??
@@ -105,7 +122,13 @@ export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
       devices.map(async (device) => {
         try {
           const sharedKey = deriveFcmSharedKey(desktopSecret, device.mobilePublicKeyB64)
-          const outcome = encryptPushPayload(payload, sharedKey)
+          // Why (#8): budget the ciphertext against the FULL data map, not just
+          // itself — see fcmDataMapOverhead.
+          const outcome = encryptPushPayload(
+            payload,
+            sharedKey,
+            FCM_DATA_MAX_BYTES - fcmDataMapOverhead(notificationId)
+          )
           // Why: only ok/truncated produce a sendable ciphertext; `dropped`
           // means the payload was too large even after truncation, so emitting
           // a malformed FCM message would be worse than skipping (REQ-FCM-006).
