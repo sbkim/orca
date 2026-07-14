@@ -2808,7 +2808,13 @@
           },
           "TabBarRunScriptButton": {
             "runScript": "Run Script",
-            "runScriptTooltip": "Run a package.json script"
+            "runScriptTooltip": "Run a package.json script",
+            "workspaceRoot": "Workspace root",
+            "searchScripts": "Search scripts, commands, or packages...",
+            "noMatchingScripts": "No scripts match your search.",
+            "scriptSummary": "{{scripts}} scripts in {{packages}} packages",
+            "expandNode": "Expand {{name}}",
+            "collapseNode": "Collapse {{name}}"
           },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "Command",

@@ -2807,8 +2807,14 @@
             "39676a184c": "打开任何文件、URL、智能体..."
           },
           "TabBarRunScriptButton": {
-            "runScript": "Run Script",
-            "runScriptTooltip": "Run a package.json script"
+            "runScript": "运行脚本",
+            "runScriptTooltip": "运行 package.json 脚本",
+            "workspaceRoot": "工作区根目录",
+            "searchScripts": "搜索脚本、命令或包...",
+            "noMatchingScripts": "没有与搜索匹配的脚本。",
+            "scriptSummary": "{{packages}} 个包中的 {{scripts}} 个脚本",
+            "expandNode": "展开 {{name}}",
+            "collapseNode": "折叠 {{name}}"
           },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "命令",
