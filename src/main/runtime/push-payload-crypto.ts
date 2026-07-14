@@ -12,6 +12,7 @@
 // preserved (REQ-FCM-019). This mirrors the WS derivation in
 // rpc/e2ee-channel.ts (deriveSharedKey(serverSecretKey, clientPublicKey)) but
 // uses persistent material instead of an ephemeral keypair.
+import { createCipheriv, createHash, randomBytes } from 'node:crypto'
 import { deriveSharedKey, encryptBytes, publicKeyFromBase64 } from '../../shared/e2ee-crypto'
 
 // Why: the FCM `data` field carries a base64 ciphertext and is capped near 4KB.
@@ -37,6 +38,11 @@ export type PushEncryptOutcome =
   | { status: 'truncated'; ciphertextB64: string; droppedFields: string[] }
   | { status: 'dropped'; reason: string }
 
+const IOS_ENVELOPE_VERSION = 1
+const IOS_NONCE_BYTES = 12
+const IOS_AUTH_TAG_BYTES = 16
+const IOS_AUTHENTICATED_DATA = Buffer.from('orca-ios-push-v1', 'utf8')
+
 // Why: derive the persistent FCM-shared key from desktop persistent secret +
 // mobile persistent public key. The (secret, public) arg order matches the WS
 // path's deriveSharedKey(serverSecretKey, clientPublicKey) call exactly.
@@ -54,6 +60,26 @@ function encryptPayloadToB64(payload: PushPayloadInput, sharedKey: Uint8Array): 
   return Buffer.from(bundle).toString('base64')
 }
 
+function encryptIosPayloadToB64(payload: PushPayloadInput, sharedKey: Uint8Array): string {
+  const nonce = randomBytes(IOS_NONCE_BYTES)
+  const cipher = createCipheriv('aes-256-gcm', sharedKey, nonce)
+  cipher.setAAD(IOS_AUTHENTICATED_DATA)
+  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()])
+  const bundle = Buffer.concat([
+    Buffer.from([IOS_ENVELOPE_VERSION]),
+    nonce,
+    ciphertext,
+    cipher.getAuthTag()
+  ])
+  return bundle.toString('base64')
+}
+
+export function derivePushKeyId(sharedKey: Uint8Array): string {
+  return createHash('sha256').update(sharedKey).digest('hex')
+}
+
+type PayloadEncryptor = (payload: PushPayloadInput, sharedKey: Uint8Array) => string
+
 // Why: find the longest body prefix (by UTF-16 code units) whose encrypted
 // base64 form fits under maxBytes, holding title fixed. Title outranks body, so
 // body is shortened before title is touched. Binary search keeps this O(log n)
@@ -62,14 +88,15 @@ function findMaxBodyLength(
   title: string,
   body: string,
   sharedKey: Uint8Array,
-  maxBytes: number
+  maxBytes: number,
+  encryptPayload: PayloadEncryptor
 ): number {
   let lo = 0
   let hi = body.length
   let best = 0
   while (lo <= hi) {
     const mid = (lo + hi) >> 1
-    const b64 = encryptPayloadToB64({ title, body: body.slice(0, mid) }, sharedKey)
+    const b64 = encryptPayload({ title, body: body.slice(0, mid) }, sharedKey)
     if (b64.length <= maxBytes) {
       best = mid
       lo = mid + 1
@@ -84,12 +111,13 @@ function findMaxBodyLength(
 // are shed in priority order — title (keep), body (keep/truncate), metadata
 // (drop first). If even the title alone exceeds the cap, the send is dropped so
 // no malformed FCM message is emitted (REQ-FCM-006).
-export function encryptPushPayload(
+function encryptPushPayloadWith(
   payload: PushPayloadInput,
   sharedFcmKey: Uint8Array,
-  maxBytes: number = FCM_DATA_MAX_BYTES
+  maxBytes: number,
+  encryptPayload: PayloadEncryptor
 ): PushEncryptOutcome {
-  const full = encryptPayloadToB64(payload, sharedFcmKey)
+  const full = encryptPayload(payload, sharedFcmKey)
   if (full.length <= maxBytes) {
     return { status: 'ok', ciphertextB64: full }
   }
@@ -100,14 +128,14 @@ export function encryptPushPayload(
   // Drop all metadata first, keep title + body intact.
   if (metadataKeys.length > 0) {
     const withoutMeta: PushPayloadInput = { title: payload.title, body: payload.body }
-    const trimmed = encryptPayloadToB64(withoutMeta, sharedFcmKey)
+    const trimmed = encryptPayload(withoutMeta, sharedFcmKey)
     if (trimmed.length <= maxBytes) {
       return { status: 'truncated', ciphertextB64: trimmed, droppedFields }
     }
   }
 
   // Still over: title alone must fit, otherwise the send is dropped.
-  const titleOnly = encryptPayloadToB64({ title: payload.title, body: '' }, sharedFcmKey)
+  const titleOnly = encryptPayload({ title: payload.title, body: '' }, sharedFcmKey)
   if (titleOnly.length > maxBytes) {
     return {
       status: 'dropped',
@@ -116,8 +144,14 @@ export function encryptPushPayload(
   }
 
   // Title fits: truncate the body to the largest prefix that fits.
-  const maxBodyLen = findMaxBodyLength(payload.title, payload.body, sharedFcmKey, maxBytes)
-  const trimmed = encryptPayloadToB64(
+  const maxBodyLen = findMaxBodyLength(
+    payload.title,
+    payload.body,
+    sharedFcmKey,
+    maxBytes,
+    encryptPayload
+  )
+  const trimmed = encryptPayload(
     { title: payload.title, body: payload.body.slice(0, maxBodyLen) },
     sharedFcmKey
   )
@@ -133,3 +167,28 @@ export function encryptPushPayload(
     reason: 'notification payload exceeds the FCM data cap even after truncation'
   }
 }
+
+export function encryptPushPayload(
+  payload: PushPayloadInput,
+  sharedFcmKey: Uint8Array,
+  maxBytes: number = FCM_DATA_MAX_BYTES
+): PushEncryptOutcome {
+  return encryptPushPayloadWith(payload, sharedFcmKey, maxBytes, encryptPayloadToB64)
+}
+
+export function encryptIosPushPayload(
+  payload: PushPayloadInput,
+  sharedFcmKey: Uint8Array,
+  maxBytes: number = FCM_DATA_MAX_BYTES
+): PushEncryptOutcome {
+  // Why: iOS extensions can open AES-GCM with CryptoKit without loading the JS
+  // runtime; Android retains the existing NaCl envelope and in-app receiver.
+  return encryptPushPayloadWith(payload, sharedFcmKey, maxBytes, encryptIosPayloadToB64)
+}
+
+export const IOS_PUSH_ENVELOPE = {
+  version: IOS_ENVELOPE_VERSION,
+  nonceBytes: IOS_NONCE_BYTES,
+  authTagBytes: IOS_AUTH_TAG_BYTES,
+  authenticatedData: IOS_AUTHENTICATED_DATA.toString('utf8')
+} as const

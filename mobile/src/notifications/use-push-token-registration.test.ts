@@ -74,7 +74,7 @@ describe('usePushTokenRegistration', () => {
     await flushEffects()
 
     expect(registerPushTokenWithDesktop).toHaveBeenCalledTimes(1)
-    expect(registerPushTokenWithDesktop).toHaveBeenCalledWith(client)
+    expect(registerPushTokenWithDesktop).toHaveBeenCalledWith(client, 'host-1')
   })
 
   it('registers an already-connected host when persisted push state loads enabled', async () => {

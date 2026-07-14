@@ -11,6 +11,7 @@ import type { RpcResponse } from '../transport/types'
 import { loadOrCreatePushKeypair } from '../transport/push-keypair'
 import { ensureNotificationPermissions } from './mobile-notifications'
 import { loadPushNotificationsEnabled } from '../storage/preferences'
+import { storeIosNotificationKey } from './ios-notification-key-store'
 
 // Why: the minimal client surface this orchestration needs. Narrowing to a
 // structural interface (not the full RpcClient) keeps the unit test free of the
@@ -21,14 +22,15 @@ export type PushTokenRegistrationClient = {
 
 export type PushTokenRegistrationResult = {
   registered: boolean
-  reason?: 'push-disabled' | 'permission-denied' | 'no-token' | 'rpc-error'
+  reason?: 'push-disabled' | 'permission-denied' | 'no-token' | 'key-store-error' | 'rpc-error'
 }
 
 // Why: called after a host client reaches 'connected' (post e2ee_authenticated).
 // Safe to call on every reconnect — re-registering the (possibly refreshed)
 // token overwrites the prior one idempotently on the desktop (AC-FCM-004b).
 export async function registerPushTokenWithDesktop(
-  client: PushTokenRegistrationClient
+  client: PushTokenRegistrationClient,
+  hostId: string
 ): Promise<PushTokenRegistrationResult> {
   // REQ-FCM-018: the existing single push toggle governs FCM delivery too —
   // no new separate control. When off, do not register a token with the desktop.
@@ -67,6 +69,12 @@ export async function registerPushTokenWithDesktop(
   // persisted). The desktop derives the persistent FCM-shared key from its own
   // persistent secret x this public key, independent of the WS session key.
   const { publicKeyB64 } = await loadOrCreatePushKeypair()
+
+  if (Platform.OS === 'ios' && !(await storeIosNotificationKey(hostId))) {
+    // Why: registering before the extension can access its decryption key would
+    // turn every background push into an undecryptable generic notification.
+    return { registered: false, reason: 'key-store-error' }
+  }
 
   // REQ-FCM-016: platform selects FCM transport shaping on the desktop side.
   const platform: 'android' | 'ios' = Platform.OS === 'ios' ? 'ios' : 'android'

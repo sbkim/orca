@@ -159,20 +159,6 @@ describe('dispatchMobileNotification — AC-FCM-002b (≥1 listener → FCM NOT 
 
     expect(fanOut).toHaveBeenCalledTimes(1)
   })
-
-  it('delivers an FCM-only diagnostic without also notifying WS listeners', async () => {
-    const runtime = createRuntime()
-    const fanOut = vi.fn(async () => undefined)
-    const listener = vi.fn()
-    runtime.setFcmFanOut(fanOut)
-    runtime.onNotificationDispatched(listener)
-
-    runtime.dispatchMobileNotification(DISPATCH_EVENT, { fcmOnly: true })
-    await Promise.resolve()
-
-    expect(listener).not.toHaveBeenCalled()
-    expect(fanOut).toHaveBeenCalledTimes(1)
-  })
 })
 
 describe('dispatchMobileNotification — AC-FCM-001 (WS regression: gate is ADDITIVE)', () => {

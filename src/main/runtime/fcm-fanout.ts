@@ -18,12 +18,15 @@
 // one device's failure never aborts the others.
 import {
   deriveFcmSharedKey,
+  derivePushKeyId,
+  encryptIosPushPayload,
   encryptPushPayload,
   FCM_DATA_MAX_BYTES,
   type PushPayloadInput
 } from './push-payload-crypto'
 import type { FcmCredentials, FcmSender, FcmSenderOptions } from './fcm-sender'
 import type { DeviceEntry } from './device-registry'
+import { logFcmPush } from './fcm-push-logger'
 
 export type FcmFanOutInput = {
   payload: PushPayloadInput
@@ -31,7 +34,6 @@ export type FcmFanOutInput = {
   // suppress a push that a reconnecting WS subscriber already delivered
   // (AC-FCM-005, wired in M5).
   notificationId: string
-  visibleTestNotification?: { title: string; body: string }
 }
 
 export type FcmFanOutDeps = {
@@ -84,19 +86,15 @@ function selectFcmCapableDevices(devices: readonly DeviceEntry[]): FcmCapableDev
 }
 
 // Why (#8 / AC-FCM-008): FCM's 4KB cap applies to the WHOLE `data` map, which
-// carries TWO entries — the ciphertext under key "payload" and the dedupe id
-// under key "notificationId". Reserve room for the notificationId entry plus
-// protobuf/JSON map framing before sizing the ciphertext, so a near-cap
-// ciphertext plus a long notificationId cannot push the final data map past 4KB
-// (FCM would reject it with 400). The crypto module stays generic (it fits the
-// ciphertext under `maxBytes`); this caller — the only site that knows the
-// notificationId — accounts for the rest of the data map.
-function fcmDataMapOverhead(notificationId: string): number {
-  // "payload"(7) + "notificationId"(14) keys, plus protobuf tags / length
-  // prefixes and JSON quotes-colons-commas if the map is re-serialized.
+// carries ciphertext + dedupe id and, on iOS, a key id. Reserve room for those
+// entries plus protobuf/JSON map framing before sizing the ciphertext, so the
+// final data map cannot exceed 4KB (FCM would reject it with 400). The crypto
+// module stays generic; this caller accounts for the non-ciphertext fields.
+function fcmDataMapOverhead(notificationId: string, pushKeyId?: string): number {
+  // Field names plus protobuf tags / length prefixes and JSON punctuation.
   // Conservative constant — erring toward reserving a few extra bytes.
-  const KEY_AND_FRAMING_BYTES = 40
-  return KEY_AND_FRAMING_BYTES + notificationId.length
+  const KEY_AND_FRAMING_BYTES = pushKeyId ? 64 : 40
+  return KEY_AND_FRAMING_BYTES + notificationId.length + (pushKeyId?.length ?? 0)
 }
 
 export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
@@ -109,19 +107,23 @@ export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
   // reused across sends instead of re-minting on every notification.
   const sender = deps.createSender()
 
-  return async ({ payload, notificationId, visibleTestNotification }) => {
+  return async ({ payload, notificationId }) => {
     const credentials = deps.getFcmCredentials()
     if (!credentials) {
+      logFcmPush('fcm.fanout-skipped', { notificationId, reason: 'credentials-unavailable' })
       return
     }
     const desktopSecret = deps.getDesktopPersistentSecret()
     if (!desktopSecret) {
+      logFcmPush('fcm.fanout-skipped', { notificationId, reason: 'desktop-key-unavailable' })
       return
     }
     const devices = selectFcmCapableDevices(deps.listFcmDevices())
     if (devices.length === 0) {
+      logFcmPush('fcm.fanout-skipped', { notificationId, reason: 'no-capable-devices' })
       return
     }
+    logFcmPush('fcm.fanout-start', { notificationId, deviceCount: devices.length })
 
     // Why: each device is handled independently so one failure (dropped
     // payload, send error, derive fault) never aborts the remaining devices and
@@ -132,12 +134,15 @@ export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
       devices.map(async (device) => {
         try {
           const sharedKey = deriveFcmSharedKey(desktopSecret, device.mobilePublicKeyB64)
+          const pushPlatform = device.pushPlatform ?? 'android'
+          const pushKeyId = pushPlatform === 'ios' ? derivePushKeyId(sharedKey) : undefined
           // Why (#8): budget the ciphertext against the FULL data map, not just
           // itself — see fcmDataMapOverhead.
-          const outcome = encryptPushPayload(
+          const encryptPayload = pushPlatform === 'ios' ? encryptIosPushPayload : encryptPushPayload
+          const outcome = encryptPayload(
             payload,
             sharedKey,
-            FCM_DATA_MAX_BYTES - fcmDataMapOverhead(notificationId)
+            FCM_DATA_MAX_BYTES - fcmDataMapOverhead(notificationId, pushKeyId)
           )
           // Why: only ok/truncated produce a sendable ciphertext; `dropped`
           // means the payload was too large even after truncation, so emitting
@@ -150,14 +155,14 @@ export function createFcmFanOut(deps: FcmFanOutDeps): FcmFanOut {
             deviceFcmToken: device.fcmToken,
             ciphertextB64: outcome.ciphertextB64,
             notificationId,
+            pushKeyId,
             // Why: selects android vs ios message shaping in the M3 sender
             // (REQ-FCM-016). A device that registered a push token always
             // carries pushPlatform (AC-FCM-004a sends token + platform together);
             // legacy/partial entries without it fall back to the android direct
             // FCM path — the least-surprising transport when the platform is
             // genuinely unknown.
-            pushPlatform: device.pushPlatform ?? 'android',
-            visibleTestNotification
+            pushPlatform
           })
           if (result.status === 'failed') {
             logError('FCM supplemental push failed', {

@@ -2143,9 +2143,7 @@ const api = {
     getServiceAccountStatus: (): Promise<FcmServiceAccountStatus> =>
       ipcRenderer.invoke('fcm:getServiceAccountStatus'),
     clearServiceAccount: (): Promise<FcmServiceAccountClearResult> =>
-      ipcRenderer.invoke('fcm:clearServiceAccount'),
-    // TEMP (device-E2E): remove before release (SPEC-FCM-001 review).
-    testDispatch: (): Promise<void> => ipcRenderer.invoke('fcm:testDispatch')
+      ipcRenderer.invoke('fcm:clearServiceAccount')
   } satisfies PreloadApi['fcm'],
 
   onboarding: {

@@ -3,20 +3,19 @@
 // Why: when no mobile WebSocket subscriber is connected, Orca forwards the
 // notification through FCM (v1 HTTP). The M2 module produces an encrypted
 // base64 ciphertext; this module mints an OAuth2 access token for the FCM
-// scope, caches it, POSTs a data-only FCM message, and never lets an FCM
+// scope, caches it, POSTs the platform-shaped message, and never lets an FCM
 // failure throw into the caller's dispatch loop.
 //
 // The diagnostic test may additionally request a fixed, non-sensitive visible
 // alert; real notification content remains ciphertext-only.
 //
-// Scope: standalone sender only. The listener-count gate that decides WHEN to
-// send lives in M4 (orca-runtime dispatchMobileNotification). This module must
-// not be wired into that loop yet.
+// The listener-count gate that decides WHEN to send lives in M4
+// (orca-runtime dispatchMobileNotification).
 //
 import { logFcmPush } from './fcm-push-logger'
-// E2EE note: the FCM `data` map carries the M2 ciphertext opaquely. A FCM
-// `notification` field is deliberately omitted — data-only plus mobile local
-// rendering preserves end-to-end encryption (plan.md anti-pattern section).
+// E2EE note: the FCM `data` map carries the ciphertext opaquely. Android keeps
+// data-only local rendering; iOS uses a generic mutable alert whose extension
+// decrypts and replaces the visible content before presentation.
 //
 // Security note (REQ-FCM-014 / AC-FCM-007c): every FCM send is fire-and-log.
 // On any mint failure, HTTP non-2xx, or network error, the sender resolves to
@@ -60,18 +59,15 @@ export type SendFcmMessageInput = {
   ciphertextB64: string
   // Single-namespace dedupe id shared with the WS path (AC-FCM-005, wired in M4).
   notificationId: string
+  // Why: iOS's Notification Service Extension uses this non-secret digest to
+  // select the matching per-desktop symmetric key from the shared Keychain.
+  pushKeyId?: string
   // Why (REQ-FCM-016): selects the FCM transport shaping. Android gets
   // `message.android` (HIGH priority for prompt background delivery); iOS gets
   // `message.apns` so FCM brokers the data message via APNs to the
-  // backgrounded/killed app (content-available background data requires
-  // apns-push-type: background + apns-priority: 5 per APNs contract). Both
-  // stay data-only — no FCM `notification` field — so E2EE is preserved
-  // (plan.md anti-pattern section; mobile decrypts + renders locally).
+  // backgrounded/killed app. iOS uses an alert-class push so its Notification
+  // Service Extension gets a reliable execution window for E2EE decryption.
   pushPlatform: PushPlatform
-  // Why: iOS background data pushes are best-effort and can be held by APNs.
-  // The test button uses only fixed diagnostic text so it can verify device
-  // presentation without exposing any real notification content.
-  visibleTestNotification?: { title: string; body: string }
 }
 
 export type FcmSendOutcome =
@@ -165,8 +161,8 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
         deviceFcmToken,
         ciphertextB64,
         notificationId,
-        pushPlatform,
-        visibleTestNotification
+        pushKeyId,
+        pushPlatform
       } = input
       logFcmPush('fcm.send-attempt', {
         notificationId,
@@ -186,39 +182,31 @@ export function createFcmSender(options: FcmSenderOptions): FcmSender {
         }
       }
 
-      // Data-only FCM message: the `data` map carries the M2 ciphertext. The
-      // `notification` field is intentionally absent (plan.md anti-pattern).
-      // Platform transport shaping (REQ-FCM-016): android gets HIGH-priority
-      // delivery; ios gets APNs content-available background data (requires
-      // apns-push-type: background + apns-priority: 5 per APNs contract).
-      // Real notifications remain data-only. The explicit test path instead
-      // adds a fixed platform alert so OS-level presentation can be verified.
+      // The `data` map always carries ciphertext. Android gets high-priority
+      // data-only delivery; iOS gets a generic mutable alert so the extension
+      // can decrypt without exposing task content to FCM/APNs.
       const platformConfig =
         pushPlatform === 'android'
-          ? visibleTestNotification
-            ? { android: { priority: 'HIGH', notification: visibleTestNotification } }
-            : { android: { priority: 'HIGH' } }
-          : visibleTestNotification
-            ? {
-                apns: {
-                  headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
-                  payload: {
-                    aps: { alert: visibleTestNotification, sound: 'default' }
+          ? { android: { priority: 'HIGH' } }
+          : {
+              apns: {
+                headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+                payload: {
+                  aps: {
+                    alert: { title: 'Orca', body: 'Open Orca to view this update.' },
+                    sound: 'default',
+                    'mutable-content': 1
                   }
                 }
               }
-            : {
-                apns: {
-                  headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
-                  payload: { aps: { 'content-available': 1 } }
-                }
-              }
+            }
       const body = {
         message: {
           token: deviceFcmToken,
           data: {
             payload: ciphertextB64,
-            notificationId
+            notificationId,
+            ...(pushKeyId ? { pushKeyId } : {})
           },
           ...platformConfig
         }

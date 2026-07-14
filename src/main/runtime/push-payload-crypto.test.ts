@@ -3,11 +3,15 @@
 // the persistent FCM-shared key derivation, using the shared decryptBytes
 // primitive to prove the round-trip on the desktop side.
 import { describe, expect, it } from 'vitest'
+import { createDecipheriv } from 'node:crypto'
 import { decryptBytes, deriveSharedKey, generateKeyPair } from '../../shared/e2ee-crypto'
 import {
   FCM_DATA_MAX_BYTES,
   deriveFcmSharedKey,
+  derivePushKeyId,
+  encryptIosPushPayload,
   encryptPushPayload,
+  IOS_PUSH_ENVELOPE,
   type PushPayloadInput
 } from './push-payload-crypto'
 
@@ -15,6 +19,26 @@ import {
 // deep-equality assertions on key material.
 function toHex(key: Uint8Array): string {
   return Buffer.from(key).toString('hex')
+}
+
+function decryptIosPayload(ciphertextB64: string, sharedKey: Uint8Array): PushPayloadInput {
+  const bundle = Buffer.from(ciphertextB64, 'base64')
+  expect(bundle[0]).toBe(IOS_PUSH_ENVELOPE.version)
+  const nonceStart = 1
+  const ciphertextStart = nonceStart + IOS_PUSH_ENVELOPE.nonceBytes
+  const tagStart = bundle.length - IOS_PUSH_ENVELOPE.authTagBytes
+  const decipher = createDecipheriv(
+    'aes-256-gcm',
+    sharedKey,
+    bundle.subarray(nonceStart, ciphertextStart)
+  )
+  decipher.setAAD(Buffer.from(IOS_PUSH_ENVELOPE.authenticatedData, 'utf8'))
+  decipher.setAuthTag(bundle.subarray(tagStart))
+  const plaintext = Buffer.concat([
+    decipher.update(bundle.subarray(ciphertextStart, tagStart)),
+    decipher.final()
+  ])
+  return JSON.parse(plaintext.toString('utf8')) as PushPayloadInput
 }
 
 function makeTestKeypairs(): {
@@ -131,6 +155,39 @@ describe('encryptPushPayload round-trip', () => {
     const bundle = Uint8Array.from(Buffer.from(out.ciphertextB64, 'base64'))
     const wrongKey = deriveFcmSharedKey(generateKeyPair().secretKey, mobilePublicKeyB64)
     expect(decryptBytes(bundle, wrongKey)).toBeNull()
+  })
+})
+
+describe('encryptIosPushPayload Notification Service Extension envelope', () => {
+  it('round-trips AES-GCM content and carries a stable key selector', () => {
+    const { desktop, mobilePublicKeyB64 } = makeTestKeypairs()
+    const shared = deriveFcmSharedKey(desktop.secretKey, mobilePublicKeyB64)
+    const payload: PushPayloadInput = {
+      title: '작업 완료',
+      body: 'iOS 백그라운드 알림',
+      worktreeId: 'wt-1',
+      source: 'agent-task-complete'
+    }
+
+    const outcome = encryptIosPushPayload(payload, shared)
+    expect(outcome.status).toBe('ok')
+    if (outcome.status !== 'ok') {
+      return
+    }
+    expect(decryptIosPayload(outcome.ciphertextB64, shared)).toEqual(payload)
+    expect(derivePushKeyId(shared)).toMatch(/^[a-f0-9]{64}$/)
+    expect(derivePushKeyId(shared)).toBe(derivePushKeyId(shared))
+  })
+
+  it('rejects ciphertext authentication with a different shared key', () => {
+    const { desktop, mobilePublicKeyB64 } = makeTestKeypairs()
+    const shared = deriveFcmSharedKey(desktop.secretKey, mobilePublicKeyB64)
+    const outcome = encryptIosPushPayload({ title: 'T', body: 'B' }, shared)
+    if (outcome.status === 'dropped') {
+      throw new Error('unexpected drop')
+    }
+    const wrongKey = new Uint8Array(32).fill(7)
+    expect(() => decryptIosPayload(outcome.ciphertextB64, wrongKey)).toThrow()
   })
 })
 

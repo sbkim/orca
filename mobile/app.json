@@ -14,9 +14,13 @@
       "backgroundColor": "#111111"
     },
     "ios": {
+      "appleTeamId": "3F566TG5CC",
       "supportsTablet": true,
       "bundleIdentifier": "com.omninetworks.orca.mobile",
       "buildNumber": "1",
+      "entitlements": {
+        "keychain-access-groups": ["3F566TG5CC.com.omninetworks.orca.mobile.push"]
+      },
       "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Orca connects to the desktop app on your local network.",
@@ -84,6 +88,7 @@
       "expo-router",
       "@react-native-firebase/app",
       "@react-native-firebase/messaging",
+      "@bacons/apple-targets",
       "./plugins/android-respect-rotation-lock.js",
       [
         "expo-splash-screen",

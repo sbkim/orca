@@ -278,7 +278,7 @@ describe('dispatch-path integration — M1→M6 chain fires end-to-end when no W
     expect(h.minter).toHaveBeenCalledTimes(1)
   })
 
-  it('shapes the FCM message per M6 platform branching — android direct HIGH priority, ios via APNs content-available', async () => {
+  it('shapes the FCM message per platform — android HIGH priority, ios mutable alert', async () => {
     // android device
     const androidH = track(makeHarness())
     const androidMobile = generateKeyPair()
@@ -312,13 +312,19 @@ describe('dispatch-path integration — M1→M6 chain fires end-to-end when no W
     const iosBody = JSON.parse(iosCall.init.body as string) as {
       message: {
         android?: unknown
-        apns?: { headers: Record<string, string>; payload: { aps: Record<string, number> } }
+        apns?: { headers: Record<string, string>; payload: { aps: Record<string, unknown> } }
         notification?: unknown
       }
     }
     expect(iosBody.message.apns).toEqual({
-      headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
-      payload: { aps: { 'content-available': 1 } }
+      headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+      payload: {
+        aps: {
+          alert: { title: 'Orca', body: 'Open Orca to view this update.' },
+          'mutable-content': 1,
+          sound: 'default'
+        }
+      }
     })
     expect(iosBody.message.android).toBeUndefined()
     expect(iosBody.message.notification).toBeUndefined()

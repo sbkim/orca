@@ -104,7 +104,7 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
         continue
       }
       // Why: fire registration attempt - will only mark as registered on success
-      void registerPushTokenWithDesktop(entry.client)
+      void registerPushTokenWithDesktop(entry.client, entry.hostId)
         .then((result) => {
           if (result.registered) {
             registeredHostsRef.current.add(entry.hostId)

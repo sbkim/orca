@@ -311,7 +311,12 @@ describe('AC-FCM-001 — FCM fan-out stays dormant while a WS subscriber holds t
     await Promise.resolve()
     expect(fanOut).toHaveBeenCalledTimes(1)
     expect(fanOut).toHaveBeenCalledWith({
-      payload: { title: 'after-disconnect', body: 'b' },
+      payload: {
+        title: 'after-disconnect',
+        body: 'b',
+        worktreeId: undefined,
+        source: 'agent-task-complete'
+      },
       notificationId: 'n-disconnected'
     })
   })

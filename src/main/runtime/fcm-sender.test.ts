@@ -201,67 +201,38 @@ describe('createFcmSender — platform branching (AC-FCM-006a android / AC-FCM-0
     expect(body.message.notification).toBeUndefined()
   })
 
-  it('ios: sets message.apns with content-available background data + apns-priority 5 + apns-push-type background, omits message.android, stays data-only', async () => {
+  it('ios: sends a mutable alert so the notification extension can decrypt before display', async () => {
     await sender().send({
       credentials,
       deviceFcmToken: 'ios-token',
       ciphertextB64: 'aW9zZGF0YQ',
       notificationId: 'i1',
-      pushPlatform: 'ios'
+      pushPlatform: 'ios',
+      pushKeyId: 'key-id-1'
     })
     const body = JSON.parse(captured!.init.body as string)
-    // Why content-available=1 + apns-push-type: background + apns-priority '5': FCM
-    // brokers the data message via APNs to a backgrounded/killed iOS app;
-    // content-available 1 is the APNs background-data signal and APNs requires
-    // push-type: background with priority: 5 for background notifications (REQ-FCM-016).
+    // Why: data-only background pushes are best-effort on iOS. A mutable alert
+    // reliably launches the extension, which replaces this generic placeholder
+    // with the AES-GCM decrypted title and body before the OS displays it.
     expect(body.message.apns).toEqual({
-      headers: { 'apns-priority': '5', 'apns-push-type': 'background' },
-      payload: { aps: { 'content-available': 1 } }
+      headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
+      payload: {
+        aps: {
+          alert: { title: 'Orca', body: 'Open Orca to view this update.' },
+          sound: 'default',
+          'mutable-content': 1
+        }
+      }
     })
     expect(body.message.android).toBeUndefined()
     // Data-only invariant preserved on iOS (E2EE).
     expect(body.message.data.payload).toBe('aW9zZGF0YQ')
     expect(body.message.data.notificationId).toBe('i1')
+    expect(body.message.data.pushKeyId).toBe('key-id-1')
     expect(body.message.notification).toBeUndefined()
   })
 
-  it('uses an OS-visible platform alert only for the explicit diagnostic notification', async () => {
-    const visibleTestNotification = { title: 'FCM test push', body: 'device-E2E' }
-
-    await sender().send({
-      credentials,
-      deviceFcmToken: 'ios-token',
-      ciphertextB64: 'aW9zZGF0YQ',
-      notificationId: 'visible-ios',
-      pushPlatform: 'ios',
-      visibleTestNotification
-    })
-    const iosBody = JSON.parse(captured!.init.body as string)
-    expect(iosBody.message.apns).toEqual({
-      headers: { 'apns-priority': '10', 'apns-push-type': 'alert' },
-      payload: { aps: { alert: visibleTestNotification, sound: 'default' } }
-    })
-    expect(iosBody.message.data.payload).toBe('aW9zZGF0YQ')
-    expect(iosBody.message.notification).toBeUndefined()
-
-    await sender().send({
-      credentials,
-      deviceFcmToken: 'android-token',
-      ciphertextB64: 'YW5kcm9pZA',
-      notificationId: 'visible-android',
-      pushPlatform: 'android',
-      visibleTestNotification
-    })
-    const androidBody = JSON.parse(captured!.init.body as string)
-    expect(androidBody.message.android).toEqual({
-      priority: 'HIGH',
-      notification: visibleTestNotification
-    })
-    expect(androidBody.message.data.payload).toBe('YW5kcm9pZA')
-    expect(androidBody.message.notification).toBeUndefined()
-  })
-
-  it('both platforms carry the identical ciphertext opaquely in data.payload (no plaintext leak)', async () => {
+  it('both platforms carry ciphertext opaquely; iOS exposes only a generic placeholder', async () => {
     const cipher = 'c3VwZXJzZWNyZXQ'
     for (const pushPlatform of ['android', 'ios'] as const) {
       await sender().send({
@@ -274,12 +245,13 @@ describe('createFcmSender — platform branching (AC-FCM-006a android / AC-FCM-0
       const body = JSON.parse(captured!.init.body as string)
       expect(body.message.data.payload).toBe(cipher)
       expect(body.message.notification).toBeUndefined()
-      // No alert/badge/sound keys appear anywhere — APS carries only
-      // content-available for background data delivery.
       const aps = body.message.apns?.payload?.aps
-      expect(aps?.alert).toBeUndefined()
-      expect(aps?.badge).toBeUndefined()
-      expect(aps?.sound).toBeUndefined()
+      if (pushPlatform === 'ios') {
+        expect(aps?.alert).toEqual({ title: 'Orca', body: 'Open Orca to view this update.' })
+        expect(aps?.['mutable-content']).toBe(1)
+      } else {
+        expect(aps).toBeUndefined()
+      }
     }
   })
 })

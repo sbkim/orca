@@ -100,21 +100,6 @@ describe('createFcmFanOut — AC-FCM-002a (listener-count=0 → FCM sent)', () =
     expect(senderBuilder.send.mock.calls[0]![0].notificationId).toBe('dedupe-id-9')
   })
 
-  it('threads the fixed visible diagnostic notification to the sender', async () => {
-    const { deps, senderBuilder } = makeDeps()
-    const visibleTestNotification = { title: 'FCM test push', body: 'device-E2E' }
-
-    await createFcmFanOut(deps)({
-      payload: visibleTestNotification,
-      notificationId: 'visible-test',
-      visibleTestNotification
-    })
-
-    expect(senderBuilder.send.mock.calls[0]![0].visibleTestNotification).toEqual(
-      visibleTestNotification
-    )
-  })
-
   it('produces a ciphertext the mobile half can decrypt with the same derived key (M2 integration)', async () => {
     const desktop = generateKeyPair()
     const mobile = generateKeyPair()

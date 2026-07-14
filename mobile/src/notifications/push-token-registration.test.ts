@@ -11,7 +11,8 @@ const mocks = vi.hoisted(() => ({
   platformOS: 'android',
   expoGetDeviceTokenCalls: 0,
   firebaseGetTokenCalls: 0,
-  firebaseThrow: false as boolean | Error
+  firebaseThrow: false as boolean | Error,
+  keyStored: true
 }))
 
 // Why: isolate the orchestration from its native/RN deps so the toggle,
@@ -55,6 +56,9 @@ vi.mock('./mobile-notifications', () => ({
 vi.mock('../transport/push-keypair', () => ({
   loadOrCreatePushKeypair: async () => ({ publicKeyB64: mocks.publicKeyB64 })
 }))
+vi.mock('./ios-notification-key-store', () => ({
+  storeIosNotificationKey: async () => mocks.keyStored
+}))
 
 import { registerPushTokenWithDesktop } from './push-token-registration'
 
@@ -80,11 +84,12 @@ describe('registerPushTokenWithDesktop', () => {
     mocks.expoGetDeviceTokenCalls = 0
     mocks.firebaseGetTokenCalls = 0
     mocks.firebaseThrow = false
+    mocks.keyStored = true
   })
 
   it('sends notifications.registerPushToken with token, platform, and persistent public key', async () => {
     const { client, calls } = makeClient()
-    const result = await registerPushTokenWithDesktop(client)
+    const result = await registerPushTokenWithDesktop(client, 'host-1')
 
     expect(result.registered).toBe(true)
     expect(calls).toHaveLength(1)
@@ -102,7 +107,7 @@ describe('registerPushTokenWithDesktop', () => {
   it('does not register when the push toggle is disabled', async () => {
     mocks.pushEnabled = false
     const { client, calls } = makeClient()
-    const result = await registerPushTokenWithDesktop(client)
+    const result = await registerPushTokenWithDesktop(client, 'host-1')
 
     expect(result.registered).toBe(false)
     expect(calls).toHaveLength(0)
@@ -112,7 +117,7 @@ describe('registerPushTokenWithDesktop', () => {
   it('does not register when notification permission is denied', async () => {
     mocks.permissionGranted = false
     const { client, calls } = makeClient()
-    const result = await registerPushTokenWithDesktop(client)
+    const result = await registerPushTokenWithDesktop(client, 'host-1')
 
     expect(result.registered).toBe(false)
     expect(calls).toHaveLength(0)
@@ -124,7 +129,7 @@ describe('registerPushTokenWithDesktop', () => {
   it('uses RNFB getToken (not expo-notifications) on iOS', async () => {
     mocks.platformOS = 'ios'
     const { client, calls } = makeClient()
-    const result = await registerPushTokenWithDesktop(client)
+    const result = await registerPushTokenWithDesktop(client, 'host-1')
 
     expect(result.registered).toBe(true)
     expect(calls[0]).toEqual({
@@ -139,7 +144,7 @@ describe('registerPushTokenWithDesktop', () => {
     mocks.platformOS = 'ios'
     mocks.firebaseThrow = new Error('apns not registered')
     const { client, calls } = makeClient()
-    const result = await registerPushTokenWithDesktop(client)
+    const result = await registerPushTokenWithDesktop(client, 'host-1')
 
     expect(result.registered).toBe(false)
     expect(result.reason).toBe('no-token')
@@ -155,7 +160,7 @@ describe('registerPushTokenWithDesktop', () => {
         _meta: { runtimeId: 'rt' }
       }))
     }
-    const result = await registerPushTokenWithDesktop(client)
+    const result = await registerPushTokenWithDesktop(client, 'host-1')
     expect(result.registered).toBe(false)
   })
 
@@ -169,9 +174,21 @@ describe('registerPushTokenWithDesktop', () => {
       }))
     }
 
-    await expect(registerPushTokenWithDesktop(client)).resolves.toEqual({
+    await expect(registerPushTokenWithDesktop(client, 'host-1')).resolves.toEqual({
       registered: false,
       reason: 'rpc-error'
     })
+  })
+
+  it('does not register an iOS token until the extension key is stored', async () => {
+    mocks.platformOS = 'ios'
+    mocks.keyStored = false
+    const { client, calls } = makeClient()
+
+    await expect(registerPushTokenWithDesktop(client, 'host-1')).resolves.toEqual({
+      registered: false,
+      reason: 'key-store-error'
+    })
+    expect(calls).toHaveLength(0)
   })
 })

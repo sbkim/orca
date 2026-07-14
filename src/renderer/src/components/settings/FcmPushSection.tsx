@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import type { FcmServiceAccountStatus } from '../../../../shared/types'
 import { Button } from '../ui/button'
 import { Label } from '../ui/label'
-import { Check, CloudUpload, Loader2, Send, TriangleAlert } from 'lucide-react'
+import { Check, CloudUpload, Loader2, TriangleAlert } from 'lucide-react'
 import { useMountedRef } from '@/hooks/useMountedRef'
 import { translate } from '@/i18n/i18n'
 
@@ -150,31 +150,6 @@ export function FcmPushSection({
           </Button>
         ) : null}
       </div>
-
-      {configured ? (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-2"
-            onClick={async () => {
-              try {
-                await window.api.fcm.testDispatch()
-                toast.success('FCM test push dispatched')
-              } catch {
-                toast.error('FCM test push failed')
-              }
-            }}
-          >
-            <Send className="size-3.5" />
-            {translate(
-              'auto.components.settings.FcmPushSection.tmp-test-push',
-              'Send test push (device E2E — TEMP)'
-            )}
-          </Button>
-        </div>
-      ) : null}
     </div>
   )
 }

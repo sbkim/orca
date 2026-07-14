@@ -67,6 +67,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@bacons/apple-targets": "^4.0.7",
     "@types/react": "^19.2.14",
     "@types/react-native": "^0.73.0",
     "@types/react-test-renderer": "19.1.0",
