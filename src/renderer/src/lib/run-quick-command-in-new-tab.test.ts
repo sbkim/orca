@@ -3,6 +3,7 @@ import { runQuickCommandInNewTab } from './run-quick-command-in-new-tab'
 
 type MockStoreState = {
   createTab: ReturnType<typeof vi.fn>
+  queueTabInitialCwd: ReturnType<typeof vi.fn>
   queueTabStartupCommand: ReturnType<typeof vi.fn>
   setActiveTabType: ReturnType<typeof vi.fn>
   setTabBarOrder: ReturnType<typeof vi.fn>
@@ -37,6 +38,7 @@ vi.mock('@/lib/launch-agent-in-new-tab', () => ({
 function createStoreState(): MockStoreState {
   return {
     createTab: vi.fn(() => ({ id: 'tab-new' })),
+    queueTabInitialCwd: vi.fn(),
     queueTabStartupCommand: vi.fn(),
     setActiveTabType: vi.fn(),
     setTabBarOrder: vi.fn(),
@@ -97,6 +99,26 @@ describe('runQuickCommandInNewTab', () => {
     expect(mockState.queueTabStartupCommand).toHaveBeenCalledWith('tab-new', {
       command: 'git status'
     })
+  })
+
+  it('sets an initial cwd before queuing a nested package command', () => {
+    runQuickCommandInNewTab({
+      command: {
+        id: 'package-web-dev',
+        label: 'web: dev',
+        action: 'terminal-command',
+        command: 'pnpm run dev',
+        appendEnter: true
+      },
+      worktreeId: 'wt-1',
+      groupId: 'group-1',
+      initialCwd: '/repo/packages/web'
+    })
+
+    expect(mockState.queueTabInitialCwd).toHaveBeenCalledWith('tab-new', '/repo/packages/web')
+    expect(mockState.queueTabInitialCwd.mock.invocationCallOrder[0]).toBeLessThan(
+      mockState.queueTabStartupCommand.mock.invocationCallOrder[0]
+    )
   })
 
   it('launches agent quick commands through the programmatic agent prompt path', () => {
