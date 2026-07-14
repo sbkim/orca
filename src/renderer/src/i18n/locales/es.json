@@ -2853,8 +2853,14 @@
             "39676a184c": "Abrir cualquier archivo, URL, agente, ..."
           },
           "TabBarRunScriptButton": {
-            "runScript": "Run Script",
-            "runScriptTooltip": "Run a package.json script"
+            "runScript": "Ejecutar script",
+            "runScriptTooltip": "Ejecutar un script de package.json",
+            "workspaceRoot": "Raíz del espacio de trabajo",
+            "searchScripts": "Buscar scripts, comandos o paquetes...",
+            "noMatchingScripts": "Ningún script coincide con la búsqueda.",
+            "scriptSummary": "{{scripts}} scripts en {{packages}} paquetes",
+            "expandNode": "Expandir {{name}}",
+            "collapseNode": "Contraer {{name}}"
           },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "Comando",

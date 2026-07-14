@@ -2853,8 +2853,14 @@
             "39676a184c": "任意のファイル、URL、agent などを開きます..."
           },
           "TabBarRunScriptButton": {
-            "runScript": "Run Script",
-            "runScriptTooltip": "Run a package.json script"
+            "runScript": "スクリプトを実行",
+            "runScriptTooltip": "package.json スクリプトを実行",
+            "workspaceRoot": "ワークスペースルート",
+            "searchScripts": "スクリプト、コマンド、パッケージを検索...",
+            "noMatchingScripts": "検索に一致するスクリプトはありません。",
+            "scriptSummary": "{{packages}} パッケージ内の {{scripts}} スクリプト",
+            "expandNode": "{{name}} を展開",
+            "collapseNode": "{{name}} を折りたたむ"
           },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "コマンド",

@@ -14,6 +14,8 @@ export type RunQuickCommandInNewTabArgs = {
   /** Tab group the user clicked from. Keeps the spawned terminal in the
    *  pane the user initiated from when available. */
   groupId?: string | null
+  /** Override the new terminal's initial directory before its PTY starts. */
+  initialCwd?: string
 }
 
 function resolveQuickCommandGroupId(
@@ -47,7 +49,8 @@ function resolveQuickCommandGroupId(
 export function runQuickCommandInNewTab({
   command,
   worktreeId,
-  groupId
+  groupId,
+  initialCwd
 }: RunQuickCommandInNewTabArgs): { tabId: string } | null {
   const targetGroupId = groupId ?? undefined
   if (isTerminalAgentQuickCommand(command)) {
@@ -85,6 +88,11 @@ export function runQuickCommandInNewTab({
     quickCommandLabel: command.label
   })
 
+  if (initialCwd) {
+    // Why: nested package scripts must start in their package directory; a
+    // shell `cd` prefix would be shell- and platform-specific and break SSH.
+    store.queueTabInitialCwd(tab.id, initialCwd)
+  }
   store.queueTabStartupCommand(tab.id, {
     command: flattenTerminalQuickCommand(command).command
   })

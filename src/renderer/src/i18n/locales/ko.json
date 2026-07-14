@@ -2853,8 +2853,14 @@
             "39676a184c": "모든 파일, URL, agent를 엽니다..."
           },
           "TabBarRunScriptButton": {
-            "runScript": "Run Script",
-            "runScriptTooltip": "Run a package.json script"
+            "runScript": "스크립트 실행",
+            "runScriptTooltip": "package.json 스크립트 실행",
+            "workspaceRoot": "워크스페이스 루트",
+            "searchScripts": "스크립트, 명령어 또는 패키지 검색...",
+            "noMatchingScripts": "검색과 일치하는 스크립트가 없습니다.",
+            "scriptSummary": "패키지 {{packages}}개 · 스크립트 {{scripts}}개",
+            "expandNode": "{{name}} 펼치기",
+            "collapseNode": "{{name}} 접기"
           },
           "TabBarQuickCommandsButton": {
             "a2c7a33831": "명령",

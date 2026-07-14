@@ -7,6 +7,11 @@ import {
   parsePackageJsonScripts,
   resolvePackageManager
 } from './package-json-scripts'
+import {
+  buildPackageJsonProjects,
+  getRunnablePackageJsonPaths,
+  isRunnablePackageJsonPath
+} from './package-json-projects'
 
 describe('parsePackageJsonScripts', () => {
   it('extracts string-valued scripts in declared order', () => {
@@ -79,5 +84,108 @@ describe('getPackageJsonField', () => {
     expect(getPackageJsonField(content, 'packageManager')).toBe('pnpm@9')
     expect(getPackageJsonField(content, 'missing')).toBeUndefined()
     expect(getPackageJsonField(null, 'name')).toBeUndefined()
+  })
+})
+
+describe('package.json project discovery', () => {
+  it('finds root and nested packages while excluding dependency and generated trees', () => {
+    const paths = [
+      'package.json',
+      'packages/app/package.json',
+      'packages\\api\\package.json',
+      'node_modules/pkg/package.json',
+      'packages/app/node_modules/pkg/package.json',
+      'dist/package.json',
+      '.next/package.json',
+      'packages/readme.md'
+    ]
+
+    expect(getRunnablePackageJsonPaths(paths)).toEqual([
+      'package.json',
+      'packages/api/package.json',
+      'packages/app/package.json'
+    ])
+    expect(isRunnablePackageJsonPath('coverage/report/package.json')).toBe(false)
+  })
+
+  it('groups scripts by package and inherits the nearest package manager signal', () => {
+    const files = [
+      {
+        relativePath: 'package.json',
+        content: JSON.stringify({
+          name: 'root',
+          packageManager: 'pnpm@9',
+          scripts: { dev: 'vite' }
+        })
+      },
+      {
+        relativePath: 'packages/web/package.json',
+        content: JSON.stringify({ name: '@acme/web', scripts: { build: 'vite build' } })
+      },
+      {
+        relativePath: 'tools/legacy/package.json',
+        content: JSON.stringify({ scripts: { test: 'jest' } })
+      }
+    ]
+
+    expect(
+      buildPackageJsonProjects(files, [
+        'package.json',
+        'pnpm-lock.yaml',
+        'packages/web/package.json',
+        'tools/legacy/package.json',
+        'tools/legacy/package-lock.json'
+      ])
+    ).toEqual([
+      {
+        relativeDirectory: '',
+        packageName: 'root',
+        packageManager: 'pnpm',
+        scripts: [{ name: 'dev', command: 'vite' }]
+      },
+      {
+        relativeDirectory: 'packages/web',
+        packageName: '@acme/web',
+        packageManager: 'pnpm',
+        scripts: [{ name: 'build', command: 'vite build' }]
+      },
+      {
+        relativeDirectory: 'tools/legacy',
+        packageName: null,
+        packageManager: 'npm',
+        scripts: [{ name: 'test', command: 'jest' }]
+      }
+    ])
+  })
+
+  it('uses package metadata without scripts as an inheritance boundary', () => {
+    const files = [
+      {
+        relativePath: 'package.json',
+        content: JSON.stringify({ packageManager: 'pnpm@9' })
+      },
+      {
+        relativePath: 'apps/package.json',
+        content: JSON.stringify({ packageManager: 'yarn@4' })
+      },
+      {
+        relativePath: 'apps/web/package.json',
+        content: JSON.stringify({ scripts: { dev: 'next dev' } })
+      }
+    ]
+
+    expect(
+      buildPackageJsonProjects(
+        files,
+        files.map((file) => file.relativePath)
+      )
+    ).toEqual([
+      {
+        relativeDirectory: 'apps/web',
+        packageName: null,
+        packageManager: 'yarn',
+        scripts: [{ name: 'dev', command: 'next dev' }]
+      }
+    ])
   })
 })
