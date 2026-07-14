@@ -62,6 +62,11 @@ function packageNameFromSpecifier(specifier) {
 }
 
 function isPackagedExternalSpecifier(specifier) {
+  // Why: the packaging host may run an older Node than Electron, so its
+  // builtinModules list can omit newer Electron runtime builtins such as node:sqlite.
+  if (specifier.startsWith('node:')) {
+    return false
+  }
   return (
     !specifier.startsWith('.') &&
     !specifier.startsWith('/') &&
