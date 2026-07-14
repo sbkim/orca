@@ -57,18 +57,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     does not clear the persistent public key (AC-FCM-004a/b).
   - **Platform-aware delivery.** Android receives FCM direct messages at HIGH
     priority for prompt background delivery; iOS is brokered through APNs via
-    FCM (content-available background data, `apns-priority: 5` with `apns-push-type: background`) for
-    best-effort backgrounded delivery (force-quit excluded). Both stay data-only
-    (`src/main/runtime/fcm-sender.ts`) (AC-FCM-006a/b — code-complete and
-    integration-verified; **on-device delivery verification is deferred to
-    post-merge**).
+    FCM with `apns-priority: 10`, `apns-push-type: alert`, and
+    `mutable-content: 1` so the Notification Service Extension gets a reliable
+    decrypt window. Both carry the ciphertext in the FCM `data` map only
+    (`src/main/runtime/fcm-sender.ts`) (AC-FCM-006a/b — on-device verified
+    2026-07-13: Galaxy A50 backgrounded, iPhone 16e via NSE).
   - **Post-merge remediation (unreleased cycle).** This same unreleased cycle
     includes a post-merge remediation addressing 9 defects + cleanup (recorded in
     the SPEC-FCM-001 in-place amendment commit c3ec2ec6e): desktop FCM tests
     51/51 passing, mobile TypeScript 0 errors, mobile lint 0, mobile tests 1530/2
-    skip. Residual verification pending: real CI run of the new plist-restore
-    step, new Apple cert/provisioning for `com.omninetworks.orca.mobile`, and
-    iOS on-device E2E testing.
+    skip. iOS on-device E2E was subsequently verified (2026-07-13, iPhone 16e).
+    Residual verification pending: real CI run of the new plist-restore step and
+    new Apple cert/provisioning for `com.omninetworks.orca.mobile` (production
+    signing).
   - **OAuth2 + credential handling.** The desktop FCM sender mints OAuth2
     access tokens via `google-auth-library` for the `firebase.messaging` scope,
     caches them ahead of expiry, and posts to the FCM v1

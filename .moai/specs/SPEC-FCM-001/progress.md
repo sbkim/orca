@@ -421,7 +421,7 @@ tier: L
 
 - sync_complete_at: 2026-07-13
 - sync_status: completed-device-e2e-verified
-- sync_commit_sha: pending-backfill (이 sync 커밋은 자기 자신의 SHA를 참조할 수 없음 — 커밋이 landing 된 이후 follow-up 단계에서 실제 SHA backfill; spec-frontmatter-schema.md § SHA placeholder backfill exemption (D3) 에 근거)
+- sync_commit_sha: 6510648b2 (backfilled in follow-up commit per spec-frontmatter-schema.md § SHA placeholder backfill exemption (D3) — sync commit 6510648b2 cannot reference its own SHA)
 
 **Frontmatter 전이**: `spec.md` `status: implemented → completed` (본 sync commit에서 manager-docs 수행). 두 P0 AC (AC-FCM-006a/006b) device-E2E 가 2026-07-13 contributor 실기기 검증으로 PASS 하여 acceptance.md §C "모든 P0 AC PASS" 게이트 충족.
 
