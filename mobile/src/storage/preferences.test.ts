@@ -19,7 +19,8 @@ import {
   saveHostSidebarWidth,
   savePushNotificationsEnabled,
   saveTerminalAutocompleteEnabled,
-  saveTerminalLinkOpenMode
+  saveTerminalLinkOpenMode,
+  subscribePushNotificationsEnabled
 } from './preferences'
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -66,6 +67,19 @@ describe('push notification preference', () => {
 
     await savePushNotificationsEnabled(false)
     expect(AsyncStorage.setItem).toHaveBeenCalledWith('orca:pushNotificationsEnabled', 'false')
+  })
+
+  it('notifies mounted consumers after the new value is persisted', async () => {
+    const listener = vi.fn()
+    const unsubscribe = subscribePushNotificationsEnabled(listener)
+
+    await savePushNotificationsEnabled(true)
+    expect(AsyncStorage.setItem).toHaveBeenCalledWith('orca:pushNotificationsEnabled', 'true')
+    expect(listener).toHaveBeenCalledWith(true)
+
+    unsubscribe()
+    await savePushNotificationsEnabled(false)
+    expect(listener).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -14,9 +14,14 @@
       "backgroundColor": "#111111"
     },
     "ios": {
+      "appleTeamId": "3F566TG5CC",
       "supportsTablet": true,
-      "bundleIdentifier": "com.stably.orca.mobile",
+      "bundleIdentifier": "com.omninetworks.orca.mobile",
       "buildNumber": "1",
+      "entitlements": {
+        "keychain-access-groups": ["3F566TG5CC.com.omninetworks.orca.mobile.push"]
+      },
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSLocalNetworkUsageDescription": "Orca connects to the desktop app on your local network.",
         "NSMicrophoneUsageDescription": "Allow Orca to record voice dictation and transcribe it on your paired desktop.",
@@ -33,6 +38,7 @@
           }
         },
         "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["remote-notification"],
         "UISupportedInterfaceOrientations": [
           "UIInterfaceOrientationPortrait",
           "UIInterfaceOrientationPortraitUpsideDown",
@@ -74,11 +80,15 @@
       "usesCleartextTraffic": true,
       "allowBackup": false,
       "permissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"],
-      "package": "com.stably.orca.mobile",
+      "googleServicesFile": "./google-services.json",
+      "package": "com.omninetworks.orca.mobile",
       "versionCode": 7
     },
     "plugins": [
       "expo-router",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
+      "@bacons/apple-targets",
       "./plugins/android-respect-rotation-lock.js",
       [
         "expo-splash-screen",
@@ -105,7 +115,9 @@
         "expo-build-properties",
         {
           "ios": {
-            "buildReactNativeFromSource": true
+            "buildReactNativeFromSource": true,
+            "useFrameworks": "static",
+            "forceStaticLinking": ["RNFBApp", "RNFBMessaging"]
           },
           "android": {
             "usesCleartextTraffic": true

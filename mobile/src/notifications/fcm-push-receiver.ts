@@ -1,0 +1,127 @@
+// Why: orchestration for an inbound FCM data-only message on the mobile
+// (SPEC-FCM-001, M5). FCM data-only messages (no `notification` field) are
+// delivered to the app and handled in-app, so the OS never sees plaintext and
+// E2EE is preserved. This module:
+//   1. loads the mobile persistent push secret (M1 push-keypair secretKeyB64);
+//   2. loads paired hosts (each carries the desktop persistent public key as
+//      host.publicKeyB64 — present in the pairing QR / E2EE handshake);
+//   3. for each host, derives the persistent FCM-shared key (mobile persistent
+//      secret x desktop persistent public) and attempts to decrypt the base64
+//      ciphertext carried in data.payload — the FIRST host whose key decrypts
+//      the payload is the origin (FCM data carries no hostId, so the matching
+//      key is the disambiguator); wrong-host keys fail Poly1305 auth cleanly;
+//   4. routes the decrypted {title, body} through the EXISTING
+//      showLocalNotification path, which owns the single-notificationId dedupe
+//      map (AC-FCM-005) and the permission/toggle gate (AC-FCM-009).
+//
+// The shared key uses PERSISTENT material only — never the per-connection WS
+// ephemeral session key — so WebSocket forward secrecy is preserved
+// (REQ-FCM-019). The decrypt primitive + ECDH symmetry are proven in
+// push-payload-decrypt.test.ts and fcm-payload-cross-platform.test.ts.
+import { loadHosts } from '../transport/host-store'
+import { loadPushKeypairSecret } from '../transport/push-keypair'
+import {
+  decryptPushPayload,
+  deriveMobileFcmSharedKey,
+  type DecryptedPushPayload
+} from './push-payload-decrypt'
+import type { DesktopNotificationSource } from './notification-routing'
+import { showLocalNotification, type NotificationEvent } from './mobile-notifications'
+
+// Why: the FCM v1 `data` map is a string->string map. M3/M4 emit exactly two
+// fields: `payload` (M2 base64 ciphertext) and `notificationId` (single-namespace
+// dedupe id shared with the WS path). Both arrive as strings; defensive coercion
+// rejects anything malformed rather than crashing the receiver.
+export type FcmDataMessage = {
+  payload?: unknown
+  notificationId?: unknown
+}
+
+// Why: FCM data carries no hostId, so the origin host is identified by which
+// host's desktop persistent public key yields a successful decrypt. Each host
+// produces a distinct shared key; a wrong key fails Poly1305 authentication and
+// decryptPushPayload returns error. With the typical single paired host this is
+// one derivation + one decrypt attempt.
+type HostWithPublicKey = {
+  id: string
+  publicKeyB64: string
+}
+
+async function findOriginHostAndPayload(
+  mobileSecret: Uint8Array,
+  hosts: readonly HostWithPublicKey[],
+  payloadB64: string
+): Promise<{ hostId: string; payload: DecryptedPushPayload } | null> {
+  for (const host of hosts) {
+    const sharedKey = deriveMobileFcmSharedKey(mobileSecret, host.publicKeyB64)
+    const outcome = decryptPushPayload(payloadB64, sharedKey)
+    if (outcome.status === 'ok') {
+      return { hostId: host.id, payload: outcome.payload }
+    }
+    // Why: wrong key / tampered payload for this host — try the next. A clean
+    // auth failure is the expected outcome for every non-origin host.
+  }
+  return null
+}
+
+// Why: entry point invoked by BOTH the expo-notifications / RNFB onMessage
+// foreground listeners registered in app/_layout.tsx AND the RNFB
+// setBackgroundMessageHandler registered at the top of index.js (headless /
+// background / killed-state). Fire-and-forget-safe: never throws — the entire
+// body is wrapped in try/catch so a decrypt/storage/render fault is contained
+// and the OS push delivery callback / RNFB headless task is never destabilized.
+// The optional `background` flag selects the query-only permission path (no
+// permission prompt) used by the headless handler; foreground callers omit it.
+export async function handleFcmDataNotification(
+  data: FcmDataMessage,
+  options?: { background?: boolean }
+): Promise<void> {
+  try {
+    if (typeof data.payload !== 'string' || data.payload.length === 0) {
+      return
+    }
+    if (typeof data.notificationId !== 'string' || data.notificationId.length === 0) {
+      // Why: without notificationId there is no dedupe key, and the WS/FCM
+      // cross-channel dedupe (AC-FCM-005) depends on it. Drop rather than risk a
+      // duplicate that cannot be suppressed.
+      return
+    }
+
+    const mobileSecret = await loadPushKeypairSecret()
+    if (!mobileSecret) {
+      return
+    }
+
+    const hosts = await loadHosts().catch(() => [] as Awaited<ReturnType<typeof loadHosts>>)
+    if (hosts.length === 0) {
+      return
+    }
+
+    const origin = await findOriginHostAndPayload(mobileSecret, hosts, data.payload)
+    if (!origin) {
+      // Why: no paired host's key could decrypt — either a foreign payload or a
+      // host whose desktop persistent public key is stale. Silently drop; the WS
+      // path (if it reconnects) will re-deliver the canonical notification.
+      return
+    }
+
+    // Why: route through the SAME local-notification path as the WS subscriber so
+    // Why (#9 deeplink parity): worktreeId/source are carried as TOP-LEVEL fields
+    // in the encrypted payload (push-payload-decrypt surfaces them), so an FCM
+    // notification tap routes to the origin worktree like a WebSocket notification.
+    const worktreeId = origin.payload.worktreeId
+    const source = origin.payload.source as DesktopNotificationSource | undefined
+    const event: NotificationEvent = {
+      type: 'notification',
+      source: source ?? 'fcm-supplemental',
+      title: origin.payload.title,
+      body: origin.payload.body,
+      worktreeId,
+      notificationId: data.notificationId
+    }
+    await showLocalNotification(event, origin.hostId, options)
+  } catch {
+    // Why: never-throws guarantee — see function docblock. A fault here must not
+    // propagate to the OS push callback or RNFB's headless task.
+  }
+}

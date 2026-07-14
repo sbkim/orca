@@ -1,5 +1,11 @@
 allowBuilds:
+  '@firebase/util': true
   esbuild: true
+  protobufjs: true
 
 overrides:
   xcode>uuid: 11.1.1
+
+patchedDependencies:
+  '@bacons/apple-targets@4.0.7': patches/apple-targets-notification-service-info-plist.patch
+  '@react-native-firebase/app@25.1.0': patches/react-native-firebase-app-remove-ios-script-input.patch

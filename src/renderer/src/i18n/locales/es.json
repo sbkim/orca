@@ -9093,6 +9093,21 @@
           "availability": "Disponible en",
           "testFlight": "TestFlight",
           "androidApk": "APK de Android"
+        },
+        "FcmPushSection": {
+          "62c22c69db": "Failed to save the service account JSON.",
+          "e64e26b483": "FCM Push (Mobile)",
+          "5f1c074e17": "Send push notifications to paired mobile devices over Firebase Cloud Messaging.",
+          "9022fd6485": "Service account JSON",
+          "904130bfff": "Paste the Google service account JSON from your Firebase project.",
+          "4db57a2a1a": "Saving…",
+          "1f227db331": "Save",
+          "aba77142c0": "Remove",
+          "8c266711db": "Paste your Google service account JSON below to enable mobile push delivery.",
+          "14837831c9": "Checking FCM status…",
+          "6865309d2a": "Configured",
+          "58aae52577": "Project: {{projectId}}",
+          "fe942f1afa": "Not configured"
         }
       },
       "right": {

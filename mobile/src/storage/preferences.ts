@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 
 const PINS_PREFIX = 'orca:pins:'
 const NOTIF_KEY = 'orca:pushNotificationsEnabled'
+const pushNotificationsEnabledListeners = new Set<(enabled: boolean) => void>()
 
 export type PushNotificationsPreference = {
   readonly value: boolean | null
@@ -28,6 +29,18 @@ export async function loadPushNotificationsEnabled(): Promise<boolean> {
 
 export async function savePushNotificationsEnabled(enabled: boolean): Promise<void> {
   await AsyncStorage.setItem(NOTIF_KEY, String(enabled))
+  // Why: the settings screen is stacked above HomeScreen, so persistence alone
+  // does not rerender the registration hook when the user enables push.
+  for (const listener of pushNotificationsEnabledListeners) {
+    listener(enabled)
+  }
+}
+
+export function subscribePushNotificationsEnabled(
+  listener: (enabled: boolean) => void
+): () => void {
+  pushNotificationsEnabledListeners.add(listener)
+  return () => pushNotificationsEnabledListeners.delete(listener)
 }
 
 const TEXT_SCALE_KEY = 'orca:terminalTextScale'

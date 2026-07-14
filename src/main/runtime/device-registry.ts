@@ -13,6 +13,12 @@ import type { MobilePairingConnectionMode } from '../../shared/mobile-pairing-co
 
 export type { DeviceScope }
 
+// Why: FCM supplemental push channel (SPEC-FCM-001). The platform selects the
+// FCM transport (direct for android, APNs brokered via FCM for ios). Optional
+// so legacy orca-devices.json entries without a registered push token load as
+// undefined — see REQ-FCM-009.
+export type PushPlatform = 'android' | 'ios'
+
 export type DeviceEntry = {
   deviceId: string
   name: string
@@ -22,6 +28,27 @@ export type DeviceEntry = {
   lastSeenAt: number
   relayBinding?: RelayDeviceBinding
   mobilePairingConnectionMode?: MobilePairingConnectionMode
+  // Why: the per-device FCM/APNs token used by the desktop FCM sender when no
+  // WebSocket subscriber is connected (REQ-FCM-009). Absent on pre-FCM pairings.
+  fcmToken?: string
+  // Why: matches fcmToken's transport; both are registered together via the
+  // notifications.registerPushToken RPC so the sender can pick android vs ios
+  // message shaping (REQ-FCM-016).
+  pushPlatform?: PushPlatform
+  // Why: the mobile's long-lived Curve25519 public key (base64). The desktop
+  // derives the persistent FCM-shared key from its own persistent secret x this
+  // public key, independent of the per-connection ephemeral WS session key so
+  // WebSocket forward secrecy is preserved (REQ-FCM-019).
+  mobilePublicKeyB64?: string
+}
+
+// Why: the patch shape for push-token registration. All fields optional so a
+// token refresh can re-send token + platform without clearing the persistent
+// mobile public key (AC-FCM-004b idempotency).
+export type DevicePushTokenPatch = {
+  fcmToken?: string
+  pushPlatform?: PushPlatform
+  mobilePublicKeyB64?: string
 }
 
 function validRelayBinding(value: unknown, deviceId: string): RelayDeviceBinding | undefined {
@@ -153,6 +180,30 @@ export class DeviceRegistry {
       device.lastSeenAt = Date.now()
       this.save()
     }
+  }
+
+  // Why: persists the FCM token / platform / mobile persistent public key on a
+  // paired device (REQ-FCM-008, REQ-FCM-009). Called by the
+  // notifications.registerPushToken RPC handler after resolving the caller via
+  // its auth token. Only supplied fields are written so a token refresh that
+  // omits the public key does not clear it (AC-FCM-004b). Returns false when the
+  // deviceId is unknown so the handler can report the outcome to the caller.
+  updateDevicePushToken(deviceId: string, patch: DevicePushTokenPatch): boolean {
+    const device = this.devices.find((d) => d.deviceId === deviceId)
+    if (!device) {
+      return false
+    }
+    if (patch.fcmToken !== undefined) {
+      device.fcmToken = patch.fcmToken
+    }
+    if (patch.pushPlatform !== undefined) {
+      device.pushPlatform = patch.pushPlatform
+    }
+    if (patch.mobilePublicKeyB64 !== undefined) {
+      device.mobilePublicKeyB64 = patch.mobilePublicKeyB64
+    }
+    this.save()
+    return true
   }
 
   private load(): void {

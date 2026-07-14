@@ -24,6 +24,17 @@ const NotificationGetMissedSinceParams = z.object({
   lastSeenSeq: z.number().int().min(0, 'lastSeenSeq must be a non-negative integer')
 })
 
+// Why: the mobile app sends its FCM/APNs device token, the platform that
+// selects FCM transport shaping (android direct vs ios via APNs), and its
+// long-lived Curve25519 public key (base64) so the desktop can later derive
+// the persistent FCM-shared key (REQ-FCM-008, REQ-FCM-009, REQ-FCM-019).
+// zod v4 API: .min(1, msg) supplies the required-message — NOT required_error.
+const RegisterPushTokenParams = z.object({
+  token: z.string().min(1, 'Missing push token'),
+  platform: z.enum(['android', 'ios']),
+  mobilePublicKeyB64: z.string().min(1, 'Missing mobile public key')
+})
+
 // Why: notifications.subscribe streams desktop notification events to mobile
 // clients over WebSocket. The mobile client shows a local push notification
 // for each event. This avoids requiring Firebase/APNs — the existing
@@ -73,6 +84,33 @@ export const NOTIFICATION_METHODS: readonly RpcAnyMethod[] = [
     handler: async (params, { runtime }) => {
       const missed = runtime.getMissedNotificationsSince(params.lastSeenSeq)
       return { notifications: missed }
+    }
+  }),
+  defineMethod({
+    name: 'notifications.registerPushToken',
+    params: RegisterPushTokenParams,
+    handler: async (params, { deviceRegistry, clientId }) => {
+      // Why: resolve the caller from its auth token (clientId) — the mobile
+      // never sends its own deviceId. OrcaRuntimeService has no device-registry
+      // access, so the ctx-injected deviceRegistry is the one path to persist.
+      // Fail closed when the registry or caller identity is absent (in-process
+      // callers, unauthenticated transports).
+      if (!deviceRegistry || !clientId) {
+        return { ok: false as const, error: 'unauthorized' as const }
+      }
+      const device = deviceRegistry.validateToken(clientId)
+      if (!device) {
+        return { ok: false as const, error: 'invalid_token' as const }
+      }
+      const updated = deviceRegistry.updateDevicePushToken(device.deviceId, {
+        fcmToken: params.token,
+        pushPlatform: params.platform,
+        mobilePublicKeyB64: params.mobilePublicKeyB64
+      })
+      if (!updated) {
+        return { ok: false as const, error: 'device_not_found' as const }
+      }
+      return { ok: true as const }
     }
   })
 ]

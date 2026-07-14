@@ -1,4 +1,13 @@
-export type DesktopNotificationSource = 'agent-task-complete' | 'terminal-bell' | 'test'
+// Why: 'fcm-supplemental' marks a notification that arrived via the FCM
+// supplemental push channel (SPEC-FCM-001, M5). M4's fan-out encrypts only
+// {title, body} for FCM, so the original desktop source is not carried and the
+// mobile records this transport marker instead. The value is metadata-only —
+// navigation uses hostId/worktreeId, never source.
+export type DesktopNotificationSource =
+  | 'agent-task-complete'
+  | 'terminal-bell'
+  | 'test'
+  | 'fcm-supplemental'
 
 export type DesktopNotificationEvent = {
   source: DesktopNotificationSource

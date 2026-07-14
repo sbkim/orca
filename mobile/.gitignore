@@ -11,3 +11,8 @@ dist/
 *.mobileprovision
 *.orig.*
 web-build/
+build/
+GoogleService-Info.plist
+google-services.json
+fastlane/report.xml
+fastlane/README.md
