@@ -2,7 +2,7 @@
   "name": "orca-mobile",
   "version": "0.0.1",
   "private": true,
-  "main": "expo-router/entry",
+  "main": "index.js",
   "scripts": {
     "start": "node scripts/start-expo.mjs",
     "android": "expo run:android",
@@ -15,12 +15,16 @@
     "format:check": "oxfmt --check .",
     "mock-server": "npx tsx scripts/mock-server.ts",
     "repro:workspace-picker-lag": "npx tsx scripts/repro-workspace-picker-lag.ts",
-    "start:emulator": "node scripts/start-emulator.mjs"
+    "start:emulator": "node scripts/start-emulator.mjs",
+    "firebase:android": "PATH=/opt/homebrew/opt/ruby/bin:$PATH bundle _4.0.11_ exec fastlane android firebase",
+    "firebase:ios": "PATH=/opt/homebrew/opt/ruby/bin:$PATH bundle _4.0.11_ exec fastlane ios firebase"
   },
   "dependencies": {
     "@noble/hashes": "1.8.0",
     "@orca/expo-two-way-audio": "file:./packages/expo-two-way-audio",
     "@react-native-async-storage/async-storage": "^2.2.0",
+    "@react-native-firebase/app": "^25.0.0",
+    "@react-native-firebase/messaging": "^25.0.0",
     "@xterm/addon-unicode11": "0.10.0-beta.285",
     "@xterm/addon-webgl": "0.20.0-beta.284",
     "@xterm/xterm": "6.1.0-beta.285",
@@ -65,6 +69,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@bacons/apple-targets": "^4.0.7",
     "@types/react": "^19.2.14",
     "@types/react-native": "^0.73.0",
     "@types/react-test-renderer": "19.1.0",

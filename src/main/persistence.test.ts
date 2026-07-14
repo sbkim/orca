@@ -852,6 +852,48 @@ describe('Store', () => {
     expect(reloaded.getUI().trayMinimizeNoticeShown).toBe(true)
   })
 
+  it('stores the FCM credential only in its safeStorage-encrypted form on disk (AC-FCM-007b)', async () => {
+    const plaintext = '{"type":"service_account","project_id":"demo"}'
+    // The test electron mock's encryptString wraps as `encrypted:<plaintext>`;
+    // persistence then base64-encodes that buffer for on-disk storage.
+    const encryptedForm = Buffer.from(`encrypted:${plaintext}`, 'utf-8').toString('base64')
+    const store = await createStore()
+    store.setFcmServiceAccountJson(plaintext)
+
+    // In memory: plaintext, so the fcm-sender consumes a usable credential.
+    expect(store.getFcmServiceAccountJson()).toBe(plaintext)
+
+    store.flush()
+    const onDisk = (readDataFile() as PersistedState).settings.fcmServiceAccountJson
+    // Why asserted: disk holds ONLY the encrypted ciphertext form, never the
+    // raw credential JSON.
+    expect(onDisk).toBe(encryptedForm)
+    expect(onDisk).not.toBe(plaintext)
+  })
+
+  it('decrypts the FCM credential back to plaintext on reload (AC-FCM-007b)', async () => {
+    const plaintext = '{"type":"service_account","project_id":"demo"}'
+    const encryptedForm = Buffer.from(`encrypted:${plaintext}`, 'utf-8').toString('base64')
+    writeDataFile({
+      schemaVersion: 1,
+      settings: { fcmServiceAccountJson: encryptedForm },
+      ui: {}
+    })
+
+    const store = await createStore()
+    expect(store.getFcmServiceAccountJson()).toBe(plaintext)
+  })
+
+  it('normalizes a null/empty FCM credential to null and round-trips it', async () => {
+    const store = await createStore()
+    store.setFcmServiceAccountJson('')
+    expect(store.getFcmServiceAccountJson()).toBeNull()
+    store.setFcmServiceAccountJson(null)
+    expect(store.getFcmServiceAccountJson()).toBeNull()
+    store.flush()
+    expect((readDataFile() as PersistedState).settings.fcmServiceAccountJson).toBeNull()
+  })
+
   it('hides the setup guide sidebar entry for existing users backfilled as completed', async () => {
     writeDataFile({
       schemaVersion: 1,

@@ -27,21 +27,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts } from '../src/transport/host-store'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
 import { pickResumeWorktree } from '../src/worktree/resume-worktree'
+import { classifyConnection } from '../src/transport/connection-health'
+import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
+import { triggerMediumImpact } from '../src/platform/haptics'
 import type { RpcClient } from '../src/transport/rpc-client'
+import type { ConnectionState, HostProfile } from '../src/transport/types'
 import {
   useAllHostClients,
   useCloseHost,
   useForceReconnect,
   usePrimeHosts
 } from '../src/transport/client-context'
-import { classifyConnection } from '../src/transport/connection-health'
-import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import {
   loadMobileOnboardingSteps,
   mobileOnboardingDestination
 } from '../src/onboarding/mobile-onboarding-plan'
-import type { ConnectionState, HostProfile } from '../src/transport/types'
-import { triggerMediumImpact } from '../src/platform/haptics'
+import { usePushTokenRegistration } from '../src/notifications/use-push-token-registration'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { MobileHostCard } from '../src/components/MobileHostCard'
 import { TaskProviderLogo } from '../src/components/TaskProviderLogo'
@@ -329,6 +330,12 @@ export default function HomeScreen() {
       primeHosts(hosts)
     }
   }, [hosts, primeHosts])
+
+  // Why: after E2EE pairing completes (client reaches 'connected'), register
+  // the FCM device token + long-lived mobile public key with the desktop so its
+  // FCM sender can reach this device when no WS subscriber is connected. Lives
+  // in a dedicated hook so this screen stays under the file max-lines ceiling.
+  usePushTokenRegistration(allClients)
   const allClientsRef = useRef<Array<{ hostId: string; client: RpcClient }>>([])
   // Why: keep the focus callback stable (no refetch per render) while still exposing the latest host clients.
   allClientsRef.current = allClients.map((entry) => ({

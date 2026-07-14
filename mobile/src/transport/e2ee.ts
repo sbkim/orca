@@ -31,7 +31,11 @@ export function deriveSharedKey(ourSecretKey: Uint8Array, peerPublicKey: Uint8Ar
   return u8(nacl.box.before(u8(peerPublicKey), u8(ourSecretKey)))
 }
 
-function uint8ToBase64(bytes: Uint8Array): string {
+// Why: generic base64 encoder over a Uint8Array. Exported so the persistent
+// push keypair module (push-keypair.ts) can serialize the long-lived secret key
+// the same way the ephemeral path serializes public keys, without duplicating
+// the Hermes-safe loop. The name is intentionally generic (not publicKey-only).
+export function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]!)
@@ -39,7 +43,7 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary)
 }
 
-function base64ToUint8(b64: string): Uint8Array {
+export function base64ToBytes(b64: string): Uint8Array {
   const binary = atob(b64)
   const bytes = new Uint8Array(binary.length)
   for (let i = 0; i < binary.length; i++) {
@@ -49,7 +53,7 @@ function base64ToUint8(b64: string): Uint8Array {
 }
 
 export function publicKeyFromBase64(b64: string): Uint8Array {
-  const key = base64ToUint8(b64)
+  const key = base64ToBytes(b64)
   if (key.length !== 32) {
     throw new Error(
       `Invalid public key: expected 32 bytes, got ${key.length} from "${b64.slice(0, 20)}..."`
@@ -59,16 +63,16 @@ export function publicKeyFromBase64(b64: string): Uint8Array {
 }
 
 export function publicKeyToBase64(key: Uint8Array): string {
-  return uint8ToBase64(key)
+  return bytesToBase64(key)
 }
 
 export function encrypt(plaintext: string, sharedKey: Uint8Array): string {
   const messageBytes = u8(new TextEncoder().encode(plaintext))
-  return uint8ToBase64(encryptBytes(messageBytes, sharedKey))
+  return bytesToBase64(encryptBytes(messageBytes, sharedKey))
 }
 
 export function decrypt(encrypted: string, sharedKey: Uint8Array): string | null {
-  const bundle = base64ToUint8(encrypted)
+  const bundle = base64ToBytes(encrypted)
   const plaintext = decryptBytes(bundle, sharedKey)
   return plaintext ? new TextDecoder().decode(plaintext) : null
 }

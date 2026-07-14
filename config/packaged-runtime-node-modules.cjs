@@ -18,6 +18,8 @@ const PACKAGED_RUNTIME_PACKAGE_ROOTS = [
   '@linear/sdk',
   '@parcel/watcher',
   'electron-updater',
+  // SPEC-FCM-001: fcm-sender mints Firebase OAuth2 access tokens via google-auth-library at runtime.
+  'google-auth-library',
   'i18next',
   'jsonc-parser',
   'node-pty',

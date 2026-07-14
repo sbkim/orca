@@ -4,3 +4,8 @@
 source "https://rubygems.org"
 
 gem "fastlane"
+
+# fastlane plugins (fastlane/Pluginfile). Mirrors the workuul pattern: eval the
+# Pluginfile so `bundle install` installs fastlane-plugin-firebase_app_distribution.
+plugins_path = File.join(File.dirname(__FILE__), "fastlane", "Pluginfile")
+eval_gemfile(plugins_path) if File.exist?(plugins_path)

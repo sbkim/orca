@@ -76,6 +76,22 @@ jobs:
           FASTLANE_HIDE_CHANGELOG: '1'
         run: bundle exec fastlane ios prepare_release_version version:"$MOBILE_IOS_RELEASE_VERSION" bump_patch:"$MOBILE_IOS_BUMP_PATCH_VERSION"
 
+      - name: Restore iOS Firebase config (GoogleService-Info.plist)
+        # Why (#4 / SPEC-FCM-001): the plist is gitignored (a credential-leak
+        # backstop), so a clean CI checkout has no Firebase config and
+        # `expo prebuild` would fail. Restore it from a base64 GitHub secret
+        # before prebuild. The file is runner-ephemeral — nothing secret is
+        # written to the repo, and the runner VM is torn down after the job.
+        env:
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GOOGLE_SERVICE_INFO_PLIST_BASE64:-}" ]; then
+            echo "::error::GOOGLE_SERVICE_INFO_PLIST_BASE64 secret is required for iOS release builds (FCM config)."
+            exit 1
+          fi
+          printf '%s' "$GOOGLE_SERVICE_INFO_PLIST_BASE64" | base64 --decode > GoogleService-Info.plist
+
       - name: Expo prebuild
         run: npx expo prebuild --platform ios --no-install
 

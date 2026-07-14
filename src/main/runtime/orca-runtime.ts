@@ -836,6 +836,10 @@ import {
   createMobileSessionTabsNotifyCoalescer,
   type MobileSessionTabsNotifyCoalescer
 } from './mobile-session-tabs-notify-coalescer'
+// Why: type-only — the runtime owns the listener-count GATE; the per-device
+// M1+M2+M3 fan-out chain lives in fcm-fanout.ts and is injected as a hook so
+// the runtime stays decoupled from the device registry / FCM credentials.
+import type { FcmFanOut } from './fcm-fanout'
 import type {
   IFilesystemProvider,
   IPtyProvider,
@@ -2519,6 +2523,11 @@ export class OrcaRuntimeService {
   // mobile client gets its own listener, and dispatchMobileNotification
   // iterates them all. Listeners are cleaned up via subscriptionCleanups.
   private notificationListeners = new Set<(event: MobileNotificationEvent) => void>()
+  // Why: FCM supplemental push hook (SPEC-FCM-001, M4). Wired by the RPC server
+  // startup once the device registry + FCM credentials are available. When set
+  // AND no WS subscriber is connected, dispatchMobileNotification forwards the
+  // notification through FCM so an offline mobile device still gets notified.
+  private fcmFanOut: FcmFanOut | null = null
   private ptysById = new Map<string, RuntimePtyWorktreeRecord>()
   private wslDistroByPtyId = new Map<string, string>()
   private titleObservationSequence = 0
@@ -9629,13 +9638,53 @@ export class OrcaRuntimeService {
   // idempotent-by-seq source of truth; clients watermark their own position.
   private readonly mobileNotificationReplay = new MobileNotificationReplayBuffer()
 
-  dispatchMobileNotification(event: MobileNotificationEvent): void {
+  // Why: injects the FCM supplemental fan-out hook (SPEC-FCM-001, M4). Kept on
+  // the runtime (not constructed inline) so dispatchMobileNotification stays
+  // decoupled from the device registry / FCM credentials / sender wiring.
+  setFcmFanOut(hook: FcmFanOut | null): void {
+    this.fcmFanOut = hook
+  }
+
+  dispatchMobileNotification(
+    event: MobileNotificationEvent,
+    options?: {
+      forceFcm?: boolean
+    }
+  ): void {
     const seq = this.mobileNotificationReplay.record(event)
     for (const listener of this.notificationListeners) {
       // Why: surface the desktop-assigned seq to live listeners so they can
       // watermark the last event delivered and feed it back to getMissedSince
       // on reconnect (idempotent catch-up, no duplicate local pushes).
       listener({ ...event, notificationSeq: seq })
+    }
+    // Why: FCM supplemental push gate (SPEC-FCM-001, M4). ADDITIVE — the WS
+    // listener iteration above is byte-identical to the pre-M4 path
+    // (AC-FCM-001 regression). Normally only a zero-listener dispatch forwards
+    // through FCM; the explicit forceFcm option may bypass that gate.
+    // Fire-and-log: the hook never throws into this
+    // dispatch loop (REQ-FCM-014). Only 'notification' events carry a push
+    // payload; 'dismiss' is a foreground-only sync so it never fans out.
+    if (
+      event.type === 'notification' &&
+      (this.notificationListeners.size === 0 || options?.forceFcm === true) &&
+      this.fcmFanOut
+    ) {
+      const fanOut = this.fcmFanOut
+      void fanOut({
+        payload: {
+          title: event.title,
+          body: event.body,
+          worktreeId: event.worktreeId,
+          source: event.source
+        },
+        notificationId: event.notificationId ?? ''
+      }).catch((err) => {
+        console.error('[runtime] FCM supplemental fan-out failed', {
+          notificationId: event.notificationId ?? '',
+          err
+        })
+      })
     }
   }
 
