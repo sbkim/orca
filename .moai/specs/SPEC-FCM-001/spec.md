@@ -2,7 +2,7 @@
 id: SPEC-FCM-001
 title: "FCM 푸시 알림 채널 통합"
 version: "0.1.0"
-status: implemented
+status: completed
 created: 2026-07-11
 updated: 2026-07-13
 amendment_of: SPEC-FCM-001

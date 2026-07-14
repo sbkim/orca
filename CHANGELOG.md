@@ -16,11 +16,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   foreground transport; FCM fires only when the runtime reports zero mobile
   notification listeners (`getMobileNotificationListenerCount() === 0`), so
   foreground behavior and WS delivery are unchanged (AC-FCM-001, AC-FCM-002a/b).
-  - **Best-effort backgrounded delivery (force-quit excluded).** FCM delivery is
-    best-effort for apps in the background; force-quit/killed apps are not woken.
-    iOS content-available background push does not wake force-quit apps; NSE-based
-    force-quit wake is out of scope to preserve the data-only/E2EE invariant
-    (per user decision #6 in SPEC-FCM-001 amendment).
+  - **Backgrounded delivery + iOS killed-state via Notification Service
+    Extension.** Android FCM delivery is best-effort for apps in the background;
+    force-stop (user-initiated kill) is excluded at the OS level — FCM data
+    cannot run when the app process is force-stopped. iOS now uses a Notification
+    Service Extension that decrypts the AES-256-GCM ciphertext via a
+    keychain-access-groups shared symmetric key (no plaintext exposure), so
+    notifications are delivered even when the iOS app is in killed state while
+    preserving the data-only/E2EE invariant. This updates amendment decision #6:
+    an E2EE-preserving NSE was implemented rather than treating force-quit wake
+    as out of scope. On-device verified 2026-07-13 (Galaxy A50 / iPhone 16e).
+  - **iOS Notification Service Extension (E2EE-preserving mechanism).** The
+    desktop encrypts iOS pushes with `encryptIosPushPayload` into an AES-256-GCM
+    envelope (version byte + 12-byte nonce + ciphertext + 16-byte GCM tag, AAD
+    `"orca-ios-push-v1"`); the per-desktop symmetric key is shared to the
+    extension via a `keychain-access-groups` entitlement, and a non-secret
+    `pushKeyId` (SHA-256 of the shared key) is sent in the payload so the
+    extension selects the right key. APNs is pinned to a priority-10 alert with
+    `mutable-content`, which invokes the extension to decrypt and re-render the
+    visible notification without plaintext ever leaving the device
+    (`mobile/targets/orca-notification-service/NotificationService.swift`,
+    `mobile/src/notifications/ios-notification-key-store.ts`,
+    `src/main/runtime/push-payload-crypto.ts` `encryptIosPushPayload`,
+    `src/main/runtime/fcm-sender.ts`).
   - **End-to-end encryption preserved (REQ-FCM-019).** Each paired device
     registers a long-lived Curve25519 keypair (`mobile/src/transport/push-keypair.ts`)
     that is distinct from the per-connection ephemeral WebSocket session key.

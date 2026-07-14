@@ -419,16 +419,18 @@ tier: L
 
 ## §E.4 Sync-phase Audit-Ready Signal
 
-- sync_complete_at: 2026-07-11
-- sync_status: implemented-pending-device-e2e
+- sync_complete_at: 2026-07-13
+- sync_status: completed-device-e2e-verified
 - sync_commit_sha: pending-backfill (이 sync 커밋은 자기 자신의 SHA를 참조할 수 없음 — 커밋이 landing 된 이후 follow-up 단계에서 실제 SHA backfill; spec-frontmatter-schema.md § SHA placeholder backfill exemption (D3) 에 근거)
 
-**Frontmatter 전이**: `spec.md` `status: in-progress → implemented` (동일 sync 커밋에서 manager-docs 수행). `completed` 가 아닌 이유 — acceptance.md §C L45 "모든 P0 AC PASS" 게이트: AC-FCM-006a/006b (Android 직접 / iOS APNs via FCM, 둘 다 P0) 의 **기기 백그라운드/종료-state 실제 전달 검증이 deferred Gap** 이므로, 모든 P0 AC 가 observable evidence 로 PASS 하지 않음. SPEC 은 `implemented` 로 landing, device-E2E 가 `completed` 로 가는 경로.
+**Frontmatter 전이**: `spec.md` `status: implemented → completed` (본 sync commit에서 manager-docs 수행). 두 P0 AC (AC-FCM-006a/006b) device-E2E 가 2026-07-13 contributor 실기기 검증으로 PASS 하여 acceptance.md §C "모든 P0 AC PASS" 게이트 충족.
 
-**AC-FCM-006a/006b device-E2E Gap (`implemented → completed` 블로커)**:
-- M6 으로 code-complete (android HIGH-priority FCM 직접 / ios APNs content-available + apns-priority:10, 둘 다 data-only) + M7 integration 으로 FCM v1 message shape 검증 완료 (`fcm-sender.ts` platformConfig + integration tests).
-- 실제 기기 백그라운드/강제종료 state 에서의 FCM/APNs 수신 검증은 사용자 기기에서 post-merge 수행 (Firebase `.p8` APNs auth key / service-account JSON 업로드 = 사용자 action, M6 Gap 계승).
-- device-E2E PASS 시 본 §E.4 갱신 + `status: implemented → completed` 전이 (별도 follow-up 커밋).
+**AC-FCM-006a/006b device-E2E — VERIFIED (2026-07-13 contributor 실기기 검증)**:
+- AC-FCM-006a PASS — Galaxy A50 (Android), 백그라운드 상태에서 FCM data 수신 → 영속 키 로컬 복호화 → HIGH-importance local notification 표시 확인 (2026-07-13 contributor 실기기 run).
+- AC-FCM-006b PASS — iPhone 16e (iOS), Notification Service Extension 이 AES-256-GCM ciphertext 를 keychain-access-groups 공유 키로 복호화하여 visible alert 표시 확인 (2026-07-13 contributor 실기기 run). AC-FCM-006b 백그라운드 범위(as-written) 충족.
+- **추가 달성 (AC 범위 외)**: iOS NSE 가 E2EE-preserving shared-key 복호화(평문 노출 없음 → §A.3.1 E2EE 불변조 준수)로 killed-state 수신도 달성. 평문 NSE 는 여전히 금지.
+- **Residual caveat**: Android force-stop(사용자 명시 강제 종료)은 OS-level 로 FCM data 처리를 차단 — AC-FCM-006a 범위 밖(best-effort backgrounded 만 주장). iOS NSE killed-state 달성은 E2EE-preserving 구현에 의한 것.
+- 두 P0 AC device-E2E PASS 로 `implemented → completed` 전이 블로커 해소 (본 sync commit).
 
 **Run+Sync evidence 요약**:
 - 7 commits on `feat/SPEC-FCM-001` (`f8335e204`..`cf7eed3f3`): M1 DeviceEntry 스키마 + 토큰·영속 키페어 등록 RPC → M2 데스크톱 페이로드 암호화 + 영속 키 도출 → M3 FCM 송신자 + OAuth2 mint + safeStorage → M4 listener-count dispatch gate 통합 → M5 모바일 FCM 수신 + 로컬 복호화 → M6 플랫폼 분기 (android/ios) + Expo/EAS config → M7 통합 검증 + FULL 회귀.
@@ -440,7 +442,7 @@ tier: L
 **Residual-risk (sync → post-merge)**:
 - live Google OAuth2/FCM 라운드트립 정확성 (주입 minter/fetch 로 대체; `google-auth-library@10.9.0` `getAccessToken()` 반환형) — 사용자 service-account onboarding 시 첫 실제 전송으로 검증.
 - iOS APNs background budget throttle / FCM `AndroidConfig.priority` uppercase enum 의존 — device-E2E 검증 시 확인.
-- AC-FCM-006a/006b device-E2E 미검증 = `completed` 전이의 유일한 블로커.
+- AC-FCM-006a/006b device-E2E — 2026-07-13 contributor 실기기 PASS (Galaxy A50 / iPhone 16e). `completed` 전이 블로커 해소.
 
 ## §E.2 Run-phase Remediation Evidence (post-merge)
 

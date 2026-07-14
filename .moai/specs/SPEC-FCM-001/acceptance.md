@@ -4,7 +4,7 @@ title: "FCM 푸시 알림 채널 통합 — 수락 기준"
 version: "0.1.0"
 status: draft
 created: 2026-07-11
-updated: 2026-07-12
+updated: 2026-07-13
 author: manager-spec
 tier: L
 ---
@@ -127,7 +127,7 @@ tier: L
 **When** 데스크톱이 FCM 메시지 전송 시 `message.apns` 필드 구성 (APNs brokered via FCM).
 **Then** iOS 기기가 백그라운드 상태 (포어그라운드 종료/force-quit 제외, best-effort) 에서 FCM/APNs data 메시지 수신 → 로컬 복호화 → 로컬 노티 표시.
 
-**검증**: E2E — iOS 기기 백그라운드 시 알림 수신. force-quit/killed 상태 전달은 주장하지 않음 (best-effort, 백그라운드만). NSE 기반 force-quit wake는 평문 노출로 §A.3.1 E2EE 불변조를 위반하므로 범위 밖.
+**검증**: E2E — iOS 기기 백그라운드 시 알림 수신 (2026-07-13 iPhone 16e 실기기 PASS). 추가로 iOS Notification Service Extension이 keychain-access-groups 공유 키로 암호문을 복호화(평문 노출 없음 → §A.3.1 E2EE 불변조 준수)하므로 killed-state 수신도 달성. 단, 이는 E2EE-preserving NSE 구현에 의한 것이며 평문 NSE는 여전히 금지.
 
 ### AC-FCM-007a — OAuth2 mint + messages:send (P0)
 
