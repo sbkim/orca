@@ -149,7 +149,7 @@ describe('electron-builder config', () => {
       await mkdir(join(resourcesDir, 'node_modules', 'zod'), { recursive: true })
 
       const sources = new Map([
-        ['out\\main\\index.js', 'const z = require("zod")'],
+        ['out\\main\\index.js', 'const z = require("zod"); const sqlite = require("node:sqlite")'],
         ['out\\main\\agent-hooks\\managed-agent-hook-controls.js', 'const YAML = require("yaml")']
       ])
       const asar = {
