@@ -357,6 +357,7 @@ export function registerNotificationHandlers(store: Store, runtime?: OrcaRuntime
   })
 
   ipcMain.handle('notifications:getPermissionStatus', getPermissionStatus)
+
   ipcMain.handle(
     'notifications:probeDelivery',
     async (_event, args?: { force?: boolean }): Promise<NotificationDeliveryProbeResult> => {

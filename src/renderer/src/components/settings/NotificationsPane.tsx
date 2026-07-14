@@ -10,6 +10,7 @@ import {
 } from '@/components/notifications/mac-notification-permission-card'
 import { NotificationSettingToggle } from './NotificationSettingToggle'
 import { NotificationSoundSection } from './NotificationSoundSection'
+import { FcmPushSection } from './FcmPushSection'
 import {
   createNotificationVolumeDraftState,
   resolveNotificationVolumeDraftState,
@@ -193,6 +194,10 @@ export function NotificationsPane({
           })
         }
       />
+
+      <Separator />
+
+      <FcmPushSection />
 
       <div className="flex flex-wrap items-center gap-2 pt-3">
         <Button

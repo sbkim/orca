@@ -10,7 +10,12 @@ import {
   seenKeyForEvent
 } from './notification-reconnect-catchup'
 
-type NotificationEvent = {
+// Why: exported so the FCM supplemental receiver (fcm-push-receiver.ts, M5) can
+// route a remote-decrypted notification through the SAME local-notification
+// path the WS subscriber path uses — reusing the single-notificationId dedupe
+// map (AC-FCM-005) and the permission/toggle gate (AC-FCM-009) rather than
+// duplicating that rendering logic.
+export type NotificationEvent = {
   type: 'notification'
   source: DesktopNotificationSource
   title: string
@@ -111,6 +116,18 @@ export async function ensureNotificationPermissions(): Promise<boolean> {
   return status === 'granted'
 }
 
+// Why: the background/headless FCM path (RNFB setBackgroundMessageHandler in
+// index.js) has no UI to surface a permission prompt, so it must only QUERY the
+// OS permission state and drop the notification when not granted. The foreground
+// path still requests via ensureNotificationPermissions. Threading the `background`
+// flag keeps a single showLocalNotification entry point for both caller contexts.
+async function permissionGranted(options?: { background?: boolean }): Promise<boolean> {
+  if (options?.background) {
+    return (await getNotificationPermissionState()).granted
+  }
+  return ensureNotificationPermissions()
+}
+
 function configureNotificationChannel(): void {
   if (Platform.OS === 'android') {
     void Notifications.setNotificationChannelAsync('orca-desktop', {
@@ -122,7 +139,13 @@ function configureNotificationChannel(): void {
   }
 }
 
-async function showLocalNotification(event: NotificationEvent, hostId: string): Promise<void> {
+// Why: exported so the FCM supplemental receiver reuses this exact path
+// (AC-FCM-005 dedupe + AC-FCM-009 gate). See NotificationEvent above.
+export async function showLocalNotification(
+  event: NotificationEvent,
+  hostId: string,
+  options?: { background?: boolean }
+): Promise<void> {
   const storedKey = event.notificationId
     ? getStoredNotificationKey(hostId, event.notificationId)
     : null
@@ -133,7 +156,7 @@ async function showLocalNotification(event: NotificationEvent, hostId: string): 
       return
     }
 
-    const granted = await ensureNotificationPermissions()
+    const granted = await permissionGranted(options)
     if (!granted) {
       return
     }
@@ -166,7 +189,7 @@ async function showLocalNotification(event: NotificationEvent, hostId: string): 
       return null
     }
 
-    const granted = await ensureNotificationPermissions()
+    const granted = await permissionGranted(options)
     if (!granted) {
       return null
     }

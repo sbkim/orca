@@ -171,6 +171,9 @@ import type {
   NotificationDismissResult,
   NotificationPermissionStatusResult,
   NotificationSoundResult,
+  FcmServiceAccountSetResult,
+  FcmServiceAccountStatus,
+  FcmServiceAccountClearResult,
   OnboardingState,
   OrcaHooks,
   PathSource,
@@ -2206,6 +2209,15 @@ export type PreloadApi = {
     getPermissionStatus: () => Promise<NotificationPermissionStatusResult>
     probeDelivery: (args?: { force?: boolean }) => Promise<NotificationDeliveryProbeResult>
     playSound: (options?: { force?: boolean; volume?: number }) => Promise<NotificationSoundResult>
+  }
+  // Why: FCM onboarding surface (SPEC-FCM-001). setServiceAccount takes the
+  // pasted credential and is the only method that ever carries the raw JSON;
+  // getServiceAccountStatus returns just configured-state + projectId so the
+  // renderer cannot leak the private key when it polls after onboarding.
+  fcm: {
+    setServiceAccount: (json: string) => Promise<FcmServiceAccountSetResult>
+    getServiceAccountStatus: () => Promise<FcmServiceAccountStatus>
+    clearServiceAccount: () => Promise<FcmServiceAccountClearResult>
   }
   onboarding: {
     get: () => Promise<OnboardingState>

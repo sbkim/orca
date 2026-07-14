@@ -1,0 +1,14 @@
+diff --git a/build/target.js b/build/target.js
+index f8bff7f..52a4d15 100644
+--- a/build/target.js
++++ b/build/target.js
+@@ -404,9 +404,6 @@ function getTargetInfoPlistForType(type) {
+         case "notification-service":
+             return {
+                 NSExtension: {
+-                    NSExtensionAttributes: {
+-                        NSExtensionActivationRule: "TRUEPREDICATE",
+-                    },
+                     NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).NotificationService",
+                     NSExtensionPointIdentifier,
+                 },

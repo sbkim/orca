@@ -26,276 +26,45 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loadHosts } from '../src/transport/host-store'
 import { removeHostAndCloseClient } from '../src/transport/host-removal-lifecycle'
-import { pickResumeWorktree } from '../src/worktree/resume-worktree'
+import { classifyConnection, verdictDisplayLabel } from '../src/transport/connection-health'
+import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
+import { triggerMediumImpact } from '../src/platform/haptics'
 import type { RpcClient } from '../src/transport/rpc-client'
+import type { ConnectionState, HostProfile } from '../src/transport/types'
 import {
   useAllHostClients,
   useCloseHost,
   useForceReconnect,
   usePrimeHosts
 } from '../src/transport/client-context'
-import { classifyConnection } from '../src/transport/connection-health'
-import { subscribeToDesktopNotifications } from '../src/notifications/mobile-notifications'
 import { shouldPresentNotificationOptIn } from '../src/notifications/notification-opt-in-gate'
-import type { ConnectionState, HostProfile } from '../src/transport/types'
-import { triggerMediumImpact } from '../src/platform/haptics'
+import { usePushTokenRegistration } from '../src/notifications/use-push-token-registration'
 import { OrcaLogo } from '../src/components/OrcaLogo'
 import { MobileHostCard } from '../src/components/MobileHostCard'
 import { TaskProviderLogo } from '../src/components/TaskProviderLogo'
 import { ActionSheetModal, type ActionSheetAction } from '../src/components/ActionSheetModal'
+import { TextInputModal } from '../src/components/TextInputModal'
 import { ConfirmModal } from '../src/components/ConfirmModal'
 import { setCachedWorktrees, getCachedWorktrees } from '../src/cache/worktree-cache'
 import { loadHomeSnapshot, saveHomeSnapshot } from '../src/cache/home-snapshot-cache'
 import { colors, spacing, radii } from '../src/theme/mobile-theme'
-import {
-  filterAvailableTaskProviders,
-  normalizeVisibleTaskProviders,
-  type TaskProvider
-} from '../src/tasks/mobile-task-providers'
 import { useResponsiveLayout } from '../src/layout/responsive-layout'
-
-function endpointLabel(endpoint: string): string {
-  try {
-    const url = new URL(endpoint)
-    return `${url.hostname}${url.port ? `:${url.port}` : ''}`
-  } catch {
-    return endpoint
-  }
-}
-
-type StatsSummary = {
-  totalAgentsSpawned: number
-  totalPRsCreated: number
-  totalAgentTimeMs: number
-  firstEventAt: number | null
-}
-
-type WorktreeSummary = {
-  worktreeId: string
-  repo: string
-  branch: string
-  displayName: string
-  liveTerminalCount: number
-  status?: 'working' | 'active' | 'permission' | 'done' | 'inactive'
-  // The worktree the desktop currently has focused (exactly one is true).
-  isActive?: boolean
-  // Last terminal-output time (ms); breaks ties when nothing is focused.
-  lastOutputAt?: number
-}
-
-type HostWorktreeInfo = {
-  hostId: string
-  totalWorktrees: number
-  activeCount: number
-  lastActiveWorktree: WorktreeSummary | null
-}
-
-type HomeTaskSettings = {
-  visibleTaskProviders?: unknown
-}
-
-type HomePreflightStatus = {
-  glab?: { installed?: boolean }
-}
-
-type HomeLinearStatus = {
-  connected?: boolean
-}
-
-const TASK_PROVIDER_LABELS: Record<TaskProvider, string> = {
-  github: 'GitHub',
-  gitlab: 'GitLab',
-  linear: 'Linear'
-}
-
-function formatDuration(ms: number): string {
-  const totalMinutes = Math.floor(ms / 60_000)
-  const totalHours = Math.floor(totalMinutes / 60)
-  const days = Math.floor(totalHours / 24)
-  const hours = totalHours % 24
-  if (days > 0) {
-    return `${days}d ${hours}h`
-  }
-  const minutes = totalMinutes % 60
-  if (totalHours > 0) {
-    return `${totalHours}h ${minutes}m`
-  }
-  return `${totalMinutes}m`
-}
-
-// Why: derive a stable per-instance identity for RpcClient so the wireUp
-// effect's dep key changes when forceReconnect swaps the underlying client
-// for a host (without this, listeners stay attached to the closed client
-// and notifications/accounts subs never re-attach).
-const clientIdentities = new WeakMap<RpcClient, number>()
-let nextClientIdentity = 1
-function clientKey(client: RpcClient): number {
-  let id = clientIdentities.get(client)
-  if (id == null) {
-    id = nextClientIdentity++
-    clientIdentities.set(client, id)
-  }
-  return id
-}
-
-function fetchStats(
-  client: RpcClient,
-  setStats: (s: StatsSummary) => void,
-  disposed: () => boolean
-) {
-  client
-    .sendRequest('stats.summary')
-    .then((response) => {
-      if (disposed()) {
-        return
-      }
-      if (response.ok) {
-        setStats(response.result as StatsSummary)
-      }
-    })
-    .catch(() => {})
-}
-
-function fetchWorktreeInfo(
-  client: RpcClient,
-  hostId: string,
-  setInfo: (
-    updater: (prev: Record<string, HostWorktreeInfo>) => Record<string, HostWorktreeInfo>
-  ) => void,
-  disposed: () => boolean
-) {
-  // Why: only seed an empty zeroed entry when this host has no prior info
-  // at all (e.g., first ever load before any cache hydration). On a
-  // transient failure for a host that already has cached data, leave the
-  // cached entry alone so the Resume card and host-meta line don't
-  // momentarily flip to "0 worktrees" / disappear during reconnects.
-  const markLoadedIfMissing = () => {
-    setInfo((prev) => {
-      if (prev[hostId]) {
-        return prev
-      }
-      return {
-        ...prev,
-        [hostId]: {
-          hostId,
-          totalWorktrees: 0,
-          activeCount: 0,
-          lastActiveWorktree: null
-        }
-      }
-    })
-  }
-
-  client
-    // Why: worktree.ps defaults to 200 and silently truncates; request the full
-    // set so the host worktree count and active count are accurate.
-    .sendRequest('worktree.ps', { limit: 10000 })
-    .then((response) => {
-      if (disposed()) {
-        return
-      }
-      if (response.ok) {
-        const result = response.result as { worktrees: WorktreeSummary[] }
-        const worktrees = result.worktrees ?? []
-        setCachedWorktrees(hostId, worktrees)
-        const activeStatuses = new Set(['working', 'active', 'permission'])
-        const active = worktrees.filter((w) => w.status && activeStatuses.has(w.status))
-        // Mirror the desktop's focused workspace (see pickResumeWorktree).
-        const lastActive = pickResumeWorktree(worktrees)
-        setInfo((prev) => ({
-          ...prev,
-          [hostId]: {
-            hostId,
-            totalWorktrees: worktrees.length,
-            activeCount: active.length,
-            lastActiveWorktree: lastActive
-          }
-        }))
-      } else {
-        markLoadedIfMissing()
-      }
-    })
-    .catch(() => {
-      if (!disposed()) {
-        markLoadedIfMissing()
-      }
-    })
-}
-
-function fetchAccountsSnapshot(
-  client: RpcClient,
-  hostId: string,
-  setSnapshots: (
-    updater: (prev: Record<string, AccountsSnapshot>) => Record<string, AccountsSnapshot>
-  ) => void,
-  disposed: () => boolean
-) {
-  client
-    .sendRequest('accounts.list')
-    .then((response) => {
-      if (disposed()) {
-        return
-      }
-      if (response.ok) {
-        const snapshot = response.result as AccountsSnapshot
-        setSnapshots((prev) => ({ ...prev, [hostId]: snapshot }))
-      }
-    })
-    .catch(() => {})
-}
-
-function fetchTaskProviders(
-  client: RpcClient,
-  hostId: string,
-  setProviders: (
-    updater: (prev: Record<string, TaskProvider[]>) => Record<string, TaskProvider[]>
-  ) => void,
-  disposed: () => boolean
-) {
-  Promise.all([
-    client.sendRequest('settings.get'),
-    client.sendRequest('preflight.check'),
-    client.sendRequest('linear.status')
-  ])
-    .then(([settingsResponse, preflightResponse, linearResponse]) => {
-      if (disposed()) {
-        return
-      }
-      const settings = settingsResponse.ok
-        ? (((settingsResponse.result as { settings?: HomeTaskSettings }).settings ??
-            {}) as HomeTaskSettings)
-        : {}
-      const preflight = preflightResponse.ok
-        ? (preflightResponse.result as HomePreflightStatus)
-        : null
-      const linear = linearResponse.ok ? (linearResponse.result as HomeLinearStatus) : null
-      const providers = filterAvailableTaskProviders(
-        normalizeVisibleTaskProviders(settings.visibleTaskProviders),
-        {
-          gitlabInstalled: preflight?.glab?.installed === true,
-          linearConnected: linear?.connected === true
-        }
-      )
-      setProviders((prev) => ({ ...prev, [hostId]: providers }))
-    })
-    .catch(() => {
-      if (disposed()) {
-        return
-      }
-      setProviders((prev) => (prev[hostId] ? prev : { ...prev, [hostId]: ['github'] }))
-    })
-}
-
-// Why: repo names get a stable color derived from hashing, matching the
-// host detail page's colored dots for visual consistency.
-const REPO_COLORS = ['#8b5cf6', '#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#ec4899', '#06b6d4']
-function repoColor(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = (hash * 31 + name.charCodeAt(i)) | 0
-  }
-  return REPO_COLORS[Math.abs(hash) % REPO_COLORS.length]
-}
+// Why: utility functions and types extracted to home-screen-data.ts for max-lines compliance (M5).
+import {
+  endpointLabel,
+  formatDuration,
+  clientKey,
+  fetchStats,
+  fetchWorktreeInfo,
+  fetchAccountsSnapshot,
+  fetchTaskProviders,
+  repoColor,
+  TASK_PROVIDER_LABELS,
+  type StatsSummary,
+  type WorktreeSummary,
+  type HostWorktreeInfo
+} from '../src/home/home-screen-data'
+import type { TaskProvider } from '../src/tasks/mobile-task-providers'
 
 export default function HomeScreen() {
   const router = useRouter()
@@ -339,6 +108,12 @@ export default function HomeScreen() {
       primeHosts(hosts)
     }
   }, [hosts, primeHosts])
+
+  // Why: after E2EE pairing completes (client reaches 'connected'), register
+  // the FCM device token + long-lived mobile public key with the desktop so its
+  // FCM sender can reach this device when no WS subscriber is connected. Lives
+  // in a dedicated hook so this screen stays under the file max-lines ceiling.
+  usePushTokenRegistration(allClients)
   const allClientsRef = useRef<Array<{ hostId: string; client: RpcClient }>>([])
   // Why: the focus callback stays stable to avoid refetching on every
   // client-store render, but it still needs the latest host clients.

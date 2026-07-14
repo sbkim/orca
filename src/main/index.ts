@@ -45,6 +45,8 @@ import { OrcaRuntimeService } from './runtime/orca-runtime'
 import { OrcaRuntimeRpcServer } from './runtime/runtime-rpc'
 import { DesktopRelayService } from './runtime/relay/desktop-relay-service'
 import type { RelayBrokerStatus } from './runtime/relay/relay-session-broker'
+import { createFcmFanOut } from './runtime/fcm-fanout'
+import { createFcmSender, createGoogleAuthMinter } from './runtime/fcm-sender'
 import { awaitRuntimeFileWatcherUnsubscribes } from './runtime/orca-runtime-files'
 import { clearRuntimeMetadataIfOwned } from './runtime/runtime-metadata'
 import { ensureMainI18n, setMainUiLanguage } from './i18n/main-i18n'
@@ -2123,6 +2125,54 @@ app.whenReady().then(async () => {
     webClientRoot: getBundledWebClientRoot()
   })
   registerMobileHandlers(runtimeRpc, { getRelayStatus: () => desktopRelayStatus })
+  // Why: wire the FCM supplemental fan-out hook (SPEC-FCM-001, M4). The hook is
+  // injected once, here, and reads the registry / keypair / credential lazily
+  // at dispatch time — they populate inside runtimeRpc.start() (which runs just
+  // below), so by the time any notification dispatches they are available.
+  // When WS is disabled the registry stays null and the hook is a no-op.
+  // Capturing rpcServer into a const keeps the non-null narrowing inside the
+  // closures (runtimeRpc is `let … | null` at module scope).
+  const rpcServer = runtimeRpc
+  if (runtime) {
+    runtime.setFcmFanOut(
+      createFcmFanOut({
+        listFcmDevices: () => {
+          const registry = rpcServer.getDeviceRegistry()
+          if (!registry) {
+            return []
+          }
+          // Why: only paired devices with both an FCM token and a persistent
+          // mobile public key can derive the shared FCM key and receive a push.
+          return registry
+            .listDevices()
+            .filter(
+              (device) =>
+                typeof device.fcmToken === 'string' && typeof device.mobilePublicKeyB64 === 'string'
+            )
+        },
+        getDesktopPersistentSecret: () => rpcServer.getE2EEKeypair()?.secretKey ?? null,
+        getFcmCredentials: () => {
+          const json = store?.getFcmServiceAccountJson()
+          if (!json) {
+            return null
+          }
+          // Why: projectId is not stored separately — it lives inside the Google
+          // service-account JSON as `project_id`. Parse defensively so a corrupt
+          // credential degrades to a no-op rather than throwing on the hot path.
+          try {
+            const parsed = JSON.parse(json) as { project_id?: unknown }
+            if (typeof parsed.project_id !== 'string' || parsed.project_id.length === 0) {
+              return null
+            }
+            return { projectId: parsed.project_id, serviceAccountJson: json }
+          } catch {
+            return null
+          }
+        },
+        createSender: () => createFcmSender({ mintAccessToken: createGoogleAuthMinter() })
+      })
+    )
+  }
 
   startTerminalRuntimeStartupServices()
   app.on('activate', requestDesktopActivation)
