@@ -41,6 +41,7 @@ jobs:
           echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
 
   build:
+    name: build ${{ matrix.platform }}
     needs: prepare
     strategy:
       fail-fast: false
@@ -48,17 +49,17 @@ jobs:
         include:
           - platform: macos
             os: macos-15
-            command: pnpm build:mac
+            package_command: pnpm exec electron-builder --config config/electron-builder.config.cjs --mac --publish never
             artifact_paths: |
               dist/*.dmg
               dist/*.zip
           - platform: windows
             os: windows-2022
-            command: pnpm build:win
+            package_command: pnpm exec electron-builder --config config/electron-builder.config.cjs --win --publish never
             artifact_paths: dist/*.exe
           - platform: linux
             os: ubuntu-latest
-            command: pnpm build:linux
+            package_command: pnpm exec electron-builder --config config/electron-builder.config.cjs --linux AppImage deb --publish never
             artifact_paths: |
               dist/*.AppImage
               dist/*.deb
@@ -110,8 +111,19 @@ jobs:
           DEV_VERSION: ${{ needs.prepare.outputs.version }}
         run: node -e "const fs=require('node:fs');const path='package.json';const pkg=JSON.parse(fs.readFileSync(path,'utf8'));pkg.version=process.env.DEV_VERSION;fs.writeFileSync(path,JSON.stringify(pkg,null,2)+'\n')"
 
+      - name: Build desktop bundles
+        run: pnpm build:desktop
+
+      - name: Build macOS native helpers
+        if: runner.os == 'macOS'
+        run: pnpm build:computer-macos && pnpm build:notification-status-macos
+
+      - name: Ensure Electron runtime
+        run: pnpm ensure:electron-runtime
+
       - name: Build unsigned ${{ matrix.platform }} packages
-        run: ${{ matrix.command }}
+        # Why: electron-builder otherwise treats CI as implicit permission to publish upstream.
+        run: ${{ matrix.package_command }}
 
       - name: Upload ${{ matrix.platform }} packages
         uses: actions/upload-artifact@v7
