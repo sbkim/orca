@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { registerPushTokenWithDesktop } from './push-token-registration'
+import { deleteLocalFcmToken, unregisterPushTokenWithDesktop } from './push-token-deactivation'
 import {
   type PushRegistrationClientEntry,
   usePushTokenRegistration
@@ -23,6 +24,11 @@ vi.mock('../storage/preferences', () => ({
 
 vi.mock('./push-token-registration', () => ({
   registerPushTokenWithDesktop: vi.fn(async () => ({ registered: true }))
+}))
+
+vi.mock('./push-token-deactivation', () => ({
+  deleteLocalFcmToken: vi.fn(async () => true),
+  unregisterPushTokenWithDesktop: vi.fn(async () => true)
 }))
 
 vi.mock('./push-token-refresh', () => ({
@@ -56,6 +62,10 @@ describe('usePushTokenRegistration', () => {
     preference.listeners.clear()
     vi.mocked(registerPushTokenWithDesktop).mockClear()
     vi.mocked(registerPushTokenWithDesktop).mockResolvedValue({ registered: true })
+    vi.mocked(unregisterPushTokenWithDesktop).mockClear()
+    vi.mocked(unregisterPushTokenWithDesktop).mockResolvedValue(true)
+    vi.mocked(deleteLocalFcmToken).mockClear()
+    vi.mocked(deleteLocalFcmToken).mockResolvedValue(true)
   })
 
   it('registers a connected host when push is enabled after mount', async () => {
@@ -85,5 +95,45 @@ describe('usePushTokenRegistration', () => {
     await flushEffects()
 
     expect(registerPushTokenWithDesktop).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears a stale desktop registration when persisted push state is disabled', async () => {
+    await act(async () => {
+      renderer = create(createElement(Harness, { clients: connectedClients }))
+    })
+    await flushEffects()
+
+    expect(unregisterPushTokenWithDesktop).toHaveBeenCalledWith(client)
+    expect(deleteLocalFcmToken).toHaveBeenCalledTimes(1)
+  })
+
+  it('unregisters on toggle-off and can register again after toggle-on', async () => {
+    preference.enabled = true
+    await act(async () => {
+      renderer = create(createElement(Harness, { clients: connectedClients }))
+    })
+    await flushEffects()
+    expect(registerPushTokenWithDesktop).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      preference.enabled = false
+      for (const listener of preference.listeners) {
+        listener(false)
+      }
+    })
+    await flushEffects()
+
+    expect(unregisterPushTokenWithDesktop).toHaveBeenCalledWith(client)
+    expect(deleteLocalFcmToken).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      preference.enabled = true
+      for (const listener of preference.listeners) {
+        listener(true)
+      }
+    })
+    await flushEffects()
+
+    expect(registerPushTokenWithDesktop).toHaveBeenCalledTimes(2)
   })
 })
