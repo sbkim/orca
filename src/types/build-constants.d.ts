@@ -20,3 +20,7 @@ declare const ORCA_POSTHOG_WRITE_KEY: string | null
 // point a packaged build at a staging server without re-running the
 // release pipeline.
 declare const ORCA_DIAGNOSTICS_TOKEN_URL: string | null
+
+// Fork dev packages do not share the official signed update channel. CI bakes
+// this flag into those packages so they cannot replace themselves from it.
+declare const ORCA_DISABLE_AUTO_UPDATE: boolean

@@ -190,6 +190,14 @@ pnpm build:linux
 
 Use the platform command on its corresponding operating system. Release signing and publication require additional platform-specific credentials.
 
+### Automated Fork Dev Releases
+
+Every push to `dev` in `sbkim/orca` runs the **Dev Desktop Release** GitHub Actions workflow. It builds unsigned macOS, Windows, and Linux packages from the same commit and publishes them together as a GitHub prerelease after every platform succeeds.
+
+Dev releases use an immutable version and tag derived from the workflow run and commit SHA. Auto-update is disabled in these packages so they cannot replace themselves from Orca's official signed release channel.
+
+Because these artifacts are not Apple-notarized or Windows code-signed, macOS Gatekeeper and Windows SmartScreen warnings are expected.
+
 ## Configure FCM
 
 Each independent development environment should use its own Firebase project.
