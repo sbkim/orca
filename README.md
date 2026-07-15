@@ -3,6 +3,10 @@
 </h1>
 
 <p align="center">
+  <strong>Using the <code>dev</code> branch?</strong> See the <a href="README.dev.md">dev branch build and usage guide</a>.
+</p>
+
+<p align="center">
   <a href="https://github.com/stablyai/orca"><img src="https://img.shields.io/github/stars/stablyai/orca?style=flat&amp;label=%E2%98%85&amp;color=08C" alt="GitHub stars" /></a>
   <a href="https://github.com/stablyai/orca/releases"><img src="docs/assets/readme-downloads.svg" alt="Total downloads across all releases" /></a>
   <img src="https://img.shields.io/badge/license-MIT-08C?style=flat" alt="License: MIT" />
