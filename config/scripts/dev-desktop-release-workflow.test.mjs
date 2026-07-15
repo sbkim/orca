@@ -23,9 +23,11 @@ describe('dev desktop release workflow', () => {
     expect(platforms).toEqual(['macos', 'windows', 'linux'])
     expect(build.env.ORCA_DISABLE_AUTO_UPDATE).toBe('1')
     expect(build.env.CSC_IDENTITY_AUTO_DISCOVERY).toBe('false')
-    expect(source).toContain('pnpm build:mac')
-    expect(source).toContain('pnpm build:win')
-    expect(source).toContain('pnpm build:linux')
+    expect(source).toContain('pnpm build:desktop')
+    expect(source).toContain('pnpm build:computer-macos')
+    for (const entry of build.strategy.matrix.include) {
+      expect(entry.package_command).toContain('--publish never')
+    }
   })
 
   it('publishes only after every platform build succeeds', () => {
