@@ -302,6 +302,7 @@ const MOBILE_RPC_METHOD_ALLOWLIST = new Set([
   'notifications.getMissedSince',
   'notifications.registerPushToken',
   'notifications.subscribe',
+  'notifications.unregisterPushToken',
   'notifications.unsubscribe',
   'pairing.getEndpoints',
   'pairing.provisionRelay',

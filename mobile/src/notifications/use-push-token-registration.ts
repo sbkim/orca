@@ -12,6 +12,7 @@ import {
   subscribePushNotificationsEnabled
 } from '../storage/preferences'
 import { subscribeToTokenRefresh, initializeMessaging } from './push-token-refresh'
+import { deleteLocalFcmToken, unregisterPushTokenWithDesktop } from './push-token-deactivation'
 
 export type PushRegistrationClientEntry = {
   hostId: string
@@ -25,6 +26,8 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
   // reconnect re-registers (expo-notifications may have refreshed the token).
   // FIXED: Now only marks as registered AFTER successful RPC ack (defect #1).
   const registeredHostsRef = useRef<Set<string>>(new Set())
+  const unregisteredHostsRef = useRef<Set<string>>(new Set())
+  const localTokenDeletedRef = useRef(false)
 
   const [pushToggleEnabled, setPushToggleEnabled] = useState<boolean | null>(null)
 
@@ -45,7 +48,7 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
     const hasConnectedClients = connectedClients.length > 0
 
     // Only set up subscription if we have clients and push is enabled
-    if (!hasConnectedClients || pushToggleEnabled === false) {
+    if (!hasConnectedClients || pushToggleEnabled !== true) {
       // Clean up existing subscription
       if (tokenRefreshCleanupRef.current) {
         tokenRefreshCleanupRef.current()
@@ -95,12 +98,29 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
     for (const entry of allClients) {
       if (entry.state !== 'connected') {
         registeredHostsRef.current.delete(entry.hostId)
+        unregisteredHostsRef.current.delete(entry.hostId)
         continue
       }
-      if (registeredHostsRef.current.has(entry.hostId)) {
+
+      if (pushToggleEnabled === false) {
+        registeredHostsRef.current.delete(entry.hostId)
+        if (unregisteredHostsRef.current.has(entry.hostId)) {
+          continue
+        }
+        unregisteredHostsRef.current.add(entry.hostId)
+        void unregisterPushTokenWithDesktop(entry.client).then((unregistered) => {
+          if (!unregistered) {
+            unregisteredHostsRef.current.delete(entry.hostId)
+          }
+        })
         continue
       }
+
       if (pushToggleEnabled !== true) {
+        continue
+      }
+      unregisteredHostsRef.current.delete(entry.hostId)
+      if (registeredHostsRef.current.has(entry.hostId)) {
         continue
       }
       // Why: fire registration attempt - will only mark as registered on success
@@ -113,6 +133,24 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
         .catch(() => {})
     }
   }, [allClients, pushToggleEnabled])
+
+  useEffect(() => {
+    if (pushToggleEnabled === true) {
+      localTokenDeletedRef.current = false
+      return
+    }
+    if (pushToggleEnabled !== false || localTokenDeletedRef.current) {
+      return
+    }
+    // Why: the desktop unregister may be delayed until reconnect; deleting the
+    // Firebase token immediately prevents the retained server token from delivering.
+    localTokenDeletedRef.current = true
+    void deleteLocalFcmToken().then((deleted) => {
+      if (!deleted) {
+        localTokenDeletedRef.current = false
+      }
+    })
+  }, [pushToggleEnabled])
 
   // Why: clean up token refresh subscription on component unmount
   useEffect(() => {

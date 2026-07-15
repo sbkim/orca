@@ -112,5 +112,22 @@ export const NOTIFICATION_METHODS: readonly RpcAnyMethod[] = [
       }
       return { ok: true as const }
     }
+  }),
+  defineMethod({
+    name: 'notifications.unregisterPushToken',
+    params: null,
+    handler: async (_params, { deviceRegistry, clientId }) => {
+      if (!deviceRegistry || !clientId) {
+        return { ok: false as const, error: 'unauthorized' as const }
+      }
+      const device = deviceRegistry.validateToken(clientId)
+      if (!device) {
+        return { ok: false as const, error: 'invalid_token' as const }
+      }
+      if (!deviceRegistry.clearDevicePushToken(device.deviceId)) {
+        return { ok: false as const, error: 'device_not_found' as const }
+      }
+      return { ok: true as const }
+    }
   })
 ]
