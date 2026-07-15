@@ -12,6 +12,9 @@ import { NOTIFICATION_METHODS } from './notifications'
 const registerPushToken = NOTIFICATION_METHODS.find(
   (m) => m.name === 'notifications.registerPushToken'
 ) as RpcMethod | undefined
+const unregisterPushToken = NOTIFICATION_METHODS.find(
+  (m) => m.name === 'notifications.unregisterPushToken'
+) as RpcMethod | undefined
 
 function makeRegistry(): DeviceRegistry {
   const dir = mkdtempSync(join(tmpdir(), 'orca-notif-push-'))
@@ -102,5 +105,42 @@ describe('notifications.registerPushToken', () => {
     expect(() =>
       schema.parse({ token: '', platform: 'android', mobilePublicKeyB64: 'mpk' })
     ).toThrow()
+  })
+})
+
+describe('notifications.unregisterPushToken', () => {
+  it('clears every durable push field for the authenticated device', async () => {
+    const registry = makeRegistry()
+    const device = registry.addDevice('iphone')
+    registry.updateDevicePushToken(device.deviceId, {
+      fcmToken: 'registered-token',
+      pushPlatform: 'ios',
+      mobilePublicKeyB64: 'mobile-key'
+    })
+
+    const result = await unregisterPushToken!.handler(undefined, ctxWith(registry, device.token))
+
+    expect(result).toEqual({ ok: true })
+    expect(registry.getDevice(device.deviceId)).toMatchObject({
+      deviceId: device.deviceId
+    })
+    expect(registry.getDevice(device.deviceId)?.fcmToken).toBeUndefined()
+    expect(registry.getDevice(device.deviceId)?.pushPlatform).toBeUndefined()
+    expect(registry.getDevice(device.deviceId)?.mobilePublicKeyB64).toBeUndefined()
+  })
+
+  it('cannot clear another device without a valid caller token', async () => {
+    const registry = makeRegistry()
+    const device = registry.addDevice('pixel')
+    registry.updateDevicePushToken(device.deviceId, {
+      fcmToken: 'keep-token',
+      pushPlatform: 'android',
+      mobilePublicKeyB64: 'keep-key'
+    })
+
+    const result = await unregisterPushToken!.handler(undefined, ctxWith(registry, 'invalid-token'))
+
+    expect(result).toEqual({ ok: false, error: 'invalid_token' })
+    expect(registry.getDevice(device.deviceId)?.fcmToken).toBe('keep-token')
   })
 })

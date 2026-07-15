@@ -206,6 +206,20 @@ export class DeviceRegistry {
     return true
   }
 
+  // Why: disabling mobile notifications must remove the desktop's durable FCM
+  // destination; a local-only toggle leaves iOS alert pushes deliverable by APNs.
+  clearDevicePushToken(deviceId: string): boolean {
+    const device = this.devices.find((candidate) => candidate.deviceId === deviceId)
+    if (!device) {
+      return false
+    }
+    delete device.fcmToken
+    delete device.pushPlatform
+    delete device.mobilePublicKeyB64
+    this.save()
+    return true
+  }
+
   private load(): void {
     if (!existsSync(this.registryPath)) {
       this.devices = []
