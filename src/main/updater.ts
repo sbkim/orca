@@ -32,6 +32,7 @@ import {
   getReleaseDownloadUrl
 } from './updater-prerelease-feed'
 import { fetchNudge, shouldApplyNudge } from './updater-nudge'
+import { autoUpdatesDisabledForBuild } from './updater-build-policy'
 
 type CheckFailureSource = 'event' | 'promise' | 'fallback-promise'
 type MissingManifestPrereleaseFallbackResult = { userInitiated: boolean }
@@ -1101,7 +1102,7 @@ function runBackgroundUpdateCheck(
   if (backgroundCheckLaunchPending || currentStatus.state === 'checking') {
     return
   }
-  if (!app.isPackaged || is.dev) {
+  if (!app.isPackaged || is.dev || autoUpdatesDisabledForBuild()) {
     sendStatus({ state: 'not-available' })
     return
   }
@@ -1182,7 +1183,7 @@ function enableIncludePrerelease(): void {
 
 /** Menu-triggered check — delegates feedback to renderer toasts via userInitiated flag */
 export function checkForUpdatesFromMenu(options?: UpdateCheckOptions): void {
-  if (!app.isPackaged || is.dev) {
+  if (!app.isPackaged || is.dev || autoUpdatesDisabledForBuild()) {
     sendStatus({ state: 'not-available', userInitiated: true })
     return
   }
@@ -1262,6 +1263,9 @@ export function isQuittingForUpdate(): boolean {
 }
 
 export function quitAndInstall(): void {
+  if (autoUpdatesDisabledForBuild()) {
+    return
+  }
   if (pendingQuitAndInstallTimer || quitAndInstallInProgress) {
     return
   }
@@ -1287,7 +1291,7 @@ export function quitAndInstall(): void {
 }
 
 async function checkForUpdateNudge(): Promise<void> {
-  if (!app.isPackaged || is.dev) {
+  if (!app.isPackaged || is.dev || autoUpdatesDisabledForBuild()) {
     return
   }
   if (nudgeCheckInFlight) {
@@ -1372,10 +1376,7 @@ export function setupAutoUpdater(
   _setPendingUpdateNudgeId = opts?.setPendingUpdateNudgeId ?? null
   _setDismissedUpdateNudgeId = opts?.setDismissedUpdateNudgeId ?? null
 
-  if (!app.isPackaged && !is.dev) {
-    return
-  }
-  if (is.dev) {
+  if (!app.isPackaged || is.dev || autoUpdatesDisabledForBuild()) {
     return
   }
 
@@ -1497,7 +1498,7 @@ export function setupAutoUpdater(
 }
 
 export function downloadUpdate(): void {
-  if (downloadInFlight) {
+  if (autoUpdatesDisabledForBuild() || downloadInFlight) {
     return
   }
   // Why: permit retry from 'error' when we still have a cached availableVersion —
