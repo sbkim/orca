@@ -118,6 +118,34 @@ describe('AppImage CLI redirect', () => {
     expect(spawnOptions?.env).not.toHaveProperty('NODE_REPL_EXTERNAL_MODULE')
   })
 
+  it('routes direct FCM commands through the bundled CLI without starting X11', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'orca-appimage-cli-redirect-'))
+    const cliEntryPath = join(root, 'app.asar.unpacked', 'out', 'cli', 'index.js')
+    await mkdir(join(root, 'app.asar.unpacked', 'out', 'cli'), { recursive: true })
+    await writeFile(cliEntryPath, '', 'utf8')
+    const spawn = vi.fn((..._args: unknown[]) => ({ status: 0 }))
+
+    const result = maybeRedirectAppImageCliLaunch({
+      argv: ['orca-linux.AppImage', 'fcm', 'set', '--file', '.ssh/service-account.json'],
+      env: { APPIMAGE: '/opt/orca/orca-linux.AppImage' },
+      platform: 'linux',
+      isPackaged: true,
+      resourcesPath: root,
+      execPath: '/opt/orca/orca-linux.AppImage',
+      spawn: spawn as never
+    })
+
+    expect(result).toEqual({ redirected: true, status: 0 })
+    expect(spawn).toHaveBeenCalledWith(
+      '/opt/orca/orca-linux.AppImage',
+      [cliEntryPath, 'fcm', 'set', '--file', '.ssh/service-account.json'],
+      expect.objectContaining({
+        env: expect.objectContaining({ ELECTRON_RUN_AS_NODE: '1' }),
+        stdio: 'inherit'
+      })
+    )
+  })
+
   it('forwards an explicit no-sandbox choice to the serve child', async () => {
     const root = await mkdtemp(join(tmpdir(), 'orca-appimage-cli-redirect-'))
     const cliEntryPath = join(root, 'app.asar.unpacked', 'out', 'cli', 'index.js')

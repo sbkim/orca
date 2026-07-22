@@ -49,6 +49,7 @@ const APPIMAGE_CLI_COMMAND_NAMES = [
   'file',
   'fill',
   'find',
+  'fcm',
   'focus',
   'forward',
   'full-screenshot',
