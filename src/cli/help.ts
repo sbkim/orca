@@ -28,6 +28,11 @@ Environments:
   environment show          Show one saved remote Orca runtime
   environment rm            Remove a saved remote Orca runtime
 
+FCM Push:
+  fcm set                   Configure a service-account JSON file on this host
+  fcm status                Show whether FCM push is configured on this host
+  fcm clear                 Remove the stored FCM service-account credential
+
 Environment Recipes:
   vm recipe doctor          Validate a per-workspace environment recipe
 
@@ -205,6 +210,9 @@ Common Commands:
   orca environment list [--json]
   orca environment show --environment <selector> [--json]
   orca environment rm --environment <selector> [--json]
+  orca fcm set --file <path> [--json]
+  orca fcm status [--json]
+  orca fcm clear [--json]
   orca worktree list [--repo <selector>] [--limit <n>] [--json]
   orca worktree create --name <name> [--repo <selector>|--project <id> [--host <host-id>]|--project-host-setup <id>] [--agent <id>] [--prompt <text>] [--setup run|skip|inherit] [--base-branch <ref>] [--issue <number>] [--linear-issue <identifier-or-url>] [--comment <text>] [--parent-worktree <selector>] [--no-parent] [--run-hooks] [--activate] [--json]
   orca worktree show --worktree <selector> [--json]
@@ -401,6 +409,9 @@ export function formatGroupHelp(specs: CommandSpec[], group: string): string {
 
 function formatCommandFlagHelp(flag: string, commandPath: string[]): string {
   const command = commandPath.join(' ')
+  if (command === 'fcm set' && flag === 'file') {
+    return '--file <path>          Google service-account JSON file on this host'
+  }
   if (command === 'terminal close' && flag === 'tab') {
     return '--tab                  Close the whole tab and wait for durable persistence'
   }

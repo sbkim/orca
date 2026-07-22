@@ -113,6 +113,18 @@ describe('registerFcmHandlers', () => {
     expect(state.value).toBeNull()
   })
 
+  it('rejects JSON primitives without throwing', async () => {
+    const { store, state } = createMockStore(null)
+    registerFcmHandlers(store)
+
+    for (const raw of ['null', '42', '"text"', '[]']) {
+      const result = await getHandler('fcm:setServiceAccount')(undefined, raw)
+      expect(result).toMatchObject({ ok: false })
+    }
+
+    expect(state.value).toBeNull()
+  })
+
   it('rejects a credential whose project_id is not a non-empty string', async () => {
     const { store, state } = createMockStore(null)
     registerFcmHandlers(store)

@@ -21,22 +21,18 @@ let unsubscribe: (() => void) | null = null
 // Why: subscribes to Firebase onTokenRefresh events and re-registers the
 // refreshed token with the desktop. Call this when the app starts and/or when
 // push notifications are enabled. Returns an unsubscribe function for cleanup.
-export function subscribeToTokenRefresh(getClient: () => TokenRefreshClient | null): () => void {
+export function subscribeToTokenRefresh(
+  getClients: () => readonly TokenRefreshClient[]
+): () => void {
   // Clean up existing subscription if any
   if (unsubscribe) {
     unsubscribe()
     unsubscribe = null
   }
 
-  const client = getClient()
-  if (!client) {
-    // Why: no connected client yet — don't set up subscription
-    return () => {}
-  }
-
   // Why: onTokenRefresh fires when FCM refreshes the registration token.
-  // We must immediately send the new token to the desktop to avoid delivery
-  // failures with the stale token.
+  // We must immediately send the new token to every connected host to avoid
+  // leaving sibling host registries with a stale destination.
   unsubscribe = onTokenRefresh(getMessaging(), async (newToken: string) => {
     try {
       // REQ-FCM-018: respect push toggle even for token refresh
@@ -51,15 +47,15 @@ export function subscribeToTokenRefresh(getClient: () => TokenRefreshClient | nu
       // REQ-FCM-016: platform selection for desktop FCM transport shaping
       const platform: 'android' | 'ios' = Platform.OS === 'ios' ? 'ios' : 'android'
 
-      // Re-register the refreshed token with the desktop
-      await client.sendRequest('notifications.registerPushToken', {
-        token: newToken,
-        platform,
-        mobilePublicKeyB64: publicKeyB64
-      })
+      const params = { token: newToken, platform, mobilePublicKeyB64: publicKeyB64 }
+      // Why: hosts are independent authorities; one unavailable host must not
+      // prevent every other connected host from receiving the refreshed token.
+      await Promise.allSettled(
+        getClients().map((client) => client.sendRequest('notifications.registerPushToken', params))
+      )
     } catch {
-      // Why: token refresh failures are logged but don't crash the app
-      // Firebase will retry delivering the refresh event
+      // Why: native token callbacks must stay non-fatal; reconnect and toggle-on
+      // registration provide the later recovery path for connected hosts.
     }
   })
 

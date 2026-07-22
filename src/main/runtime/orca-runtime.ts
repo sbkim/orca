@@ -147,6 +147,9 @@ import type {
   JiraIssueFilter,
   JiraIssueUpdate,
   JiraSiteSelection,
+  FcmServiceAccountClearResult,
+  FcmServiceAccountSetResult,
+  FcmServiceAccountStatus,
   LinearIssueUpdate,
   LinearProjectSummary,
   LinearWorkspaceSelection,
@@ -167,6 +170,10 @@ import type {
   WorkspaceSessionState,
   DirEntry
 } from '../../shared/types'
+import {
+  getFcmServiceAccountStatus,
+  parseFcmServiceAccountJson
+} from '../../shared/fcm-service-account'
 import { assertWorktreeUnlockedForRemoval } from '../../shared/worktree-removal'
 import {
   getRepoExecutionHostId,
@@ -2993,6 +3000,26 @@ export class OrcaRuntimeService {
       throw new Error('runtime_unavailable')
     }
     return this.store.recordFeatureInteraction(id)
+  }
+
+  getFcmServiceAccountStatus(): FcmServiceAccountStatus {
+    return getFcmServiceAccountStatus(this.requireStore().getFcmServiceAccountJson())
+  }
+
+  setFcmServiceAccount(raw: string): FcmServiceAccountSetResult {
+    const parsed = parseFcmServiceAccountJson(raw)
+    if (!parsed.ok) {
+      return parsed
+    }
+    // Why: persistence owns safeStorage encryption; callers only pass the
+    // validated plaintext into this narrow host-side boundary.
+    this.requireStore().setFcmServiceAccountJson(raw)
+    return parsed
+  }
+
+  clearFcmServiceAccount(): FcmServiceAccountClearResult {
+    this.requireStore().setFcmServiceAccountJson(null)
+    return { ok: true }
   }
 
   getClientSettings(): Pick<

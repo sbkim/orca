@@ -491,6 +491,18 @@ The desktop stores the credential encrypted with Electron `safeStorage` and
 only exposes configured state and the non-secret project ID back to the
 renderer.
 
+For a headless Linux host, copy the service-account JSON to that host and run
+the commands as the same user that runs `orca serve`:
+
+```bash
+orca fcm set --file /path/to/orca-desktop-fcm-sender.json
+orca fcm status
+```
+
+Use `orca fcm clear` to remove it. These commands intentionally target only the
+local host runtime, so invoke them through SSH rather than selecting a paired
+remote environment.
+
 ## Build Native Mobile Apps
 
 ### Android

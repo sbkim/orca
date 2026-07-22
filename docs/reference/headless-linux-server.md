@@ -295,6 +295,36 @@ If you later install the desktop CLI from Orca settings, use that CLI for normal
 shell workflows. Keep the AppImage path in systemd so service restarts do not
 depend on an interactive shell profile.
 
+## Configure FCM Push Without A GUI
+
+Copy the Google service-account JSON to the server, then run the CLI as the same
+user that runs `orca serve`:
+
+```bash
+orca fcm set --file /path/to/firebase-service-account.json
+orca fcm status
+```
+
+The `--file` path is resolved on the server where the command runs. The CLI
+sends the credential only through that host's local runtime socket; pairing
+codes and saved remote environments are ignored for these commands. Orca
+validates the JSON, protects it through Electron `safeStorage`, and returns only
+the non-secret Firebase project ID. On Linux, `safeStorage` protection depends
+on the secret store available to the service session; Electron may fall back to
+the weaker `basic_text` backend when no supported secret store is available.
+
+Remove the credential with:
+
+```bash
+orca fcm clear
+```
+
+Keep the source JSON readable only by the service user and delete or archive it
+according to your credential-management policy after configuration. Run these
+commands over SSH when the server has no GUI; do not copy the protected value
+from another machine's `orca-data.json`, because that persisted representation
+is not a portable configuration contract across `safeStorage` backends.
+
 ## Upgrade
 
 `orca serve` never updates itself. In headless mode Orca wires up no auto-updater

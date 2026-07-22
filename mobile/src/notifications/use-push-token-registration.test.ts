@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RpcClient } from '../transport/rpc-client'
 import { registerPushTokenWithDesktop } from './push-token-registration'
 import { deleteLocalFcmToken, unregisterPushTokenWithDesktop } from './push-token-deactivation'
+import { subscribeToTokenRefresh } from './push-token-refresh'
 import {
   type PushRegistrationClientEntry,
   usePushTokenRegistration
@@ -66,6 +67,7 @@ describe('usePushTokenRegistration', () => {
     vi.mocked(unregisterPushTokenWithDesktop).mockResolvedValue(true)
     vi.mocked(deleteLocalFcmToken).mockClear()
     vi.mocked(deleteLocalFcmToken).mockResolvedValue(true)
+    vi.mocked(subscribeToTokenRefresh).mockClear()
   })
 
   it('registers a connected host when push is enabled after mount', async () => {
@@ -135,5 +137,35 @@ describe('usePushTokenRegistration', () => {
     await flushEffects()
 
     expect(registerPushTokenWithDesktop).toHaveBeenCalledTimes(2)
+  })
+
+  it('applies toggle changes to every connected host', async () => {
+    const secondClient = { sendRequest: vi.fn() } as unknown as RpcClient
+    const clients: readonly PushRegistrationClientEntry[] = [
+      { hostId: 'host-1', client, state: 'connected' },
+      { hostId: 'host-2', client: secondClient, state: 'connected' }
+    ]
+    preference.enabled = true
+    await act(async () => {
+      renderer = create(createElement(Harness, { clients }))
+    })
+    await flushEffects()
+
+    expect(registerPushTokenWithDesktop).toHaveBeenCalledWith(client, 'host-1')
+    expect(registerPushTokenWithDesktop).toHaveBeenCalledWith(secondClient, 'host-2')
+    const getRefreshClients = vi.mocked(subscribeToTokenRefresh).mock.calls.at(-1)?.[0]
+    expect(getRefreshClients?.()).toEqual([client, secondClient])
+
+    await act(async () => {
+      preference.enabled = false
+      for (const listener of preference.listeners) {
+        listener(false)
+      }
+    })
+    await flushEffects()
+
+    expect(unregisterPushTokenWithDesktop).toHaveBeenCalledWith(client)
+    expect(unregisterPushTokenWithDesktop).toHaveBeenCalledWith(secondClient)
+    expect(deleteLocalFcmToken).toHaveBeenCalledTimes(1)
   })
 })

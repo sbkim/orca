@@ -57,13 +57,11 @@ export function usePushTokenRegistration(allClients: readonly PushRegistrationCl
       return
     }
 
-    // Set up token refresh subscription with a function to get a connected client
-    const getClient = () => {
-      const firstConnected = connectedClients[0]
-      return firstConnected?.client ?? null
-    }
+    // Why: one mobile installation uses the same current FCM token across its
+    // paired hosts, so refresh must update every connected host registry.
+    const getClients = () => connectedClients.map((entry) => entry.client)
 
-    const cleanup = subscribeToTokenRefresh(getClient)
+    const cleanup = subscribeToTokenRefresh(getClients)
     tokenRefreshCleanupRef.current = cleanup
 
     // Clean up on unmount or when dependencies change
